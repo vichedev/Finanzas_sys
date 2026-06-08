@@ -35,35 +35,42 @@ CREDS_FILE="${CREDS_FILE:-/root/finanzas-credenciales.txt}"
 
 NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
 
+# Lee siempre del terminal (/dev/tty), NO de stdin. Esto permite que el
+# instalador funcione tanto como archivo local (sudo bash install.sh) como
+# por tubería (curl ... | sudo bash), donde stdin es el propio script y un
+# `read` normal lo corrompería ("syntax error near fi").
+TTY_OK=0
+if [[ -r /dev/tty ]]; then TTY_OK=1; fi
+
 ask_yn() {
   local prompt="$1"; local default="${2:-y}"
-  if [[ "$NON_INTERACTIVE" == "1" ]]; then echo "$default"; return; fi
+  if [[ "$NON_INTERACTIVE" == "1" || "$TTY_OK" != "1" ]]; then echo "$default"; return; fi
   local yn
   read -r -p "$(printf "${C_YEL}? %s [%s/%s]: ${C_END}" "$prompt" \
     "$([[ $default == y ]] && echo Y || echo y)" \
-    "$([[ $default == y ]] && echo n || echo N)")" yn || true
+    "$([[ $default == y ]] && echo n || echo N)")" yn < /dev/tty || true
   yn="${yn:-$default}"
   case "${yn,,}" in y|yes|s|si) echo y ;; *) echo n ;; esac
 }
 
 ask_str() {
   local prompt="$1"; local default="${2:-}"
-  if [[ "$NON_INTERACTIVE" == "1" ]]; then echo "$default"; return; fi
+  if [[ "$NON_INTERACTIVE" == "1" || "$TTY_OK" != "1" ]]; then echo "$default"; return; fi
   local val
   if [[ -n "$default" ]]; then
-    read -r -p "$(printf "${C_YEL}? %s [%s]: ${C_END}" "$prompt" "$default")" val || true
+    read -r -p "$(printf "${C_YEL}? %s [%s]: ${C_END}" "$prompt" "$default")" val < /dev/tty || true
     echo "${val:-$default}"
   else
-    read -r -p "$(printf "${C_YEL}? %s: ${C_END}" "$prompt")" val || true
+    read -r -p "$(printf "${C_YEL}? %s: ${C_END}" "$prompt")" val < /dev/tty || true
     echo "$val"
   fi
 }
 
 ask_pass() {
   local prompt="$1"
-  if [[ "$NON_INTERACTIVE" == "1" ]]; then echo ""; return; fi
+  if [[ "$NON_INTERACTIVE" == "1" || "$TTY_OK" != "1" ]]; then echo ""; return; fi
   local val
-  read -rs -p "$(printf "${C_YEL}? %s: ${C_END}" "$prompt")" val || true
+  read -rs -p "$(printf "${C_YEL}? %s: ${C_END}" "$prompt")" val < /dev/tty || true
   echo "" >&2
   echo "$val"
 }
