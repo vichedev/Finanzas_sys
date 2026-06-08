@@ -27,13 +27,13 @@ Plataforma cerrada y multi-usuario para gestión de finanzas personales: ingreso
 Requisitos: VPS con **Debian 11+, Ubuntu 22+, AlmaLinux 9 o Rocky 9**, acceso root, al menos 2 GB RAM y 5 GB libres.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mtandazo35/finanzas/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/vichedev/Finanzas_sys/main/install.sh | sudo bash
 ```
 
 O clonando primero:
 
 ```bash
-git clone https://github.com/mtandazo35/finanzas.git /opt/finanzas
+git clone https://github.com/vichedev/Finanzas_sys.git /opt/finanzas
 sudo bash /opt/finanzas/install.sh
 ```
 
@@ -72,6 +72,31 @@ SETUP_SWAP=yes \
 sudo bash install.sh
 ```
 
+## Despliegue manual (sin install.sh)
+
+Si prefieres clonar y levantar con Docker tú mismo, **debes crear `backend/.env` antes**
+(no se versiona porque contiene secretos):
+
+```bash
+git clone https://github.com/vichedev/Finanzas_sys.git /opt/finanzas
+cd /opt/finanzas
+
+# 1) Crea el .env real a partir de la plantilla y genera secretos:
+cp backend/.env.example backend/.env
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -hex 32)|"            backend/.env
+sed -i "s|^TENANT_ENCRYPTION_KEY=.*|TENANT_ENCRYPTION_KEY=$(openssl rand -hex 32)|" backend/.env
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=')|" backend/.env
+#   Edita el resto a mano: POSTGRES_HOST=postgres, CORS_ORIGIN=http://TU_IP,
+#   SEED_EMAIL, SEED_PASSWORD (≥10 chars), SEED_NAME.
+nano backend/.env
+
+# 2) Construye y levanta. El entrypoint espera la BD, sincroniza el schema
+#    global y siembra el administrador inicial automáticamente.
+docker compose up -d --build
+```
+
+El frontend no necesita `.env`: usa `/api` por defecto y nginx proxya al backend.
+
 ## Actualizar a la última versión
 
 ```bash
@@ -80,7 +105,9 @@ sudo bash /opt/finanzas/update.sh
 sudo bash /opt/finanzas/update.sh --rebuild-all
 ```
 
-Detecta automáticamente si cambió el schema de Prisma y aplica `db push`.
+Detecta automáticamente si cambió el schema de Prisma: aplica `db push` al schema
+global y, si cambió el schema **tenant**, sincroniza la tabla nueva en todas las
+empresas (`npm run sync:tenants:prod`).
 
 ## Backup manual
 

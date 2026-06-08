@@ -23,7 +23,7 @@ step() { printf "\n${C_CYN}━━ %s ━━${C_END}\n" "$*"; }
 
 # ---------- Defaults ----------
 APP_DIR="${APP_DIR:-/opt/finanzas}"
-REPO_URL="${REPO_URL:-https://github.com/mtandazo35/finanzas.git}"
+REPO_URL="${REPO_URL:-https://github.com/vichedev/Finanzas_sys.git}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 ADMIN_NAME="${ADMIN_NAME:-Administrador}"

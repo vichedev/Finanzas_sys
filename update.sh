@@ -65,14 +65,16 @@ if git diff --name-only "$PREV" "$CURR" | grep -q "prisma/global/schema.prisma";
 fi
 
 # El schema tenant no se aplica con db push directo (cada tenant tiene su DB).
-# Si hay un script de migración tenant nuevo, el operador lo corre manualmente:
-#   docker compose exec backend npx tsx scripts/<script>.ts
+# sync:tenants:prod recorre TODAS las BD de empresas y aplica el schema tenant
+# actual (aditivo e idempotente: agrega tablas/columnas nuevas como Invoice).
 if git diff --name-only "$PREV" "$CURR" | grep -q "prisma/tenant/schema.prisma"; then
-  echo
-  echo "⚠️  Detecté cambios en prisma/tenant/schema.prisma."
-  echo "   Si añadiste columnas/enums nuevos, corré el script de migración tenant correspondiente, ej.:"
-  echo "     docker compose exec backend npx tsx scripts/migrate-add-expense-kind.ts"
-  echo
+  echo "→ Cambió prisma/tenant/schema.prisma. Sincronizando el schema en todas las empresas..."
+  if docker compose exec -T backend npm run sync:tenants:prod; then
+    echo "✓ Schema tenant sincronizado en todas las empresas."
+  else
+    echo "⚠️  La sincronización de tenants falló. Córrela manualmente y revisa los logs:"
+    echo "     docker compose exec backend npm run sync:tenants:prod"
+  fi
 fi
 
 echo

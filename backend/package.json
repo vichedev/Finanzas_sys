@@ -13,6 +13,7 @@
     "prisma:push:global": "prisma db push --schema=prisma/global/schema.prisma --accept-data-loss",
     "prisma:push:tenant": "prisma db push --schema=prisma/tenant/schema.prisma --accept-data-loss",
     "sync:tenants": "tsx --env-file=.env.dev scripts/sync-tenant-schemas.ts",
+    "sync:tenants:prod": "tsx scripts/sync-tenant-schemas.ts",
     "migrate:multitenant": "tsx scripts/migrate-to-multitenant.ts",
     "seed:superadmin": "tsx scripts/seed-superadmin.ts",
     "bootstrap": "tsx scripts/bootstrap.ts"
