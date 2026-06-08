@@ -1,0 +1,328 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/tenant"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TENANT_DATABASE_URL")
+}
+
+enum AccountType {
+  CASH
+  BANK
+  WALLET
+  DEBIT
+  RECEIVABLE
+}
+
+enum CardType {
+  CREDIT
+  DEBIT
+}
+
+enum MovementType {
+  INCOME
+  EXPENSE
+  TRANSFER
+  WITHDRAWAL
+  PURCHASE
+}
+
+enum ExpenseKind {
+  FIXED
+  VARIABLE
+  NON_ACCOUNTABLE
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  DEPOSIT
+  DEBIT_CARD
+  CREDIT_CARD
+  WALLET
+  OTHER
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+}
+
+enum DebtKind {
+  PAYABLE
+  RECEIVABLE
+  LOAN
+}
+
+enum DebtStatus {
+  OPEN
+  PARTIAL
+  PAID
+  CANCELED
+}
+
+enum RecurringFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum RecurringStatus {
+  ACTIVE
+  PAUSED
+  FINISHED
+}
+
+enum InvoiceKind {
+  SALE     // Factura emitida (venta) → IVA cobrado / débito fiscal
+  PURCHASE // Factura recibida (compra) → IVA pagado / crédito tributario
+}
+
+enum InvoiceStatus {
+  ISSUED
+  PAID
+  VOID
+}
+
+enum UserRole {
+  ADMIN_EMPRESA
+  USUARIO_EMPRESA
+}
+
+enum BankAccountKind {
+  SAVINGS
+  CHECKING
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  name      String
+  role      UserRole @default(USUARIO_EMPRESA)
+  currency  String   @default("USD")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts   Account[]
+  cards      Card[]
+  categories Category[]
+  movements  Movement[]
+  debts      Debt[]
+  recurrings RecurringRule[]
+  banks      Bank[]
+  invoices   Invoice[]
+}
+
+model Account {
+  id             Int         @id @default(autoincrement())
+  userId         Int
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  type           AccountType
+  bankId         Int?
+  bank           Bank?       @relation(fields: [bankId], references: [id], onDelete: SetNull)
+  bankName       String?
+  accountNumber  String?
+  initialBalance Decimal     @db.Decimal(14, 2) @default(0)
+  currentBalance Decimal     @db.Decimal(14, 2) @default(0)
+  isActive       Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  movements      Movement[]
+  debts          Debt[]
+  invoices       Invoice[]
+
+  @@index([userId, type])
+}
+
+model Card {
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  type           CardType
+  bankName       String?
+  last4          String?
+  creditLimit    Decimal?  @db.Decimal(14, 2)
+  cutoffDay      Int?
+  paymentDueDay  Int?
+  currentBalance Decimal   @db.Decimal(14, 2) @default(0)
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  movements      Movement[]
+
+  @@index([userId, type])
+}
+
+model Category {
+  id        Int          @id @default(autoincrement())
+  userId    Int
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  type      CategoryType
+  color     String?
+  icon      String?
+  isDefault Boolean      @default(false)
+  createdAt DateTime     @default(now())
+
+  movements Movement[]
+  recurrings RecurringRule[]
+
+  @@unique([userId, name, type])
+  @@index([userId, type])
+}
+
+model Movement {
+  id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            MovementType
+  expenseKind     ExpenseKind?
+  amount          Decimal       @db.Decimal(14, 2)
+  movementDate    DateTime
+  description     String
+  paymentMethod   PaymentMethod
+  familyMember    String?
+  notes           String?
+  attachmentMeta  Json?
+
+  accountId       Int?
+  account         Account?      @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  cardId          Int?
+  card            Card?         @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  categoryId      Int?
+  category        Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  debtId          Int?
+  debt            Debt?         @relation(fields: [debtId], references: [id], onDelete: SetNull)
+  recurringRuleId Int?
+  recurringRule   RecurringRule? @relation(fields: [recurringRuleId], references: [id], onDelete: SetNull)
+
+  fromBankId      Int?
+  fromBank        Bank?         @relation("MovementFromBank", fields: [fromBankId], references: [id], onDelete: SetNull)
+  toBankId        Int?
+  toBank          Bank?         @relation("MovementToBank", fields: [toBankId], references: [id], onDelete: SetNull)
+
+  vendor          String?
+  isCredit        Boolean       @default(false)
+  dueDate         DateTime?
+
+  installmentNumber Int?
+  installmentTotal  Int?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([userId, movementDate])
+  @@index([userId, type])
+  @@index([userId, categoryId])
+  @@index([userId, type, expenseKind])
+}
+
+model Bank {
+  id            Int              @id @default(autoincrement())
+  userId        Int
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String
+  accountNumber String?
+  accountKind   BankAccountKind?
+  isActive      Boolean          @default(true)
+  notes         String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  movementsFrom Movement[] @relation("MovementFromBank")
+  movementsTo   Movement[] @relation("MovementToBank")
+  accounts      Account[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model Debt {
+  id           Int        @id @default(autoincrement())
+  userId       Int
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind         DebtKind
+  status       DebtStatus @default(OPEN)
+  name         String
+  counterparty String?
+  principal    Decimal    @db.Decimal(14, 2)
+  balance      Decimal    @db.Decimal(14, 2)
+  interestRate Decimal?   @db.Decimal(7, 4)
+  dueDate      DateTime?
+  accountId    Int?
+  account      Account?   @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  notes        String?
+  installmentAmount  Decimal? @db.Decimal(14, 2)
+  installmentDueDay  Int?
+  termMonths         Int?
+  totalToPay         Decimal? @db.Decimal(14, 2)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  movements    Movement[]
+
+  @@index([userId, kind, status])
+}
+
+model RecurringRule {
+  id              Int                @id @default(autoincrement())
+  userId          Int
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  type            MovementType
+  amount          Decimal            @db.Decimal(14, 2)
+  frequency       RecurringFrequency
+  status          RecurringStatus    @default(ACTIVE)
+  nextRunDate     DateTime
+  endDate         DateTime?
+  paymentMethod   PaymentMethod
+  categoryId      Int?
+  category        Category?          @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  notes           String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  movements       Movement[]
+
+  @@index([userId, status, nextRunDate])
+}
+
+model Invoice {
+  id                Int           @id @default(autoincrement())
+  userId            Int
+  user              User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind              InvoiceKind
+  status            InvoiceStatus @default(ISSUED)
+
+  number            String?       // Nº de factura / autorización
+  counterparty      String        // Cliente (ventas) o proveedor (compras)
+  counterpartyTaxId String?       // RUC / cédula
+
+  issueDate         DateTime      // Fecha de emisión → define el período tributario
+  netAmount         Decimal       @db.Decimal(14, 2) // Subtotal sin IVA
+  vatRate           Decimal       @db.Decimal(5, 2) @default(15) // % IVA (15 u 0)
+  vatAmount         Decimal       @db.Decimal(14, 2) // Valor de IVA
+  total             Decimal       @db.Decimal(14, 2) // netAmount + vatAmount
+
+  accountId         Int?
+  account           Account?      @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  description        String?
+  notes             String?
+
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@index([userId, kind, issueDate])
+  @@index([userId, issueDate])
+}

@@ -1,0 +1,59 @@
+# Secrets
+# NUNCA se versionan archivos .env reales (contienen JWT_SECRET,
+# TENANT_ENCRYPTION_KEY, contraseñas de BD, etc.).
+# Solo se versiona la plantilla .env.example (con placeholders).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+*.finanzas_secrets
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+.cache/
+
+# Prisma
+prisma/migrations/dev.db*
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# OS
+*.tmp
+*.bak
+
+# Docker volumes (si llegan a montarse en el repo)
+postgres_data/
+pgadmin_data/
+
+# Backups
+backups/
+*.sql.gz
+*.dump
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Vite
+.vite/

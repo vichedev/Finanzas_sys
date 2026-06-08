@@ -1,0 +1,165 @@
+// =====================================================
+// Finanzas — Schema GLOBAL (master)
+// Esta DB contiene: tenants, super admins, planes, audit logs.
+// Las tablas de datos (accounts, movements, etc.) viven en
+// la DB de cada tenant (ver prisma/tenant/schema.prisma).
+// =====================================================
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/global"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("GLOBAL_DATABASE_URL")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  CANCELED
+}
+
+enum TenantRole {
+  ADMIN_EMPRESA
+  USUARIO_EMPRESA
+}
+
+enum SuperRole {
+  SUPER_ADMIN
+  SUPPORT
+}
+
+enum AuditAction {
+  TENANT_CREATE
+  TENANT_EDIT
+  TENANT_SUSPEND
+  TENANT_REACTIVATE
+  TENANT_DELETE
+  TENANT_ADMIN_RESET_PASSWORD
+  TENANT_ADMIN_CHANGE_EMAIL
+  IMPERSONATE_LOGIN
+  IMPERSONATE_QUERY
+  ROTATE_CREDS
+  PLAN_CHANGE
+  SUPER_ADMIN_LOGIN
+  SUPER_ADMIN_LOGIN_FAILED
+}
+
+model Tenant {
+  id           String        @id @default(cuid())
+  slug         String        @unique
+  legalName    String
+  ruc          String?       @unique
+  email        String
+  logoUrl      String?       @db.Text
+  subdomain    String?       @unique
+  customDomain String?       @unique
+  status       TenantStatus  @default(ACTIVE)
+  planId       String?
+  plan         Plan?         @relation(fields: [planId], references: [id])
+  connection   TenantConnection?
+  metadata     Json?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  suspendedAt  DateTime?
+
+  memberships  TenantMembership[]
+  auditLogs    SuperAdminAuditLog[]
+
+  @@index([status])
+  @@index([planId])
+}
+
+model TenantConnection {
+  tenantId         String   @id
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  dbHost           String
+  dbPort           Int      @default(5432)
+  dbName           String   @unique
+  dbUserCipher     String   @db.Text
+  dbPasswordCipher String   @db.Text
+  rotatedAt        DateTime @default(now())
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  maxUsers     Int      @default(5)
+  maxMovements Int      @default(1000)
+  features     Json?
+  monthlyPrice Decimal  @db.Decimal(10, 2) @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenants Tenant[]
+}
+
+model SuperAdmin {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  passwordHash   String
+  name           String
+  role           SuperRole @default(SUPER_ADMIN)
+  isActive       Boolean   @default(true)
+  tokenVersion   Int       @default(0)
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  auditLogs SuperAdminAuditLog[]
+
+  @@index([isActive])
+}
+
+model TenantMembership {
+  id            String    @id @default(cuid())
+  email         String
+  passwordHash  String
+  name          String
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role          TenantRole
+  permissions   Json?
+  isActive      Boolean   @default(true)
+  tokenVersion  Int       @default(0)
+  failedAttempts Int      @default(0)
+  lockedUntil   DateTime?
+  invitedAt     DateTime  @default(now())
+  activatedAt   DateTime?
+  lastLoginAt   DateTime?
+
+  @@unique([email, tenantId])
+  @@index([tenantId, isActive])
+  @@index([email])
+}
+
+model SuperAdminAuditLog {
+  id           String      @id @default(cuid())
+  superAdminId String
+  superAdmin   SuperAdmin  @relation(fields: [superAdminId], references: [id], onDelete: Cascade)
+  tenantId     String?
+  tenant       Tenant?     @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  action       AuditAction
+  resource     String?
+  ip           String?
+  userAgent    String?     @db.Text
+  metadata     Json?
+  createdAt    DateTime    @default(now())
+
+  @@index([superAdminId, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([action, createdAt])
+}
+
+model GlobalSetting {
+  key       String   @id
+  value     String   @db.Text
+  isSecret  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
+}
