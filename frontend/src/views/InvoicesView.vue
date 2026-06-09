@@ -17,6 +17,7 @@ import FormField from '../components/FormField.vue';
 import AppButton from '../components/AppButton.vue';
 import DataTable, { type Column } from '../components/DataTable.vue';
 import TabBar from '../components/TabBar.vue';
+import AttachmentUploader from '../components/AttachmentUploader.vue';
 import { useCrud } from '../composables/useCrud';
 import { useFormat } from '../composables/useFormat';
 import { useEntitiesStore } from '../stores/entities';
@@ -123,7 +124,16 @@ const crud = useCrud<Invoice, InvoicePayload>({
     removeError: 'No se pudo eliminar la factura.'
   }
 });
-const { rows, form, editingId, saving, save, startEdit, cancelEdit, remove, load } = crud;
+const { rows, form, editingId, saving, lastSaved, save, startEdit, cancelEdit, remove, load } = crud;
+
+const attachRef = ref<{ flush: (id: number) => Promise<void>; reset: () => void; hasPending: () => boolean } | null>(null);
+async function onSave() {
+  const wasNew = editingId.value === null;
+  await save();
+  if (wasNew && lastSaved.value && attachRef.value?.hasPending()) {
+    await attachRef.value.flush(lastSaved.value.id);
+  }
+}
 
 // Cálculo en vivo del IVA/total del formulario
 const formVat = computed(() => round2(Number(form.value.netAmount || 0) * (Number(form.value.vatRate || 0) / 100)));
@@ -247,7 +257,7 @@ onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
     <div v-show="mainTab === 'invoices'" class="stack">
       <!-- Formulario -->
       <PanelCard :title="editingId !== null ? 'Editar factura' : 'Nueva factura'">
-        <form class="form" @submit.prevent="save">
+        <form class="form" @submit.prevent="onSave">
           <div class="form-grid">
             <FormField label="Tipo" required html-for="inv-kind"
                        :hint="form.kind === 'SALE' ? 'Tú emites la factura (IVA cobrado).' : 'Recibes la factura de un proveedor (IVA crédito).'">
@@ -297,7 +307,7 @@ onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
             </FormField>
           </div>
 
-          <FormField label="Descripción / Concepto" html-for="inv-desc">
+          <FormField label="Descripción" html-for="inv-desc">
             <input id="inv-desc" v-model="form.description" maxlength="200" placeholder="ej. Servicios de consultoría mayo" />
           </FormField>
 
@@ -319,6 +329,10 @@ onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
 
           <FormField label="Notas" html-for="inv-notes">
             <textarea id="inv-notes" v-model="form.notes" rows="2" placeholder="Observaciones…"></textarea>
+          </FormField>
+
+          <FormField label="Comprobante">
+            <AttachmentUploader ref="attachRef" entity-type="INVOICE" :entity-id="editingId" />
           </FormField>
 
           <div class="form-actions">

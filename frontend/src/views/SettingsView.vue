@@ -2,15 +2,17 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { User, Tags, Landmark, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check } from 'lucide-vue-next';
+import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
 import { http } from '../api/http';
+import { backupApi } from '../api/backup';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
 
 type Category = { id: number; name: string; type: 'INCOME' | 'EXPENSE'; color?: string | null; icon?: string | null };
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
 type Bank = { id: number; name: string; accountNumber?: string | null; accountKind?: BankAccountKind | null; isActive: boolean; notes?: string | null };
+type Wallet = { id: number; name: string; provider?: string | null; identifier?: string | null; isActive: boolean; notes?: string | null };
 const BANK_KIND_LABEL: Record<BankAccountKind, string> = { SAVINGS: 'Ahorros', CHECKING: 'Corriente' };
 type FilterType = 'ALL' | 'INCOME' | 'EXPENSE';
 type Profile = { id?: number; name?: string; email?: string; currency?: string; role?: string; createdAt?: string };
@@ -151,8 +153,8 @@ const profile = ref<Profile | null>(null);
 const profileForm = ref({ name: '', email: '', currency: 'USD', currentPassword: '', newPassword: '' });
 const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = ref(false);
 
-type SectionKey = 'profile' | 'categories' | 'banks' | 'smtp' | 'roles' | 'users' | 'super-admin';
-const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'smtp', 'roles', 'users', 'super-admin'];
+type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
+const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
 const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users'];
 const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
 
@@ -228,6 +230,12 @@ const emptyBankForm = () => ({ name: '', accountNumber: '', accountKind: '' as B
 const newBank = ref(emptyBankForm());
 const editingBankId = ref<number | null>(null);
 const bankMsg = ref(''); const bankErr = ref('');
+
+const wallets = ref<Wallet[]>([]);
+const emptyWalletForm = () => ({ name: '', provider: '', identifier: '', isActive: true, notes: '' });
+const newWallet = ref(emptyWalletForm());
+const editingWalletId = ref<number | null>(null);
+const walletMsg = ref(''); const walletErr = ref('');
 
 // --- Super Admin: tenants ---
 type TenantRow = {
@@ -539,6 +547,114 @@ async function removeBank(b: Bank) {
   }
 }
 
+// ---- Billeteras digitales ----
+async function loadWallets() {
+  const { data } = await http.get<Wallet[]>('/wallets');
+  wallets.value = data;
+}
+
+async function addWallet() {
+  walletErr.value = ''; walletMsg.value = '';
+  if (!newWallet.value.name.trim()) { walletErr.value = 'El nombre es obligatorio.'; return; }
+  try {
+    const payload: Record<string, unknown> = {
+      name: newWallet.value.name.trim(),
+      provider: newWallet.value.provider.trim() || null,
+      identifier: newWallet.value.identifier.trim() || null,
+      isActive: newWallet.value.isActive,
+      notes: newWallet.value.notes.trim() || null
+    };
+    if (editingWalletId.value !== null) {
+      await http.put(`/wallets/${editingWalletId.value}`, payload);
+      walletMsg.value = 'Billetera actualizada.';
+    } else {
+      await http.post('/wallets', payload);
+      walletMsg.value = 'Billetera creada.';
+    }
+    newWallet.value = emptyWalletForm();
+    editingWalletId.value = null;
+    await loadWallets();
+    setTimeout(() => (walletMsg.value = ''), 2500);
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    walletErr.value = err?.response?.data?.message || 'No se pudo guardar la billetera.';
+  }
+}
+
+function startEditWallet(w: Wallet) {
+  editingWalletId.value = w.id;
+  newWallet.value = {
+    name: w.name,
+    provider: w.provider || '',
+    identifier: w.identifier || '',
+    isActive: w.isActive,
+    notes: w.notes || ''
+  };
+}
+
+function cancelEditWallet() {
+  editingWalletId.value = null;
+  newWallet.value = emptyWalletForm();
+}
+
+async function removeWallet(w: Wallet) {
+  if (!confirm(`Eliminar la billetera "${w.name}"? Los movimientos que la referencian quedarán sin billetera asociada.`)) return;
+  try {
+    await http.delete(`/wallets/${w.id}`);
+    walletMsg.value = 'Billetera eliminada.';
+    if (editingWalletId.value === w.id) cancelEditWallet();
+    await loadWallets();
+    setTimeout(() => (walletMsg.value = ''), 2500);
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    walletErr.value = err?.response?.data?.message || 'No se pudo eliminar la billetera.';
+  }
+}
+
+// ---- Respaldos ----
+const backupBusy = ref(false);
+const importBusy = ref(false);
+const backupMsg = ref('');
+const backupErr = ref('');
+const importInput = ref<HTMLInputElement | null>(null);
+
+async function exportBackup() {
+  backupBusy.value = true; backupErr.value = ''; backupMsg.value = '';
+  try {
+    const blob = await backupApi.exportData();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `respaldo-finanzas-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    backupMsg.value = 'Respaldo descargado correctamente.';
+  } catch {
+    backupErr.value = 'No se pudo generar el respaldo.';
+  } finally { backupBusy.value = false; }
+}
+
+function pickImport() { importInput.value?.click(); }
+
+async function onImportFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+  if (!confirm('Vas a IMPORTAR datos desde un respaldo. Se AGREGARÁN a la empresa actual (lo ideal es importar en una empresa vacía). ¿Continuar?')) return;
+  importBusy.value = true; backupErr.value = ''; backupMsg.value = '';
+  try {
+    const json = JSON.parse(await file.text());
+    const res = await backupApi.importData(json);
+    const counts = res.imported || {};
+    const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ') || 'sin registros nuevos';
+    backupMsg.value = `Importación completa: ${summary}.`;
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    backupErr.value = err?.response?.data?.message || 'No se pudo importar (archivo inválido o corrupto).';
+  } finally { importBusy.value = false; }
+}
+
 async function loadProfile() {
   try {
     const { data } = await http.get<Profile>('/auth/me');
@@ -699,12 +815,14 @@ const SECTIONS = computed<SectionCard[]>(() => {
   const base: SectionCard[] = [
     { key: 'profile', title: 'Mi perfil', description: 'Tus datos, rol y moneda.', icon: User, accent: 'teal' },
     { key: 'categories', title: 'Categorías', description: 'Para clasificar ingresos y gastos.', icon: Tags, accent: 'orange' },
-    { key: 'banks', title: 'Bancos', description: 'Catálogo de bancos para tus cuentas.', icon: Landmark, accent: 'blue' }
+    { key: 'banks', title: 'Bancos', description: 'Catálogo de bancos para tus cuentas.', icon: Landmark, accent: 'blue' },
+    { key: 'wallets', title: 'Billeteras digitales', description: 'Payphone, PayPal, Takenos y otras billeteras.', icon: Smartphone, accent: 'purple' }
   ];
   if (auth.isAdmin) {
     base.push({ key: 'roles', title: 'Roles', description: 'Plantillas de permisos.', icon: ShieldCheck, accent: 'indigo' });
     base.push({ key: 'users', title: 'Usuarios', description: 'Crear y administrar usuarios.', icon: Users, accent: 'purple' });
     base.push({ key: 'smtp', title: 'Servidor de correo', description: 'Configura el SMTP para enviar emails (bienvenida, avisos).', icon: Mail, accent: 'cyan' });
+    base.push({ key: 'backups', title: 'Respaldos', description: 'Exporta e importa todos tus datos para migrar o restaurar.', icon: Archive, accent: 'green' });
   }
   return base;
 });
@@ -754,6 +872,7 @@ onMounted(async () => {
   await Promise.all([
     loadCategories(),
     loadBanks(),
+    loadWallets(),
     loadProfile(),
     auth.isAdmin ? loadSmtp() : Promise.resolve()
   ]);
@@ -907,9 +1026,9 @@ onMounted(async () => {
       </form>
 
       <div class="tab-filter">
-        <button type="button" :class="{ active: filter === 'ALL' }" @click="filter = 'ALL'">Todas</button>
-        <button type="button" :class="{ active: filter === 'INCOME' }" @click="filter = 'INCOME'">Ingresos</button>
-        <button type="button" :class="{ active: filter === 'EXPENSE' }" @click="filter = 'EXPENSE'">Gastos</button>
+        <button type="button" class="tab-filter-btn" :class="{ active: filter === 'ALL' }" @click="filter = 'ALL'">Todas</button>
+        <button type="button" class="tab-filter-btn" :class="{ active: filter === 'INCOME' }" @click="filter = 'INCOME'">Ingresos</button>
+        <button type="button" class="tab-filter-btn" :class="{ active: filter === 'EXPENSE' }" @click="filter = 'EXPENSE'">Gastos</button>
       </div>
 
       <table class="recent-table" style="margin-top: 12px">
@@ -1043,6 +1162,150 @@ onMounted(async () => {
           </td></tr>
         </tbody>
       </table>
+    </div>
+
+    <div v-if="activeSection === 'wallets'" class="panel">
+      <div class="panel-header"><h2>{{ editingWalletId !== null ? 'Editar billetera' : 'Nueva billetera digital' }}</h2></div>
+      <form class="form" @submit.prevent="addWallet">
+        <div class="form-grid">
+          <div class="field">
+            <label for="wallet-name">Nombre</label>
+            <input id="wallet-name" v-model="newWallet.name" required minlength="2" maxlength="80" placeholder="ej. Payphone personal, PayPal negocio" />
+            <small class="hint">Aparecerá al registrar movimientos con billetera.</small>
+          </div>
+          <div class="field">
+            <label for="wallet-provider">Proveedor</label>
+            <input id="wallet-provider" v-model="newWallet.provider" maxlength="60" list="wallet-providers" placeholder="ej. Payphone, PayPal, Takenos" />
+            <datalist id="wallet-providers">
+              <option value="Payphone"></option>
+              <option value="PayPal"></option>
+              <option value="Takenos"></option>
+              <option value="Mercado Pago"></option>
+              <option value="Binance Pay"></option>
+            </datalist>
+            <small class="hint">Opcional. Plataforma de la billetera.</small>
+          </div>
+          <div class="field">
+            <label for="wallet-id">Usuario / Correo / Teléfono</label>
+            <input id="wallet-id" v-model="newWallet.identifier" maxlength="120" placeholder="ej. correo@ejemplo.com, 0991234567" />
+            <small class="hint">Opcional. Identificador de la cuenta.</small>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="wallet-notes">Notas</label>
+          <textarea id="wallet-notes" v-model="newWallet.notes" rows="2" maxlength="300" placeholder="Detalles adicionales (opcional)"></textarea>
+        </div>
+
+        <div class="form-footer">
+          <div class="field field-narrow">
+            <label>Estado</label>
+            <div class="bank-toggle-row">
+              <button
+                type="button"
+                role="switch"
+                :aria-checked="newWallet.isActive"
+                class="toggle-switch"
+                :class="{ on: newWallet.isActive }"
+                @click="newWallet.isActive = !newWallet.isActive"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+              <span class="toggle-label" :class="{ on: newWallet.isActive }">
+                {{ newWallet.isActive ? 'Activa' : 'Inactiva' }}
+              </span>
+            </div>
+            <small class="hint">Si está inactiva no aparece al registrar movimientos.</small>
+          </div>
+          <div class="form-actions">
+            <button v-if="editingWalletId !== null" type="button" class="ghost" @click="cancelEditWallet"><X :size="16" /> Cancelar</button>
+            <button type="submit"><component :is="editingWalletId !== null ? Pencil : Plus" :size="16" /> {{ editingWalletId !== null ? 'Guardar cambios' : 'Agregar billetera' }}</button>
+          </div>
+        </div>
+
+        <p v-if="walletMsg" class="hint-msg">{{ walletMsg }}</p>
+        <p v-if="walletErr" class="error">{{ walletErr }}</p>
+      </form>
+
+      <table class="recent-table banks-table" style="margin-top: 12px">
+        <thead>
+          <tr>
+            <th class="col-name">Billetera</th>
+            <th class="col-kind center">Proveedor</th>
+            <th class="col-num">Identificador</th>
+            <th class="col-status center">Estado</th>
+            <th class="col-notes">Notas</th>
+            <th class="col-actions center">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="w in wallets" :key="w.id">
+            <td>👛 <strong>{{ w.name }}</strong></td>
+            <td class="center">
+              <span v-if="w.provider" class="cat-pill">{{ w.provider }}</span>
+              <small v-else class="hint">—</small>
+            </td>
+            <td>
+              <span v-if="w.identifier" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace">{{ w.identifier }}</span>
+              <small v-else class="hint">—</small>
+            </td>
+            <td class="center">
+              <span v-if="w.isActive" class="cat-pill" style="background:#dcfce7;color:#166534">Activa</span>
+              <span v-else class="cat-pill" style="background:#fee2e2;color:#991b1b">Inactiva</span>
+            </td>
+            <td><small class="hint">{{ w.notes || '—' }}</small></td>
+            <td class="center">
+              <div class="row-actions">
+                <button type="button" class="ghost mini" @click="startEditWallet(w)" :disabled="editingWalletId === w.id"><Pencil :size="14" /></button>
+                <button type="button" class="ghost mini danger" @click="removeWallet(w)"><Trash2 :size="14" /></button>
+              </div>
+            </td>
+          </tr>
+          <tr v-if="!wallets.length"><td colspan="6">
+            <div class="empty-state">
+              <div class="empty-state-illustration"><Smartphone :size="36" /></div>
+              <strong>Sin billeteras digitales</strong>
+              <p>Agrega Payphone, PayPal, Takenos u otras para usarlas al registrar movimientos.</p>
+            </div>
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div v-if="activeSection === 'backups'" class="panel">
+      <div class="panel-header"><h2>Respaldos y migración</h2></div>
+      <p class="hint" style="margin-bottom:16px">
+        Exporta toda tu información (cuentas, movimientos, facturas, comprobantes, deudas, etc.) a un archivo,
+        o impórtala en otra empresa para migrar o restaurar.
+      </p>
+
+      <div class="backup-cards">
+        <div class="backup-card">
+          <div class="backup-ic"><Download :size="22" /></div>
+          <strong>Exportar respaldo</strong>
+          <small>Descarga un archivo JSON con TODOS tus datos, incluidos los comprobantes adjuntos.</small>
+          <button type="button" @click="exportBackup" :disabled="backupBusy">
+            <Download :size="16" /> {{ backupBusy ? 'Generando…' : 'Descargar respaldo' }}
+          </button>
+        </div>
+        <div class="backup-card">
+          <div class="backup-ic up"><Upload :size="22" /></div>
+          <strong>Importar respaldo</strong>
+          <small>Restaura desde un archivo de respaldo. Los datos se agregan a la empresa actual.</small>
+          <input ref="importInput" type="file" accept="application/json,.json" class="backup-file" @change="onImportFile" />
+          <button type="button" class="secondary" @click="pickImport" :disabled="importBusy">
+            <Upload :size="16" /> {{ importBusy ? 'Importando…' : 'Seleccionar archivo…' }}
+          </button>
+        </div>
+      </div>
+
+      <p v-if="backupMsg" class="hint-msg" style="margin-top:14px">{{ backupMsg }}</p>
+      <p v-if="backupErr" class="error" style="margin-top:14px">{{ backupErr }}</p>
+
+      <div class="backup-note">
+        <strong>⚠️ Recomendación para migrar</strong>
+        <p>Crea la empresa destino, entra en ella y luego importa el respaldo estando vacía, para evitar duplicados.</p>
+      </div>
     </div>
 
     <div v-if="activeSection === 'super-admin' && auth.isSuper" class="panel">
@@ -1649,8 +1912,23 @@ button.toggle-switch:focus-visible {
 .required-mark { color: #ef4444; font-weight: 700; }
 .check-field .inline-check { display: flex; align-items: center; gap: 8px; color: #1f2937; cursor: pointer; padding: 8px 0; }
 .tab-filter { display: flex; gap: 6px; margin-top: 16px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
-.tab-filter button { background: transparent; border: 1px solid #e5e7eb; border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer; color: #4b5563; }
-.tab-filter button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+.tab-filter-btn { background: transparent; border: 1px solid #e5e7eb; border-radius: 999px; padding: 5px 14px; font-size: 13px; font-weight: 600; cursor: pointer; color: #475569; transition: all .15s ease; }
+.tab-filter-btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
+.tab-filter-btn.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+
+/* Respaldos */
+.backup-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.backup-card { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 18px; background: #fff; }
+.backup-ic { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: #ecfdf5; color: #059669; }
+.backup-ic.up { background: #eff6ff; color: #2563eb; }
+.backup-card strong { font-size: 15px; color: #0f172a; }
+.backup-card small { font-size: 12.5px; color: #64748b; }
+.backup-card button { margin-top: 6px; }
+.backup-file { display: none; }
+.backup-note { margin-top: 18px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 12px; padding: 12px 14px; }
+.backup-note strong { color: #92400e; font-size: 13px; }
+.backup-note p { color: #b45309; font-size: 12.5px; margin: 4px 0 0; }
+@media (max-width: 640px) { .backup-cards { grid-template-columns: 1fr; } }
 .color-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; border: 1px solid rgba(0,0,0,0.1); }
 .cat-icon-text { display: inline-block; margin-right: 6px; color: #6b7280; font-size: 12px; }
 .icon-trigger {

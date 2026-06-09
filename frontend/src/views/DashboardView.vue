@@ -13,6 +13,7 @@ import {
 } from 'chart.js';
 import { http } from '../api/http';
 import { useAuthStore } from '../stores/auth';
+import OnboardingGuide from '../components/OnboardingGuide.vue';
 import {
   TrendingUp,
   TrendingDown,
@@ -179,6 +180,30 @@ const hasMonthlyData = computed(() => {
   return series.some((p) => Number(p.income) > 0 || Number(p.expense) > 0);
 });
 
+// --- Comparativa Ingresos vs Gastos (últimos meses de monthlySeries) ---
+const comparison = computed(() =>
+  (data.value?.monthlySeries || []).map((p) => {
+    const income = Number(p.income || 0);
+    const expense = Number(p.expense || 0);
+    const balance = income - expense;
+    const savings = income > 0 ? (balance / income) * 100 : 0;
+    return { label: p.label, income, expense, balance, savings };
+  })
+);
+const comparisonMax = computed(() =>
+  Math.max(1, ...comparison.value.map((r) => Math.max(r.income, r.expense)))
+);
+const comparisonTotals = computed(() => {
+  const c = comparison.value;
+  const income = c.reduce((a, r) => a + r.income, 0);
+  const expense = c.reduce((a, r) => a + r.expense, 0);
+  const balance = income - expense;
+  const months = c.length || 1;
+  const savings = income > 0 ? (balance / income) * 100 : 0;
+  return { income, expense, balance, savings, avgIncome: income / months, avgExpense: expense / months, months: c.length };
+});
+const barPct = (v: number) => `${Math.min(100, (v / comparisonMax.value) * 100)}%`;
+
 const doughnutData = computed(() => ({
   labels: (data.value?.expenseByCategory || []).map((c) => c.name),
   datasets: [{
@@ -272,6 +297,8 @@ function accountIcon(type: string) {
       </div>
     </header>
 
+    <OnboardingGuide />
+
     <p v-if="loading" class="dash-loading">Cargando dashboard...</p>
     <p v-else-if="error" class="error">{{ error }}</p>
 
@@ -338,6 +365,86 @@ function accountIcon(type: string) {
           <strong class="kpi-value debt">{{ formatMoney(data.kpis.debtTotal) }}</strong>
           <span class="kpi-trend muted"><small>Total pendiente</small></span>
         </div>
+      </div>
+
+      <div class="panel compare-panel">
+        <div class="panel-header">
+          <h2>Comparativa Ingresos vs Gastos</h2>
+          <span class="panel-hint">Últimos {{ comparisonTotals.months }} meses</span>
+        </div>
+
+        <div v-if="!hasMonthlyData" class="empty-state">
+          <div class="empty-state-illustration"><BarChart3 :size="36" /></div>
+          <strong>Sin datos para comparar</strong>
+          <p>Registra ingresos y gastos para ver el análisis.</p>
+        </div>
+
+        <template v-else>
+          <div class="compare-kpis">
+            <div class="compare-kpi income">
+              <small>Total ingresos</small>
+              <strong>{{ formatMoney(comparisonTotals.income) }}</strong>
+              <span>Prom. {{ formatMoney(comparisonTotals.avgIncome) }}/mes</span>
+            </div>
+            <div class="compare-kpi expense">
+              <small>Total gastos</small>
+              <strong>{{ formatMoney(comparisonTotals.expense) }}</strong>
+              <span>Prom. {{ formatMoney(comparisonTotals.avgExpense) }}/mes</span>
+            </div>
+            <div class="compare-kpi" :class="comparisonTotals.balance >= 0 ? 'is-pos' : 'is-neg'">
+              <small>Balance acumulado</small>
+              <strong>{{ formatMoney(comparisonTotals.balance) }}</strong>
+              <span>{{ comparisonTotals.balance >= 0 ? 'Ahorro neto' : 'Déficit' }}</span>
+            </div>
+            <div class="compare-kpi" :class="comparisonTotals.savings >= 0 ? 'is-pos' : 'is-neg'">
+              <small>Tasa de ahorro</small>
+              <strong>{{ comparisonTotals.savings.toFixed(1) }}%</strong>
+              <span>del ingreso total</span>
+            </div>
+          </div>
+
+          <div class="table-scroll">
+            <table class="recent-table compare-table">
+              <thead>
+                <tr>
+                  <th>Mes</th>
+                  <th class="right">Ingresos</th>
+                  <th class="right">Gastos</th>
+                  <th class="compare-bar-col">Proporción</th>
+                  <th class="right">Balance</th>
+                  <th class="right">Ahorro</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="r in comparison" :key="r.label">
+                  <td><strong>{{ r.label }}</strong></td>
+                  <td class="right pos">{{ formatMoney(r.income) }}</td>
+                  <td class="right neg">{{ formatMoney(r.expense) }}</td>
+                  <td class="compare-bar-col">
+                    <div class="bar-pair">
+                      <div class="bar-track"><div class="bar-fill income" :style="{ width: barPct(r.income) }"></div></div>
+                      <div class="bar-track"><div class="bar-fill expense" :style="{ width: barPct(r.expense) }"></div></div>
+                    </div>
+                  </td>
+                  <td class="right" :class="r.balance >= 0 ? 'pos' : 'neg'"><strong>{{ formatMoney(r.balance) }}</strong></td>
+                  <td class="right">
+                    <span class="savings-pill" :class="r.savings >= 0 ? 'is-pos' : 'is-neg'">{{ r.savings.toFixed(0) }}%</span>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot>
+                <tr class="totals-row">
+                  <td><strong>Totales</strong></td>
+                  <td class="right pos"><strong>{{ formatMoney(comparisonTotals.income) }}</strong></td>
+                  <td class="right neg"><strong>{{ formatMoney(comparisonTotals.expense) }}</strong></td>
+                  <td></td>
+                  <td class="right" :class="comparisonTotals.balance >= 0 ? 'pos' : 'neg'"><strong>{{ formatMoney(comparisonTotals.balance) }}</strong></td>
+                  <td class="right"><strong>{{ comparisonTotals.savings.toFixed(0) }}%</strong></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </template>
       </div>
 
       <div class="row-2">
@@ -518,3 +625,36 @@ function accountIcon(type: string) {
     </template>
   </section>
 </template>
+
+<style scoped>
+.compare-panel { margin-bottom: 1rem; }
+
+.compare-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+.compare-kpi { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px; background: #f8fafc; border: 1px solid #e2e8f0; }
+.compare-kpi small { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
+.compare-kpi strong { font-size: 20px; color: #0f172a; line-height: 1.2; }
+.compare-kpi > span { font-size: 11px; color: #94a3b8; }
+.compare-kpi.income strong { color: #16a34a; }
+.compare-kpi.expense strong { color: #ef4444; }
+.compare-kpi.is-pos strong { color: #16a34a; }
+.compare-kpi.is-neg strong { color: #ef4444; }
+
+.table-scroll { overflow-x: auto; }
+.compare-table .right { text-align: right; }
+.compare-bar-col { width: 26%; min-width: 150px; }
+.bar-pair { display: flex; flex-direction: column; gap: 4px; }
+.bar-track { background: #eef2f7; border-radius: 4px; height: 8px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width .3s ease; }
+.bar-fill.income { background: #16a34a; }
+.bar-fill.expense { background: #ef4444; }
+
+.savings-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.savings-pill.is-pos { background: #dcfce7; color: #15803d; }
+.savings-pill.is-neg { background: #fee2e2; color: #b91c1c; }
+
+.compare-table tfoot .totals-row td { background: #f8fafc; border-top: 2px solid #e2e8f0; }
+
+@media (max-width: 720px) {
+  .compare-kpis { grid-template-columns: repeat(2, 1fr); }
+}
+</style>

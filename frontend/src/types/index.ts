@@ -40,6 +40,23 @@ export interface BankPayload {
   accountKind?: BankAccountKind | null;
 }
 
+export interface Wallet {
+  id: number;
+  name: string;
+  provider?: string | null;
+  identifier?: string | null;
+  isActive: boolean;
+  notes?: string | null;
+}
+
+export interface WalletPayload {
+  name: string;
+  provider?: string | null;
+  identifier?: string | null;
+  isActive?: boolean;
+  notes?: string | null;
+}
+
 export interface Category {
   id: number;
   name: string;

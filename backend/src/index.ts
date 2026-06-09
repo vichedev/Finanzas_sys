@@ -16,11 +16,17 @@ import { accountsRouter } from './routes/tenant/accounts.routes';
 import { cardsRouter } from './routes/tenant/cards.routes';
 import { categoriesRouter } from './routes/tenant/categories.routes';
 import { banksRouter } from './routes/tenant/banks.routes';
+import { walletsRouter } from './routes/tenant/wallets.routes';
 import { movementsRouter } from './routes/tenant/movements.routes';
 import { debtsRouter } from './routes/tenant/debts.routes';
 import { recurringsRouter } from './routes/tenant/recurrings.routes';
 import { invoicesRouter } from './routes/tenant/invoices.routes';
 import { dashboardRouter } from './routes/tenant/dashboard.routes';
+import { onboardingRouter } from './routes/tenant/onboarding.routes';
+import { notificationsRouter } from './routes/tenant/notifications.routes';
+import { attachmentsRouter } from './routes/tenant/attachments.routes';
+import { backupRouter } from './routes/tenant/backup.routes';
+import { runReminderScan } from './lib/reminders';
 import { adminRouter as tenantAdminRouter } from './routes/tenant/admin.routes';
 import { reportsRouter } from './routes/tenant/reports.routes';
 import { requireAuth } from './middleware/auth';
@@ -50,6 +56,10 @@ app.use(cors({
   },
   credentials: true
 }));
+// Parsers de mayor tamaño para subir comprobantes e importar respaldos
+// (deben ir ANTES del json global de 256kb; express.json no re-parsea si el body ya se leyó).
+app.use('/api/attachments', express.json({ limit: '12mb' }));
+app.use('/api/backup/import', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '256kb' }));
 app.use(pinoHttp({
   logger,
@@ -95,11 +105,16 @@ app.use('/api/accounts',   tenantScope, accountsRouter);
 app.use('/api/cards',      tenantScope, cardsRouter);
 app.use('/api/categories', tenantScope, categoriesRouter);
 app.use('/api/banks',      tenantScope, banksRouter);
+app.use('/api/wallets',    tenantScope, walletsRouter);
 app.use('/api/movements',  tenantScope, movementsRouter);
 app.use('/api/debts',      tenantScope, debtsRouter);
 app.use('/api/recurrings', tenantScope, recurringsRouter);
 app.use('/api/invoices',   tenantScope, invoicesRouter);
 app.use('/api/dashboard',  tenantScope, dashboardRouter);
+app.use('/api/onboarding', tenantScope, onboardingRouter);
+app.use('/api/notifications', tenantScope, notificationsRouter);
+app.use('/api/attachments', tenantScope, attachmentsRouter);
+app.use('/api/backup',      tenantScope, backupRouter);
 app.use('/api/admin',      tenantScope, adminWriteLimiter, tenantAdminRouter);
 app.use('/api/reports',    tenantScope, reportsRouter);
 
@@ -121,3 +136,10 @@ process.on('unhandledRejection', (reason) => logger.error({ reason }, 'unhandled
 process.on('uncaughtException', (err) => logger.error({ err }, 'uncaughtException'));
 
 app.listen(port, () => logger.info({ port }, 'API Finanzas escuchando'));
+
+// Scheduler de recordatorios (vencimientos, IVA): al arrancar y cada 12 h.
+// Es idempotente (dedupe), así que reinicios no duplican notificaciones.
+const REMINDER_INTERVAL_MS = 12 * 60 * 60 * 1000;
+setTimeout(() => { runReminderScan().catch(() => {}); }, 30_000);
+const reminderTimer = setInterval(() => { runReminderScan().catch(() => {}); }, REMINDER_INTERVAL_MS);
+reminderTimer.unref();

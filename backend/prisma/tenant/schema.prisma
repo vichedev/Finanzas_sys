@@ -104,6 +104,7 @@ model User {
   role      UserRole @default(USUARIO_EMPRESA)
   currency  String   @default("USD")
   isActive  Boolean  @default(true)
+  emailNotifications Boolean @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -115,6 +116,41 @@ model User {
   recurrings RecurringRule[]
   banks      Bank[]
   invoices   Invoice[]
+  wallets    Wallet[]
+  notifications Notification[]
+  attachments Attachment[]
+}
+
+model Attachment {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityType String   // MOVEMENT | INVOICE | DEBT
+  entityId   Int
+  filename   String
+  mimeType   String
+  size       Int
+  data       Bytes    // contenido del archivo (imagen/PDF)
+  createdAt  DateTime @default(now())
+
+  @@index([userId, entityType, entityId])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String   // MOVEMENT_CREATED | PAYMENT_DUE | VAT_DUE | LOW_BALANCE
+  title     String
+  body      String
+  link      String?  // ruta en el frontend (ej. /debts)
+  dedupeKey String?  // evita recordatorios duplicados
+  isRead    Boolean  @default(false)
+  emailSent Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead, createdAt])
+  @@index([userId, dedupeKey])
 }
 
 model Account {
@@ -197,6 +233,8 @@ model Movement {
   account         Account?      @relation(fields: [accountId], references: [id], onDelete: SetNull)
   cardId          Int?
   card            Card?         @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  walletId        Int?
+  wallet          Wallet?       @relation(fields: [walletId], references: [id], onDelete: SetNull)
   categoryId      Int?
   category        Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
@@ -213,6 +251,7 @@ model Movement {
   vendor          String?
   isCredit        Boolean       @default(false)
   dueDate         DateTime?
+  commission      Decimal?      @db.Decimal(14, 2) // Comisión (ej. transferencia interbancaria)
 
   installmentNumber Int?
   installmentTotal  Int?
@@ -241,6 +280,24 @@ model Bank {
   movementsFrom Movement[] @relation("MovementFromBank")
   movementsTo   Movement[] @relation("MovementToBank")
   accounts      Account[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model Wallet {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name          String                // Nombre visible (ej. "Payphone personal")
+  provider      String?               // Proveedor: Payphone, PayPal, Takenos…
+  identifier    String?               // Correo / teléfono / usuario de la billetera
+  isActive      Boolean  @default(true)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  movements     Movement[]
 
   @@unique([userId, name])
   @@index([userId])

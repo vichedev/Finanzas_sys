@@ -147,8 +147,8 @@ onMounted(load);
             <div class="field">
               <label>Tipo <span class="required-mark">*</span></label>
               <div class="type-toggle">
-                <button type="button" :class="{ active: form.type === 'INCOME' }" @click="form.type = 'INCOME'">💵 Ingreso</button>
-                <button type="button" :class="{ active: form.type === 'EXPENSE' }" @click="form.type = 'EXPENSE'">🛒 Gasto</button>
+                <button type="button" class="type-toggle-btn type-income" :class="{ active: form.type === 'INCOME' }" @click="form.type = 'INCOME'">💵 Ingreso</button>
+                <button type="button" class="type-toggle-btn type-expense" :class="{ active: form.type === 'EXPENSE' }" @click="form.type = 'EXPENSE'">🛒 Gasto</button>
               </div>
               <small class="hint">Ingreso suma, gasto resta.</small>
             </div>
@@ -293,8 +293,20 @@ onMounted(load);
 .mini-kpi-value { font-size: 14px; margin-top: 2px; }
 .required-mark { color: #ef4444; font-weight: 700; }
 .type-toggle { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-.type-toggle button { padding: 10px; border: 2px solid #e2e8f0; background: white; border-radius: 8px; font-weight: 600; cursor: pointer; color: #475569; }
-.type-toggle button.active { background: var(--color-primary-soft); border-color: var(--color-primary); color: var(--color-primary-active); }
+.type-toggle-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 11px 12px;
+  border: 1.5px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: 10px;
+  font-weight: 600; font-size: 14px;
+  color: var(--color-text-soft);
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, color .15s ease, transform .12s ease;
+}
+.type-toggle-btn:hover { border-color: var(--color-border-strong); background: var(--color-surface-2); transform: translateY(-1px); }
+.type-toggle-btn.type-income.active { background: var(--color-success-soft); border-color: var(--color-success-text); color: var(--color-success-text); }
+.type-toggle-btn.type-expense.active { background: var(--color-danger-soft); border-color: var(--color-danger-text); color: var(--color-danger-text); }
 .recent-table .pos { color: var(--color-success-text); font-weight: 600; }
 .recent-table .neg { color: #ef4444; font-weight: 600; }
 .cat-pill.type-income { background: #ecfdf5; color: #047857; }

@@ -3,6 +3,10 @@ import { z } from 'zod';
 import { Prisma } from '.prisma/tenant';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
+import { createNotification } from '../../lib/notifications';
+
+const MOVE_LABEL: Record<string, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra' };
+const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
 
 export const movementsRouter = Router();
 movementsRouter.use(requireAuth, (req, res, next) => requirePermission('movements', req.method === 'GET' ? 'read' : 'write')(req, res, next));
@@ -19,6 +23,7 @@ const movementSchema = z.object({
   paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'DEPOSIT', 'DEBIT_CARD', 'CREDIT_CARD', 'WALLET', 'OTHER']),
   accountId: z.coerce.number().optional().nullable(),
   cardId: z.coerce.number().optional().nullable(),
+  walletId: z.coerce.number().optional().nullable(),
   categoryId: z.coerce.number().optional().nullable(),
   debtId: z.coerce.number().optional().nullable(),
   recurringRuleId: z.coerce.number().optional().nullable(),
@@ -27,6 +32,7 @@ const movementSchema = z.object({
   vendor: z.string().trim().max(120).optional().nullable(),
   isCredit: z.coerce.boolean().optional().default(false),
   dueDate: z.coerce.date().optional().nullable(),
+  commission: z.coerce.number().min(0).max(99_999_999.99).optional().nullable(),
   familyMember: z.string().trim().max(80).optional().nullable(),
   notes: z.string().trim().max(1000).optional().nullable(),
   installmentNumber: z.coerce.number().int().min(1).max(360).optional().nullable(),
@@ -71,11 +77,12 @@ function debtDelta(type: string, amount: number) {
 async function assertOwnership(
   tx: Prisma.TransactionClient,
   userId: number,
-  ids: { accountId?: number | null; cardId?: number | null; categoryId?: number | null; debtId?: number | null; recurringRuleId?: number | null; fromBankId?: number | null; toBankId?: number | null }
+  ids: { accountId?: number | null; cardId?: number | null; walletId?: number | null; categoryId?: number | null; debtId?: number | null; recurringRuleId?: number | null; fromBankId?: number | null; toBankId?: number | null }
 ) {
   const checks: Promise<unknown>[] = [];
   if (ids.accountId) checks.push(tx.account.findFirstOrThrow({ where: { id: ids.accountId, userId }, select: { id: true } }));
   if (ids.cardId) checks.push(tx.card.findFirstOrThrow({ where: { id: ids.cardId, userId }, select: { id: true } }));
+  if (ids.walletId) checks.push(tx.wallet.findFirstOrThrow({ where: { id: ids.walletId, userId }, select: { id: true } }));
   if (ids.categoryId) checks.push(tx.category.findFirstOrThrow({ where: { id: ids.categoryId, userId }, select: { id: true } }));
   if (ids.debtId) checks.push(tx.debt.findFirstOrThrow({ where: { id: ids.debtId, userId }, select: { id: true } }));
   if (ids.recurringRuleId) checks.push(tx.recurringRule.findFirstOrThrow({ where: { id: ids.recurringRuleId, userId }, select: { id: true } }));
@@ -145,7 +152,7 @@ movementsRouter.get('/', async (req, res) => {
 
   const rows = await req.tenantPrisma!.movement.findMany({
     where,
-    include: { category: true, account: true, card: true, debt: true, fromBank: true, toBank: true },
+    include: { category: true, account: true, card: true, wallet: true, debt: true, fromBank: true, toBank: true },
     orderBy: { movementDate: 'desc' },
     take: 500
   });
@@ -164,6 +171,30 @@ movementsRouter.post('/', async (req, res) => {
     await applyDeltas(tx, userId, body);
     return movement;
   });
+
+  // Notificaciones (no bloquean la respuesta)
+  void (async () => {
+    const prisma = req.tenantPrisma!;
+    await createNotification(prisma, {
+      userId, type: 'MOVEMENT_CREATED',
+      title: 'Nuevo movimiento',
+      body: `${MOVE_LABEL[row.type] || row.type}: "${row.description}" · ${fmtMoney(row.amount)}`,
+      link: '/movements', email: true
+    });
+    if (row.accountId) {
+      const acc = await prisma.account.findUnique({ where: { id: row.accountId }, select: { name: true, currentBalance: true } });
+      if (acc && Number(acc.currentBalance) < 0) {
+        await createNotification(prisma, {
+          userId, type: 'LOW_BALANCE',
+          title: 'Saldo negativo',
+          body: `La cuenta "${acc.name}" quedó en ${fmtMoney(acc.currentBalance)}`,
+          link: '/accounts',
+          dedupeKey: `low-balance:${row.accountId}:${new Date().toISOString().slice(0, 10)}`,
+          email: true
+        });
+      }
+    }
+  })().catch(() => { /* ya logueado dentro de createNotification */ });
 
   res.status(201).json(row);
 });
@@ -197,6 +228,7 @@ movementsRouter.delete('/:id', async (req, res) => {
     const prev = await tx.movement.findUnique({ where: { id } });
     if (!prev || prev.userId !== userId) throw Object.assign(new Error('Not found'), { code: 'P2025' });
     await revertDeltas(tx, userId, prev);
+    await tx.attachment.deleteMany({ where: { userId, entityType: 'MOVEMENT', entityId: id } });
     await tx.movement.delete({ where: { id } });
   });
 

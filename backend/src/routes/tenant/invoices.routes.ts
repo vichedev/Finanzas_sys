@@ -177,6 +177,7 @@ invoicesRouter.delete('/:id', async (req, res) => {
   if (!existing || existing.userId !== req.tenantUserId!) {
     return res.status(404).json({ message: 'Recurso no encontrado' });
   }
+  await req.tenantPrisma!.attachment.deleteMany({ where: { userId: req.tenantUserId!, entityType: 'INVOICE', entityId: id } });
   await req.tenantPrisma!.invoice.delete({ where: { id, userId: req.tenantUserId! } });
   res.status(204).send();
 });

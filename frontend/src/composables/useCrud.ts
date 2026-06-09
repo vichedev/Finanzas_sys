@@ -35,6 +35,8 @@ export interface UseCrud<T extends { id: number }, F> {
   loading: Ref<boolean>;
   saving: Ref<boolean>;
   isEditing: Ref<boolean>;
+  /** Última entidad creada/actualizada por save() (o null). */
+  lastSaved: Ref<T | null>;
   load: () => Promise<void>;
   save: () => Promise<void>;
   startEdit: (item: T) => void;
@@ -50,6 +52,7 @@ export function useCrud<T extends { id: number }, F>(opts: UseCrudOptions<T, F>)
   const loading = ref(false);
   const saving = ref(false);
   const isEditing = ref(false);
+  const lastSaved = ref(null) as Ref<T | null>;
 
   async function load() {
     loading.value = true;
@@ -78,10 +81,10 @@ export function useCrud<T extends { id: number }, F>(opts: UseCrudOptions<T, F>)
     try {
       const payload = opts.toPayload ? opts.toPayload(form.value) : form.value;
       if (editingId.value !== null) {
-        await opts.service.update(editingId.value, payload);
+        lastSaved.value = await opts.service.update(editingId.value, payload);
         toast.success(opts.labels?.updated ?? 'Cambios guardados.');
       } else {
-        await opts.service.create(payload);
+        lastSaved.value = await opts.service.create(payload);
         toast.success(opts.labels?.created ?? 'Creado correctamente.');
       }
       resetForm();
@@ -119,6 +122,7 @@ export function useCrud<T extends { id: number }, F>(opts: UseCrudOptions<T, F>)
     loading,
     saving,
     isEditing,
+    lastSaved,
     load,
     save,
     startEdit,

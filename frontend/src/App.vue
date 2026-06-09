@@ -4,6 +4,7 @@ import type { Component } from 'vue';
 import { useAuthStore, type ModuleName } from './stores/auth';
 import { useRoute, useRouter } from 'vue-router';
 import ToastHost from './components/ToastHost.vue';
+import NotificationBell from './components/NotificationBell.vue';
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -164,6 +165,7 @@ watch(
         </button>
         <h1 class="topbar-title">{{ pageTitle }}</h1>
         <div class="topbar-right">
+          <NotificationBell v-if="!auth.isSuper" />
           <span class="topbar-chip">
             <ShieldCheck :size="14" />
             {{ auth.isSuper ? 'Plataforma' : auth.tenant?.legalName || 'Finanzas' }}
