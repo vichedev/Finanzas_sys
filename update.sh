@@ -63,11 +63,9 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-# Si cambió el schema global (o se fuerza), aplicar db push del schema global
-if [[ "$REBUILD_ALL" == "1" ]] || git diff --name-only "$PREV" "$CURR" | grep -q "prisma/global/schema.prisma"; then
-  echo "→ Sincronizando el schema global..."
-  docker compose exec -T backend npm run prisma:push:global || true
-fi
+# El schema GLOBAL lo aplica el docker-entrypoint del backend en cada arranque
+# (compone GLOBAL_DATABASE_URL desde POSTGRES_*). Como el rebuild reinicia el
+# backend, ya queda sincronizado; no hace falta un push manual aquí.
 
 # El schema tenant no se aplica con db push directo (cada tenant tiene su DB).
 # sync:tenants:prod recorre TODAS las BD de empresas y aplica el schema tenant
