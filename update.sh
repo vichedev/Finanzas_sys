@@ -30,12 +30,17 @@ PREV=$(git rev-parse --short HEAD)
 git pull --ff-only
 CURR=$(git rev-parse --short HEAD)
 
-if [[ "$PREV" == "$CURR" ]]; then
+if [[ "$PREV" == "$CURR" && "$REBUILD_ALL" != "1" ]]; then
   echo "✓ Ya está al día ($CURR). Nada que hacer."
+  echo "  (Si actualizaste y no ves cambios, fuerza la reconstrucción: bash update.sh --rebuild-all)"
   exit 0
 fi
 
-echo "→ Cambios: $PREV → $CURR"
+if [[ "$PREV" == "$CURR" ]]; then
+  echo "→ Sin commits nuevos, pero --rebuild-all forzará reconstrucción y sincronización."
+else
+  echo "→ Cambios: $PREV → $CURR"
+fi
 
 # Detectar si backend o schema cambiaron para decidir si reconstruir backend
 BACKEND_CHANGED=0
@@ -58,17 +63,17 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-# Si cambió el schema global, aplicar db push solo al schema global
-if git diff --name-only "$PREV" "$CURR" | grep -q "prisma/global/schema.prisma"; then
-  echo "→ Aplicando cambios al schema global (prisma db push global)..."
+# Si cambió el schema global (o se fuerza), aplicar db push del schema global
+if [[ "$REBUILD_ALL" == "1" ]] || git diff --name-only "$PREV" "$CURR" | grep -q "prisma/global/schema.prisma"; then
+  echo "→ Sincronizando el schema global..."
   docker compose exec -T backend npm run prisma:push:global || true
 fi
 
 # El schema tenant no se aplica con db push directo (cada tenant tiene su DB).
 # sync:tenants:prod recorre TODAS las BD de empresas y aplica el schema tenant
 # actual (aditivo e idempotente: agrega tablas/columnas nuevas como Invoice).
-if git diff --name-only "$PREV" "$CURR" | grep -q "prisma/tenant/schema.prisma"; then
-  echo "→ Cambió prisma/tenant/schema.prisma. Sincronizando el schema en todas las empresas..."
+if [[ "$REBUILD_ALL" == "1" ]] || git diff --name-only "$PREV" "$CURR" | grep -q "prisma/tenant/schema.prisma"; then
+  echo "→ Sincronizando el schema de todas las empresas..."
   if docker compose exec -T backend npm run sync:tenants:prod; then
     echo "✓ Schema tenant sincronizado en todas las empresas."
   else
