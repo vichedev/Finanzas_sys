@@ -39,17 +39,16 @@ watch(() => auth.isAuthenticated, (v) => {
   }
 }, { immediate: true });
 
-const drawerOpen = ref(false);
-const collapsed = ref(typeof localStorage !== 'undefined' && localStorage.getItem('finanzas_sidebar_collapsed') === '1');
+// Estado del sidebar: expandido (icono + texto) o colapsado (solo iconos).
+// Por defecto colapsado en pantallas pequeñas; la preferencia se recuerda.
+const STORED_COLLAPSED = typeof localStorage !== 'undefined' ? localStorage.getItem('finanzas_sidebar_collapsed') : null;
+const collapsed = ref(
+  STORED_COLLAPSED !== null ? STORED_COLLAPSED === '1' : (typeof window !== 'undefined' && window.innerWidth <= 1024)
+);
 
-// En móvil abre/cierra el drawer; en escritorio colapsa/expande el sidebar.
 function toggleSidebar() {
-  if (typeof window !== 'undefined' && window.innerWidth <= 1024) {
-    drawerOpen.value = !drawerOpen.value;
-  } else {
-    collapsed.value = !collapsed.value;
-    try { localStorage.setItem('finanzas_sidebar_collapsed', collapsed.value ? '1' : '0'); } catch { /* ignore */ }
-  }
+  collapsed.value = !collapsed.value;
+  try { localStorage.setItem('finanzas_sidebar_collapsed', collapsed.value ? '1' : '0'); } catch { /* ignore */ }
 }
 
 onMounted(() => {
@@ -107,19 +106,11 @@ const initials = computed(() => {
 });
 const roleLabel = computed(() => (auth.isSuper ? 'Super Admin' : auth.isAdmin ? 'Administrador' : 'Usuario'));
 
-watch(
-  () => route.fullPath,
-  () => {
-    drawerOpen.value = false;
-  }
-);
 </script>
 
 <template>
   <div v-if="auth.isAuthenticated" class="app-shell" :class="{ 'is-collapsed': collapsed }">
-    <div v-if="drawerOpen" class="drawer-backdrop" @click="drawerOpen = false" />
-
-    <aside class="sidebar" :class="{ 'is-open': drawerOpen }">
+    <aside class="sidebar">
       <div class="sidebar-top">
         <div class="brand">
           <img
@@ -147,7 +138,7 @@ watch(
 
       <nav>
         <template v-if="auth.isSuper">
-          <RouterLink :to="superItem.to" class="nav-item" :class="{ 'is-active': isActive(superItem) }">
+          <RouterLink :to="superItem.to" class="nav-item" :title="superItem.label" :class="{ 'is-active': isActive(superItem) }">
             <component :is="superItem.icon" class="nav-icon" :size="18" :stroke-width="2" />
             <span>{{ superItem.label }}</span>
           </RouterLink>
@@ -160,6 +151,7 @@ watch(
               :key="it.to"
               :to="it.to"
               class="nav-item"
+              :title="it.label"
               :class="{ 'is-active': isActive(it) }"
             >
               <component :is="it.icon" class="nav-icon" :size="18" :stroke-width="2" />
@@ -168,7 +160,7 @@ watch(
           </div>
           <div class="nav-group">
             <p class="nav-group-title">Cuenta</p>
-            <RouterLink :to="settingsItem.to" class="nav-item" :class="{ 'is-active': isActive(settingsItem) }">
+            <RouterLink :to="settingsItem.to" class="nav-item" :title="settingsItem.label" :class="{ 'is-active': isActive(settingsItem) }">
               <component :is="settingsItem.icon" class="nav-icon" :size="18" :stroke-width="2" />
               <span>{{ settingsItem.label }}</span>
             </RouterLink>
@@ -190,9 +182,6 @@ watch(
 
     <div class="app-main">
       <header class="topbar">
-        <button class="hamburger" aria-label="Abrir o cerrar menú" @click="toggleSidebar">
-          <Menu :size="20" />
-        </button>
         <h1 class="topbar-title">{{ pageTitle }}</h1>
         <div class="topbar-right">
           <NotificationBell v-if="!auth.isSuper" />

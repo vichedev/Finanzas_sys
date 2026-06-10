@@ -152,12 +152,23 @@ h1, h2, h3, h4, p { margin: 0; }
   top: 0;
   height: 100vh;
   overflow-y: auto;
+  transition: width var(--t-base);
 }
 .sidebar::-webkit-scrollbar { width: 6px; }
 .sidebar::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 999px; }
 
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.drawer-close { display: none; }
+.drawer-close { display: inline-grid; flex-shrink: 0; }
+
+/* ---- Mini-sidebar (colapsado: solo iconos) ---- */
+.app-shell.is-collapsed .sidebar { width: 76px; padding-left: var(--space-2); padding-right: var(--space-2); }
+.app-shell.is-collapsed .sidebar-top { justify-content: center; }
+.app-shell.is-collapsed .brand,
+.app-shell.is-collapsed .nav-group-title,
+.app-shell.is-collapsed .nav-item span,
+.app-shell.is-collapsed .su-info { display: none; }
+.app-shell.is-collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
+.app-shell.is-collapsed .sidebar-user { flex-direction: column; gap: var(--space-2); align-items: center; padding: var(--space-2) 0; }
 
 .brand { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-2); min-width: 0; }
 .brand .logo {
@@ -271,10 +282,6 @@ h1, h2, h3, h4, p { margin: 0; }
   align-items: center;
   justify-content: center;
   cursor: pointer;
-}
-/* Escritorio: colapsar/expandir el sidebar con el botón de menú */
-@media (min-width: 1025px) {
-  .app-shell.is-collapsed .sidebar { display: none; }
 }
 .hamburger:hover { background: var(--color-surface-3); color: var(--color-text); }
 .topbar-title { font-size: var(--text-lg); font-weight: 700; color: var(--color-text); letter-spacing: -0.01em; }
@@ -993,26 +1000,6 @@ button.secondary { background: var(--color-text); color: var(--color-text-invers
   .quick-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 1024px) {
-  .hamburger { display: inline-flex; }
-  .drawer-close { display: inline-grid; }
-  .sidebar {
-    position: fixed;
-    top: 0; left: 0; bottom: 0;
-    width: 264px;
-    height: 100vh;
-    transform: translateX(-100%);
-    transition: transform var(--t-base);
-    z-index: 200;
-    box-shadow: var(--shadow-lg);
-  }
-  .sidebar.is-open { transform: translateX(0); }
-  .drawer-backdrop {
-    display: block;
-    position: fixed;
-    inset: 0;
-    background: rgba(15, 23, 42, 0.45);
-    z-index: 150;
-  }
   .topbar { padding: 0 var(--space-4); }
   .main-content { padding: var(--space-5); }
   .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
