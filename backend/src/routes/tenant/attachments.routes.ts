@@ -29,6 +29,53 @@ attachmentsRouter.get('/', async (req, res) => {
   res.json(rows);
 });
 
+// Todos los comprobantes del usuario, enriquecidos con el registro al que
+// pertenecen (para la sección Documentos: búsqueda, filtros, orden cronológico).
+attachmentsRouter.get('/all', async (req, res) => {
+  const userId = req.tenantUserId!;
+  const p = req.tenantPrisma!;
+  const atts = await p.attachment.findMany({
+    where: { userId },
+    select: { id: true, filename: true, mimeType: true, size: true, createdAt: true, entityType: true, entityId: true },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  const ids = (t: string) => atts.filter((a) => a.entityType === t).map((a) => a.entityId);
+  const [movs, invs, debts] = await Promise.all([
+    p.movement.findMany({ where: { id: { in: ids('MOVEMENT') } }, select: { id: true, description: true, movementDate: true } }),
+    p.invoice.findMany({ where: { id: { in: ids('INVOICE') } }, select: { id: true, number: true, counterparty: true, issueDate: true } }),
+    p.debt.findMany({ where: { id: { in: ids('DEBT') } }, select: { id: true, name: true, createdAt: true } })
+  ]);
+  const movMap = new Map(movs.map((m) => [m.id, m]));
+  const invMap = new Map(invs.map((i) => [i.id, i]));
+  const debtMap = new Map(debts.map((d) => [d.id, d]));
+
+  const ENTITY_LABEL: Record<string, string> = { MOVEMENT: 'Movimiento', INVOICE: 'Factura', DEBT: 'Deuda' };
+  const result = atts.map((a) => {
+    let contextLabel = '—';
+    let contextDate = a.createdAt as Date;
+    let link = '';
+    if (a.entityType === 'MOVEMENT') {
+      const m = movMap.get(a.entityId);
+      contextLabel = m?.description || 'Movimiento eliminado';
+      contextDate = (m?.movementDate as Date) || a.createdAt;
+      link = '/movements';
+    } else if (a.entityType === 'INVOICE') {
+      const i = invMap.get(a.entityId);
+      contextLabel = i ? (i.number ? `Factura ${i.number}` : i.counterparty) : 'Factura eliminada';
+      contextDate = (i?.issueDate as Date) || a.createdAt;
+      link = '/invoices';
+    } else if (a.entityType === 'DEBT') {
+      const d = debtMap.get(a.entityId);
+      contextLabel = d?.name || 'Deuda eliminada';
+      contextDate = (d?.createdAt as Date) || a.createdAt;
+      link = '/debts';
+    }
+    return { ...a, entityLabel: ENTITY_LABEL[a.entityType] || a.entityType, contextLabel, contextDate, link };
+  });
+  res.json(result);
+});
+
 attachmentsRouter.post('/', async (req, res) => {
   const body = createSchema.parse(req.body);
   if (!ALLOWED.includes(body.mimeType)) {

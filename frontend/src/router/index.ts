@@ -22,6 +22,7 @@ export const router = createRouter({
     { path: '/debts', component: () => import('../views/DebtsView.vue'), meta: { auth: true, module: 'debts' as ModuleName } },
     { path: '/recurrings', component: () => import('../views/RecurringsView.vue'), meta: { auth: true, module: 'recurrings' as ModuleName } },
     { path: '/invoices', component: () => import('../views/InvoicesView.vue'), meta: { auth: true, module: 'invoices' as ModuleName } },
+    { path: '/documents', component: () => import('../views/DocumentsView.vue'), meta: { auth: true } },
     { path: '/reports', component: () => import('../views/ReportsView.vue'), meta: { auth: true, module: 'reports' as ModuleName } },
     { path: '/settings', component: () => import('../views/SettingsView.vue'), meta: { auth: true } }
   ]

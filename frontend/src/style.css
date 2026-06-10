@@ -423,7 +423,7 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
-button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act) {
+button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act):not(.doc-tab):not(.doc-act):not(.doc-clear) {
   border: 0;
   border-radius: var(--radius-md);
   padding: 0 var(--space-5);
@@ -439,9 +439,9 @@ button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle
   justify-content: center;
   gap: var(--space-2);
 }
-button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act):hover { background: var(--color-primary-hover); }
-button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act):active { transform: translateY(0); background: var(--color-primary-active); }
-button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act):disabled { opacity: 0.55; cursor: not-allowed; }
+button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act):not(.doc-tab):not(.doc-act):not(.doc-clear):hover { background: var(--color-primary-hover); }
+button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act):not(.doc-tab):not(.doc-act):not(.doc-clear):active { transform: translateY(0); background: var(--color-primary-active); }
+button:not(.ghost):not(.icon-btn):not(.nav-item):not(.toggle-switch):not(.toggle-btn):not(.mini):not(.seg-toggle-btn):not(.tenant-card):not(.mov-tab):not(.type-card):not(.tabbar-btn):not(.login-btn):not(.picker-trigger):not(.pay-chip):not(.picker-item):not(.interbank-toggle):not(.type-toggle-btn):not(.tab-filter-btn):not(.notif-link):not(.notif-item):not(.att-add):not(.att-act):not(.doc-tab):not(.doc-act):not(.doc-clear):disabled { opacity: 0.55; cursor: not-allowed; }
 
 .actions-row .ghost,
 button.ghost {

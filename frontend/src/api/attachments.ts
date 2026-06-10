@@ -20,7 +20,18 @@ export interface UploadPayload {
   dataBase64: string;
 }
 
+export interface DocAttachment extends AttachmentMeta {
+  entityLabel: string;
+  contextLabel: string;
+  contextDate: string;
+  link: string;
+}
+
 export const attachmentsApi = {
+  async listAll(): Promise<DocAttachment[]> {
+    const { data } = await http.get<DocAttachment[]>('/attachments/all');
+    return data;
+  },
   async list(entityType: EntityType, entityId: number): Promise<AttachmentMeta[]> {
     const { data } = await http.get<AttachmentMeta[]>('/attachments', { params: { entityType, entityId } });
     return data;

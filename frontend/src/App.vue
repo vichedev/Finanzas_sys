@@ -13,6 +13,7 @@ import {
   HandCoins,
   Repeat,
   FileText,
+  FolderOpen,
   BarChart3,
   Settings,
   ShieldCheck,
@@ -49,7 +50,7 @@ const groups: NavGroup[] = [
   { heading: 'Tu dinero', items: [item('/accounts', Landmark, 'Cuentas', 'accounts'), item('/cards', CreditCard, 'Tarjetas', 'cards')] },
   { heading: 'Compromisos', items: [item('/debts', HandCoins, 'Deudas y cobros', 'debts'), item('/recurrings', Repeat, 'Pagos recurrentes', 'recurrings')] },
   { heading: 'Facturación', items: [item('/invoices', FileText, 'Facturas e IVA', 'invoices')] },
-  { heading: 'Análisis', items: [item('/reports', BarChart3, 'Reportes', 'reports')] }
+  { heading: 'Análisis', items: [item('/reports', BarChart3, 'Reportes', 'reports'), item('/documents', FolderOpen, 'Documentos')] }
 ];
 
 const settingsItem = item('/settings', Settings, 'Configuración');
