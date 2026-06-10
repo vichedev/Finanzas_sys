@@ -5,6 +5,7 @@
 import { onMounted, ref, watch } from 'vue';
 import { Paperclip, Eye, Trash2, FileText, Image as ImageIcon } from 'lucide-vue-next';
 import { attachmentsApi, type AttachmentMeta, type EntityType } from '../api/attachments';
+import AttachmentViewer from './AttachmentViewer.vue';
 import { useToast } from '../composables/useToast';
 
 const props = defineProps<{ entityType: EntityType; entityId: number | null }>();
@@ -61,9 +62,9 @@ async function onFiles(e: Event) {
   input.value = '';
 }
 
-async function view(a: AttachmentMeta) {
-  try { await attachmentsApi.openFile(a.id); } catch { toast.error('No se pudo abrir el archivo.'); }
-}
+const viewing = ref<AttachmentMeta | null>(null);
+const viewerOpen = ref(false);
+function view(a: AttachmentMeta) { viewing.value = a; viewerOpen.value = true; }
 async function removeServer(a: AttachmentMeta) {
   if (!confirm(`Eliminar "${a.filename}"?`)) return;
   try { await attachmentsApi.remove(a.id); list.value = list.value.filter((x) => x.id !== a.id); }
@@ -106,6 +107,8 @@ defineExpose({ flush, reset, hasPending: () => pending.value.length > 0 });
         <button type="button" class="att-act danger" title="Quitar" @click="removePending(i)"><Trash2 :size="15" /></button>
       </li>
     </ul>
+
+    <AttachmentViewer :open="viewerOpen" :attachment="viewing" @close="viewerOpen = false" />
   </div>
 </template>
 

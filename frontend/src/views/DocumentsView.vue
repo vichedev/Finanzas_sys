@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router';
 import { FileText, Image as ImageIcon, Eye, ExternalLink, Search, FolderOpen, X } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
 import PanelCard from '../components/PanelCard.vue';
+import AttachmentViewer from '../components/AttachmentViewer.vue';
 import { attachmentsApi, type DocAttachment } from '../api/attachments';
 import { useToast } from '../composables/useToast';
 
@@ -77,9 +78,9 @@ const groups = computed(() => {
   return Array.from(map, ([label, items]) => ({ label, items }));
 });
 
-async function view(d: DocAttachment) {
-  try { await attachmentsApi.openFile(d.id); } catch { toast.error('No se pudo abrir el archivo.'); }
-}
+const viewing = ref<DocAttachment | null>(null);
+const viewerOpen = ref(false);
+function view(d: DocAttachment) { viewing.value = d; viewerOpen.value = true; }
 function goTo(d: DocAttachment) { if (d.link) router.push(d.link); }
 
 async function load() {
@@ -162,6 +163,8 @@ onMounted(load);
         </div>
       </div>
     </template>
+
+    <AttachmentViewer :open="viewerOpen" :attachment="viewing" @close="viewerOpen = false" />
   </section>
 </template>
 
