@@ -2,9 +2,11 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { useBrandingStore } from '../stores/branding';
 import { Mail, Lock, Eye, EyeOff, ShieldCheck, LogIn, BarChart3 } from 'lucide-vue-next';
 
 const auth = useAuthStore();
+const branding = useBrandingStore();
 const router = useRouter();
 
 const email = ref('');
@@ -48,9 +50,12 @@ async function submit() {
     <!-- ===================== Splash de intro ===================== -->
     <div class="splash" aria-hidden="true">
       <div class="splash-logo">
-        <span class="sl-mark"><BarChart3 :size="36" :stroke-width="2.4" /></span>
-        <span class="sl-name">Finanxi</span>
-        <span class="sl-sub">Sistema de Finanzas</span>
+        <span class="sl-mark">
+          <img v-if="branding.logoUrl" :src="branding.logoUrl" alt="logo" class="brand-logo-img" />
+          <BarChart3 v-else :size="36" :stroke-width="2.4" />
+        </span>
+        <span class="sl-name">{{ branding.systemTitle || 'Finanxi' }}</span>
+        <span class="sl-sub">{{ branding.subtitle || 'Sistema de Finanzas' }}</span>
       </div>
     </div>
 
@@ -75,10 +80,13 @@ async function submit() {
       <!-- Panel formulario -->
       <section class="form-card">
         <div class="brand">
-          <span class="brand-mark"><BarChart3 :size="26" :stroke-width="2.4" /></span>
+          <span class="brand-mark">
+            <img v-if="branding.logoUrl" :src="branding.logoUrl" alt="logo" class="brand-logo-img" />
+            <BarChart3 v-else :size="26" :stroke-width="2.4" />
+          </span>
           <div class="brand-text">
-            <strong>Finanxi</strong>
-            <small>Sistema de Finanzas</small>
+            <strong>{{ branding.systemTitle || 'Finanxi' }}</strong>
+            <small>{{ branding.subtitle || 'Sistema de Finanzas' }}</small>
           </div>
         </div>
 
@@ -287,7 +295,10 @@ async function submit() {
   background: var(--color-primary-soft);
   border: 1px solid #bfdbfe;
   color: var(--color-primary);
+  overflow: hidden;
 }
+.sl-mark { overflow: hidden; }
+.brand-logo-img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .brand-text strong { display: block; font-size: 23px; font-weight: 800; color: var(--color-text); letter-spacing: -0.01em; line-height: 1.1; }
 .brand-text small { color: var(--color-text-muted); font-size: 12.5px; }
 

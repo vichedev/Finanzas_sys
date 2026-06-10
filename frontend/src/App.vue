@@ -29,10 +29,15 @@ const branding = useBrandingStore();
 const router = useRouter();
 const route = useRoute();
 
-// Carga/aplica la identidad de la empresa al autenticarse; la limpia al salir.
+// Identidad: empresa → carga del servidor; super-admin → look por defecto;
+// sin sesión (login) → identidad recordada de la última empresa usada.
 watch(() => auth.isAuthenticated, (v) => {
-  if (v && !auth.isSuper) branding.load();
-  else if (!v) branding.clear();
+  if (v) {
+    if (auth.isSuper) branding.reset();
+    else branding.load();
+  } else {
+    branding.loadPersisted();
+  }
 }, { immediate: true });
 
 const drawerOpen = ref(false);

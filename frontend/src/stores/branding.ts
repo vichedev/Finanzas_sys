@@ -1,10 +1,14 @@
 // =====================================================
 // Identidad/branding de la empresa: título, subtítulo, colores y logo.
 // Aplica los colores como variables CSS en :root y actualiza el título del
-// documento. Se carga tras autenticarse y al guardar cambios.
+// documento. Persiste un snapshot en localStorage para mostrar la identidad
+// de la última empresa usada en la pantalla de login (que es multi-empresa).
 // =====================================================
 import { defineStore } from 'pinia';
 import { brandingApi, type BrandingConfig, type BrandingPayload } from '../api/branding';
+
+const STORAGE_KEY = 'finanzas_branding';
+const MAX_PERSIST_LOGO = 1_400_000; // ~1 MB de dataURL; logos más grandes no se guardan para login
 
 // ---- helpers de color ----
 function hexToRgb(hex: string): [number, number, number] | null {
@@ -21,10 +25,17 @@ function darken(hex: string, amt: number): string {
   const rgb = hexToRgb(hex); if (!rgb) return hex;
   return rgbToHex(rgb[0] * (1 - amt), rgb[1] * (1 - amt), rgb[2] * (1 - amt));
 }
-/** Mezcla con blanco: t=0 → color, t=1 → blanco. */
 function mixWhite(hex: string, t: number): string {
   const rgb = hexToRgb(hex); if (!rgb) return hex;
   return rgbToHex(rgb[0] + (255 - rgb[0]) * t, rgb[1] + (255 - rgb[1]) * t, rgb[2] + (255 - rgb[2]) * t);
+}
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
 }
 
 const PRIMARY_VARS = ['--color-primary', '--color-primary-hover', '--color-primary-active', '--color-primary-soft', '--color-primary-text'];
@@ -36,7 +47,7 @@ interface State {
   primaryColor: string | null;
   accentColor: string | null;
   hasLogo: boolean;
-  logoUrl: string | null;
+  logoUrl: string | null; // dataURL (sirve para mostrar y persistir)
   loaded: boolean;
 }
 
@@ -72,16 +83,38 @@ export const useBrandingStore = defineStore('branding', {
       } else {
         ACCENT_VARS.forEach((v) => root.style.removeProperty(v));
       }
-      if (typeof document !== 'undefined') document.title = this.title;
+      document.title = this.systemTitle || 'Finanzas Mensuales';
     },
 
-    async loadLogo() {
-      if (this.logoUrl) { URL.revokeObjectURL(this.logoUrl); this.logoUrl = null; }
-      if (!this.hasLogo) return;
+    persist() {
       try {
-        const blob = await brandingApi.logoBlob();
-        this.logoUrl = URL.createObjectURL(blob);
-      } catch { this.logoUrl = null; }
+        const snap = {
+          systemTitle: this.systemTitle,
+          subtitle: this.subtitle,
+          primaryColor: this.primaryColor,
+          accentColor: this.accentColor,
+          logo: this.logoUrl && this.logoUrl.length <= MAX_PERSIST_LOGO ? this.logoUrl : null
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(snap));
+      } catch { /* cuota llena: ignoramos */ }
+    },
+
+    /** Aplica la identidad guardada (para el login, antes de autenticarse). */
+    loadPersisted() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const s = JSON.parse(raw);
+          this.systemTitle = s.systemTitle ?? null;
+          this.subtitle = s.subtitle ?? null;
+          this.primaryColor = s.primaryColor ?? null;
+          this.accentColor = s.accentColor ?? null;
+          this.logoUrl = s.logo ?? null;
+          this.hasLogo = !!s.logo;
+        }
+      } catch { /* ignore */ }
+      this.applyColors();
+      this.loaded = true;
     },
 
     setConfig(cfg: BrandingConfig) {
@@ -92,13 +125,22 @@ export const useBrandingStore = defineStore('branding', {
       this.hasLogo = cfg.hasLogo;
     },
 
+    async loadLogo() {
+      if (!this.hasLogo) { this.logoUrl = null; return; }
+      try {
+        const blob = await brandingApi.logoBlob();
+        this.logoUrl = await blobToDataUrl(blob);
+      } catch { this.logoUrl = null; }
+    },
+
     async load() {
       try {
         const cfg = await brandingApi.get();
         this.setConfig(cfg);
         this.applyColors();
         await this.loadLogo();
-      } catch { /* sin branding: se usan los valores por defecto */ }
+        this.persist();
+      } catch { /* sin branding: valores por defecto */ }
       finally { this.loaded = true; }
     },
 
@@ -106,24 +148,28 @@ export const useBrandingStore = defineStore('branding', {
       const cfg = await brandingApi.save(payload);
       this.setConfig(cfg);
       this.applyColors();
+      this.persist();
     },
 
     async uploadLogo(mimeType: string, dataBase64: string) {
       await brandingApi.uploadLogo(mimeType, dataBase64);
       this.hasLogo = true;
       await this.loadLogo();
+      this.persist();
     },
 
     async removeLogo() {
       await brandingApi.removeLogo();
       this.hasLogo = false;
-      await this.loadLogo();
+      this.logoUrl = null;
+      this.persist();
     },
 
-    /** Limpia el branding aplicado (al cerrar sesión). */
-    clear() {
-      if (this.logoUrl) { URL.revokeObjectURL(this.logoUrl); }
-      this.$reset();
+    /** Vuelve al look por defecto en memoria (ej. super-admin). No borra el snapshot. */
+    reset() {
+      this.systemTitle = null; this.subtitle = null;
+      this.primaryColor = null; this.accentColor = null;
+      this.hasLogo = false; this.logoUrl = null;
       this.applyColors();
     }
   }
