@@ -2,8 +2,9 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload } from 'lucide-vue-next';
+import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
+import { useBrandingStore } from '../stores/branding';
 import { http } from '../api/http';
 import { backupApi } from '../api/backup';
 import AdminUsersPanel from './AdminUsersPanel.vue';
@@ -153,8 +154,8 @@ const profile = ref<Profile | null>(null);
 const profileForm = ref({ name: '', email: '', currency: 'USD', currentPassword: '', newPassword: '' });
 const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = ref(false);
 
-type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
-const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
+type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
+const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
 const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users'];
 const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
 
@@ -655,6 +656,78 @@ async function onImportFile(e: Event) {
   } finally { importBusy.value = false; }
 }
 
+// ---- Identidad (branding) ----
+const brandingStore = useBrandingStore();
+const identity = ref({ systemTitle: '', subtitle: '', primaryColor: '#2563eb', accentColor: '#06b6d4' });
+const identityBusy = ref(false);
+const identityMsg = ref('');
+const identityErr = ref('');
+const logoInput = ref<HTMLInputElement | null>(null);
+const LOGO_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
+const COLOR_PRESETS = ['#2563eb', '#4f46e5', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#16a34a', '#0891b2', '#0f172a'];
+
+function syncIdentityForm() {
+  identity.value = {
+    systemTitle: brandingStore.systemTitle || '',
+    subtitle: brandingStore.subtitle || '',
+    primaryColor: brandingStore.primaryColor || '#2563eb',
+    accentColor: brandingStore.accentColor || '#06b6d4'
+  };
+}
+async function loadIdentity() {
+  if (!brandingStore.loaded) await brandingStore.load();
+  syncIdentityForm();
+}
+
+async function saveIdentity() {
+  identityBusy.value = true; identityErr.value = ''; identityMsg.value = '';
+  try {
+    await brandingStore.save({
+      systemTitle: identity.value.systemTitle.trim() || null,
+      subtitle: identity.value.subtitle.trim() || null,
+      primaryColor: identity.value.primaryColor || null,
+      accentColor: identity.value.accentColor || null
+    });
+    identityMsg.value = 'Identidad guardada y aplicada.';
+    setTimeout(() => (identityMsg.value = ''), 2500);
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    identityErr.value = err?.response?.data?.message || 'No se pudo guardar la identidad.';
+  } finally { identityBusy.value = false; }
+}
+
+function pickLogo() { logoInput.value?.click(); }
+async function onLogoFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
+  input.value = '';
+  if (!f) return;
+  if (!LOGO_TYPES.includes(f.type)) { identityErr.value = 'Formato no permitido (PNG, JPG, WEBP o SVG).'; return; }
+  if (f.size > 3 * 1024 * 1024) { identityErr.value = 'Logo demasiado grande (máx. 3 MB).'; return; }
+  identityBusy.value = true; identityErr.value = '';
+  try {
+    const dataBase64 = await new Promise<string>((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = reject;
+      r.readAsDataURL(f);
+    });
+    await brandingStore.uploadLogo(f.type, dataBase64);
+    identityMsg.value = 'Logo actualizado.';
+    setTimeout(() => (identityMsg.value = ''), 2500);
+  } catch {
+    identityErr.value = 'No se pudo subir el logo.';
+  } finally { identityBusy.value = false; }
+}
+async function removeLogo() {
+  if (!confirm('¿Quitar el logo actual?')) return;
+  try {
+    await brandingStore.removeLogo();
+    identityMsg.value = 'Logo eliminado.';
+    setTimeout(() => (identityMsg.value = ''), 2500);
+  } catch { identityErr.value = 'No se pudo eliminar el logo.'; }
+}
+
 async function loadProfile() {
   try {
     const { data } = await http.get<Profile>('/auth/me');
@@ -821,6 +894,7 @@ const SECTIONS = computed<SectionCard[]>(() => {
   if (auth.isAdmin) {
     base.push({ key: 'roles', title: 'Roles', description: 'Plantillas de permisos.', icon: ShieldCheck, accent: 'indigo' });
     base.push({ key: 'users', title: 'Usuarios', description: 'Crear y administrar usuarios.', icon: Users, accent: 'purple' });
+    base.push({ key: 'identity', title: 'Identidad', description: 'Logo, título y colores de tu sistema.', icon: Palette, accent: 'purple' });
     base.push({ key: 'smtp', title: 'Servidor de correo', description: 'Configura el SMTP para enviar emails (bienvenida, avisos).', icon: Mail, accent: 'cyan' });
     base.push({ key: 'backups', title: 'Respaldos', description: 'Exporta e importa todos tus datos para migrar o restaurar.', icon: Archive, accent: 'green' });
   }
@@ -874,7 +948,8 @@ onMounted(async () => {
     loadBanks(),
     loadWallets(),
     loadProfile(),
-    auth.isAdmin ? loadSmtp() : Promise.resolve()
+    auth.isAdmin ? loadSmtp() : Promise.resolve(),
+    auth.isAdmin ? loadIdentity() : Promise.resolve()
   ]);
 });
 </script>
@@ -1270,6 +1345,72 @@ onMounted(async () => {
           </td></tr>
         </tbody>
       </table>
+    </div>
+
+    <div v-if="activeSection === 'identity'" class="panel">
+      <div class="panel-header"><h2>Identidad del sistema</h2></div>
+      <p class="hint" style="margin-bottom:16px">Personaliza el logo, el nombre y los colores. Los cambios se aplican al instante en toda la app.</p>
+
+      <div class="identity-block">
+        <div class="identity-logo-preview">
+          <img v-if="brandingStore.logoUrl" :src="brandingStore.logoUrl" alt="Logo" />
+          <div v-else class="identity-logo-empty"><Palette :size="30" /></div>
+        </div>
+        <div class="identity-logo-actions">
+          <strong>Logo</strong>
+          <small class="hint">PNG, JPG, WEBP o SVG, hasta 3 MB. Se muestra en el menú lateral.</small>
+          <input ref="logoInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" class="backup-file" @change="onLogoFile" />
+          <div class="identity-logo-btns">
+            <button type="button" @click="pickLogo" :disabled="identityBusy">
+              <Upload :size="15" /> {{ brandingStore.hasLogo ? 'Cambiar logo' : 'Subir logo' }}
+            </button>
+            <button v-if="brandingStore.hasLogo" type="button" class="ghost" @click="removeLogo"><Trash2 :size="15" /> Quitar</button>
+          </div>
+        </div>
+      </div>
+
+      <form class="form" @submit.prevent="saveIdentity" style="margin-top:18px">
+        <div class="form-grid">
+          <div class="field">
+            <label for="id-title">Título del sistema</label>
+            <input id="id-title" v-model="identity.systemTitle" maxlength="60" placeholder="ej. Finanzas Acme" />
+            <small class="hint">Aparece en el menú lateral y en la pestaña del navegador.</small>
+          </div>
+          <div class="field">
+            <label for="id-sub">Subtítulo</label>
+            <input id="id-sub" v-model="identity.subtitle" maxlength="80" placeholder="ej. Gestión financiera" />
+            <small class="hint">Texto pequeño bajo el título.</small>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <div class="field">
+            <label>Color principal</label>
+            <div class="color-row">
+              <input type="color" v-model="identity.primaryColor" class="color-input" aria-label="Color principal" />
+              <input type="text" v-model="identity.primaryColor" maxlength="7" class="color-hex" />
+              <div class="color-presets">
+                <button v-for="c in COLOR_PRESETS" :key="'p' + c" type="button" class="color-dot" :style="{ background: c }" :title="c" @click="identity.primaryColor = c"></button>
+              </div>
+            </div>
+            <small class="hint">Botones, enlaces y elementos activos.</small>
+          </div>
+          <div class="field">
+            <label>Color de acento</label>
+            <div class="color-row">
+              <input type="color" v-model="identity.accentColor" class="color-input" aria-label="Color de acento" />
+              <input type="text" v-model="identity.accentColor" maxlength="7" class="color-hex" />
+            </div>
+            <small class="hint">Detalles secundarios.</small>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" :disabled="identityBusy"><Check :size="16" /> {{ identityBusy ? 'Guardando…' : 'Guardar identidad' }}</button>
+        </div>
+        <p v-if="identityMsg" class="hint-msg">{{ identityMsg }}</p>
+        <p v-if="identityErr" class="error">{{ identityErr }}</p>
+      </form>
     </div>
 
     <div v-if="activeSection === 'backups'" class="panel">
@@ -1915,6 +2056,20 @@ button.toggle-switch:focus-visible {
 .tab-filter-btn { background: transparent; border: 1px solid #e5e7eb; border-radius: 999px; padding: 5px 14px; font-size: 13px; font-weight: 600; cursor: pointer; color: #475569; transition: all .15s ease; }
 .tab-filter-btn:hover { background: #f1f5f9; border-color: #cbd5e1; }
 .tab-filter-btn.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+
+/* Identidad */
+.identity-block { display: flex; align-items: center; gap: 18px; padding: 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; }
+.identity-logo-preview { width: 88px; height: 88px; flex-shrink: 0; border-radius: 14px; background: #fff; border: 1px solid #e2e8f0; display: grid; place-items: center; overflow: hidden; }
+.identity-logo-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.identity-logo-empty { color: #cbd5e1; }
+.identity-logo-actions { display: flex; flex-direction: column; gap: 2px; }
+.identity-logo-btns { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.color-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.color-input { width: 46px; height: 38px; padding: 2px; border: 1px solid #e2e8f0; border-radius: 8px; cursor: pointer; background: #fff; }
+.color-hex { width: 96px; text-transform: uppercase; }
+.color-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.color-dot { width: 24px; height: 24px; border-radius: 999px; border: 2px solid #fff; box-shadow: 0 0 0 1px #e2e8f0; cursor: pointer; padding: 0; transition: transform .1s ease; }
+.color-dot:hover { transform: scale(1.15); }
 
 /* Respaldos */
 .backup-cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }

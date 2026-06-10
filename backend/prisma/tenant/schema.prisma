@@ -121,6 +121,17 @@ model User {
   attachments Attachment[]
 }
 
+model Branding {
+  id           Int      @id @default(1) // singleton: una sola fila por empresa
+  systemTitle  String?
+  subtitle     String?
+  primaryColor String?
+  accentColor  String?
+  logoData     Bytes?
+  logoMime     String?
+  updatedAt    DateTime @updatedAt @default(now())
+}
+
 model Attachment {
   id         Int      @id @default(autoincrement())
   userId     Int

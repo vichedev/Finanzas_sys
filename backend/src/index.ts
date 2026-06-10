@@ -26,6 +26,7 @@ import { onboardingRouter } from './routes/tenant/onboarding.routes';
 import { notificationsRouter } from './routes/tenant/notifications.routes';
 import { attachmentsRouter } from './routes/tenant/attachments.routes';
 import { backupRouter } from './routes/tenant/backup.routes';
+import { brandingRouter } from './routes/tenant/branding.routes';
 import { runReminderScan } from './lib/reminders';
 import { adminRouter as tenantAdminRouter } from './routes/tenant/admin.routes';
 import { reportsRouter } from './routes/tenant/reports.routes';
@@ -59,6 +60,7 @@ app.use(cors({
 // Parsers de mayor tamaño para subir comprobantes e importar respaldos
 // (deben ir ANTES del json global de 256kb; express.json no re-parsea si el body ya se leyó).
 app.use('/api/attachments', express.json({ limit: '12mb' }));
+app.use('/api/branding', express.json({ limit: '6mb' }));
 app.use('/api/backup/import', express.json({ limit: '64mb' }));
 app.use(express.json({ limit: '256kb' }));
 app.use(pinoHttp({
@@ -115,6 +117,7 @@ app.use('/api/onboarding', tenantScope, onboardingRouter);
 app.use('/api/notifications', tenantScope, notificationsRouter);
 app.use('/api/attachments', tenantScope, attachmentsRouter);
 app.use('/api/backup',      tenantScope, backupRouter);
+app.use('/api/branding',    tenantScope, brandingRouter);
 app.use('/api/admin',      tenantScope, adminWriteLimiter, tenantAdminRouter);
 app.use('/api/reports',    tenantScope, reportsRouter);
 

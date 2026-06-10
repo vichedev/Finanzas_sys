@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useAuthStore, type ModuleName } from './stores/auth';
+import { useBrandingStore } from './stores/branding';
 import { useRoute, useRouter } from 'vue-router';
 import ToastHost from './components/ToastHost.vue';
 import NotificationBell from './components/NotificationBell.vue';
@@ -24,8 +25,15 @@ import {
 } from 'lucide-vue-next';
 
 const auth = useAuthStore();
+const branding = useBrandingStore();
 const router = useRouter();
 const route = useRoute();
+
+// Carga/aplica la identidad de la empresa al autenticarse; la limpia al salir.
+watch(() => auth.isAuthenticated, (v) => {
+  if (v && !auth.isSuper) branding.load();
+  else if (!v) branding.clear();
+}, { immediate: true });
 
 const drawerOpen = ref(false);
 
@@ -100,15 +108,21 @@ watch(
       <div class="sidebar-top">
         <div class="brand">
           <img
-            v-if="!auth.isSuper && auth.tenant?.logoUrl"
+            v-if="!auth.isSuper && branding.logoUrl"
+            class="tenant-logo-img"
+            :src="branding.logoUrl"
+            :alt="branding.title"
+          />
+          <img
+            v-else-if="!auth.isSuper && auth.tenant?.logoUrl"
             class="tenant-logo-img"
             :src="auth.tenant.logoUrl"
             :alt="auth.tenant.legalName"
           />
           <div v-else class="logo">$</div>
           <div class="brand-text">
-            <strong>{{ auth.isSuper ? 'Super Admin' : auth.tenant?.legalName || 'Finanzas' }}</strong>
-            <small>Finanzas mensuales</small>
+            <strong>{{ auth.isSuper ? 'Super Admin' : (branding.systemTitle || auth.tenant?.legalName || 'Finanzas') }}</strong>
+            <small>{{ auth.isSuper ? 'Plataforma' : branding.subtitleText }}</small>
           </div>
         </div>
         <button class="icon-btn drawer-close" aria-label="Cerrar menú" @click="drawerOpen = false">
