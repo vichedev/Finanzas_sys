@@ -41,6 +41,17 @@ watch(() => auth.isAuthenticated, (v) => {
 }, { immediate: true });
 
 const drawerOpen = ref(false);
+const collapsed = ref(typeof localStorage !== 'undefined' && localStorage.getItem('finanzas_sidebar_collapsed') === '1');
+
+// En móvil abre/cierra el drawer; en escritorio colapsa/expande el sidebar.
+function toggleSidebar() {
+  if (typeof window !== 'undefined' && window.innerWidth <= 1024) {
+    drawerOpen.value = !drawerOpen.value;
+  } else {
+    collapsed.value = !collapsed.value;
+    try { localStorage.setItem('finanzas_sidebar_collapsed', collapsed.value ? '1' : '0'); } catch { /* ignore */ }
+  }
+}
 
 onMounted(() => {
   if (auth.isAuthenticated) auth.refreshSession();
@@ -106,7 +117,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="auth.isAuthenticated" class="app-shell">
+  <div v-if="auth.isAuthenticated" class="app-shell" :class="{ 'is-collapsed': collapsed }">
     <div v-if="drawerOpen" class="drawer-backdrop" @click="drawerOpen = false" />
 
     <aside class="sidebar" :class="{ 'is-open': drawerOpen }">
@@ -180,7 +191,7 @@ watch(
 
     <div class="app-main">
       <header class="topbar">
-        <button class="hamburger" aria-label="Abrir menú" @click="drawerOpen = true">
+        <button class="hamburger" aria-label="Abrir o cerrar menú" @click="toggleSidebar">
           <Menu :size="20" />
         </button>
         <h1 class="topbar-title">{{ pageTitle }}</h1>
