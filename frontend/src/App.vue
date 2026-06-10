@@ -20,8 +20,7 @@ import {
   ShieldCheck,
   LogOut,
   Building2,
-  Menu,
-  X
+  Menu
 } from 'lucide-vue-next';
 
 const auth = useAuthStore();
@@ -141,8 +140,8 @@ watch(
             <small>{{ auth.isSuper ? 'Plataforma' : branding.subtitleText }}</small>
           </div>
         </div>
-        <button class="icon-btn drawer-close" aria-label="Cerrar menú" @click="drawerOpen = false">
-          <X :size="18" />
+        <button class="icon-btn drawer-close" aria-label="Cerrar menú" @click="toggleSidebar">
+          <Menu :size="18" />
         </button>
       </div>
 
