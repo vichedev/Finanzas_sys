@@ -50,6 +50,12 @@ function toggleSidebar() {
   collapsed.value = !collapsed.value;
   try { localStorage.setItem('finanzas_sidebar_collapsed', collapsed.value ? '1' : '0'); } catch { /* ignore */ }
 }
+function collapseSidebar() { collapsed.value = true; }
+
+// En móvil, al navegar se cierra el sidebar superpuesto.
+watch(() => route.fullPath, () => {
+  if (typeof window !== 'undefined' && window.innerWidth <= 768) collapsed.value = true;
+});
 
 onMounted(() => {
   if (auth.isAuthenticated) auth.refreshSession();
@@ -110,6 +116,7 @@ const roleLabel = computed(() => (auth.isSuper ? 'Super Admin' : auth.isAdmin ? 
 
 <template>
   <div v-if="auth.isAuthenticated" class="app-shell" :class="{ 'is-collapsed': collapsed }">
+    <div v-if="!collapsed" class="sb-backdrop" @click="collapseSidebar" />
     <aside class="sidebar">
       <div class="sidebar-top">
         <div class="brand">
