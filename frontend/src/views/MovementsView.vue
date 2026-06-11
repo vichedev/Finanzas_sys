@@ -119,6 +119,24 @@ const form = ref(buildEmptyForm());
 
 const PAYMENT_LABEL: Record<PaymentMethod, string> = { CASH: 'Efectivo', BANK_TRANSFER: 'Transferencia bancaria', DEPOSIT: 'Depósito', DEBIT_CARD: 'Tarjeta de débito', CREDIT_CARD: 'Tarjeta de crédito', WALLET: 'Billetera digital', OTHER: 'Otro' };
 const TYPE_ICON: Record<MovementType, string> = { INCOME: '💵', EXPENSE: '🛒', TRANSFER: '🔁', WITHDRAWAL: '🏧', PURCHASE: '🛍️', CARD_PAYMENT: '💳', ADJUSTMENT: '⚖️' };
+const TYPE_LABEL: Record<MovementType, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra', CARD_PAYMENT: 'Pago de tarjeta', ADJUSTMENT: 'Ajuste' };
+const TYPE_PILL: Record<MovementType, string> = {
+  INCOME: 'background:#ecfdf5;color:#047857',
+  EXPENSE: 'background:#fef2f2;color:#b91c1c',
+  TRANSFER: 'background:#eff6ff;color:#1d4ed8',
+  WITHDRAWAL: 'background:#fff7ed;color:#b45309',
+  PURCHASE: 'background:#faf5ff;color:#7e22ce',
+  CARD_PAYMENT: 'background:#ecfeff;color:#0e7490',
+  ADJUSTMENT: 'background:#f1f5f9;color:#475569'
+};
+// Etiqueta del método/naturaleza coherente con el tipo de movimiento.
+function methodCell(item: Movement): string {
+  if (item.type === 'WITHDRAWAL') return 'Retiro de efectivo';
+  if (item.type === 'TRANSFER') return 'Transferencia entre cuentas';
+  if (item.type === 'CARD_PAYMENT') return 'Pago de tarjeta';
+  if (item.type === 'ADJUSTMENT') return 'Ajuste de saldo';
+  return PAYMENT_LABEL[item.paymentMethod] || '—';
+}
 
 // Método de pago como selector visual de chips (más intuitivo que un dropdown).
 const PAYMENT_OPTIONS: { value: PaymentMethod; label: string; icon: string }[] = [
@@ -167,10 +185,10 @@ const showDueDate = computed(() => isCreditPurchase.value);
 const showPaymentMethod = computed(() => !isWithdrawal.value && !isCreditPurchase.value);
 const showAccount = computed(() => isWithdrawal.value); // cuenta de la que sale el efectivo
 // Cuenta opcional para ingreso/gasto: si se elige, mueve el saldo de esa cuenta.
-// Solo con métodos que tocan una cuenta (no tarjeta/billetera, para no duplicar el saldo).
+// Solo con métodos que tocan una cuenta bancaria (no efectivo/tarjeta/billetera).
 const showOptionalAccount = computed(() =>
   ['INCOME', 'EXPENSE'].includes(form.value.type) &&
-  ['CASH', 'BANK_TRANSFER', 'DEPOSIT', 'OTHER'].includes(form.value.paymentMethod)
+  ['BANK_TRANSFER', 'DEPOSIT'].includes(form.value.paymentMethod)
 );
 const accountMap = computed(() => new Map(accounts.value.map((a) => [a.id, a])));
 // Interbancaria = transferencia entre cuentas de bancos DISTINTOS.
@@ -753,6 +771,7 @@ onMounted(load);
                 <td class="col-concept">
                   <span style="margin-right: 6px">{{ TYPE_ICON[item.type] }}</span>
                   <strong>{{ item.description }}</strong>
+                  <span class="cat-pill" style="margin-left:6px" :style="TYPE_PILL[item.type]">{{ TYPE_LABEL[item.type] }}</span>
                   <span v-if="item.type === 'PURCHASE' && item.isCredit" class="cat-pill" style="margin-left:6px;background:#fff7ed;color:#b45309">Fiada</span>
                   <span v-if="item.type === 'EXPENSE' && item.expenseKind" class="cat-pill" style="margin-left:6px;background:#eef2ff;color:#4338ca">{{ EXPENSE_KIND_LABEL[item.expenseKind] }}</span>
                   <div v-if="item.vendor"><small class="hint">🏪 {{ item.vendor }}{{ item.dueDate ? ' · paga ' + formatDate(item.dueDate) : '' }}</small></div>
@@ -762,7 +781,7 @@ onMounted(load);
                   <span v-if="item.category" class="cat-pill" :style="item.category.color ? { background: `${item.category.color}22`, color: item.category.color } : {}">{{ item.category.icon ? item.category.icon + ' ' : '' }}{{ item.category.name }}</span>
                   <small v-else class="hint">Sin categoría</small>
                 </td>
-                <td class="center col-method">{{ PAYMENT_LABEL[item.paymentMethod] }}</td>
+                <td class="center col-method">{{ methodCell(item) }}</td>
                 <td class="center col-acct">{{ accountOrCardLabel(item) }}</td>
                 <td class="center col-banks">
                   <div v-if="item.fromBank"><small class="hint">Desde:</small> 🏦 {{ bankOptionLabel(item.fromBank) }}</div>
