@@ -41,6 +41,22 @@ function blobToDataUrl(blob: Blob): Promise<string> {
 const PRIMARY_VARS = ['--color-primary', '--color-primary-hover', '--color-primary-active', '--color-primary-soft', '--color-primary-text'];
 const ACCENT_VARS = ['--color-accent', '--color-accent-hover', '--color-accent-soft', '--color-accent-text'];
 
+// Favicon por defecto (se captura del index.html la primera vez).
+let defaultFavicon: string | null = null;
+function setFavicon(href: string | null) {
+  if (typeof document === 'undefined') return;
+  let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement | null;
+  if (!link) { link = document.createElement('link'); link.rel = 'icon'; document.head.appendChild(link); }
+  if (defaultFavicon === null) defaultFavicon = link.getAttribute('href') || '/favicon.svg';
+  if (href) {
+    link.removeAttribute('type'); // dataURL: el navegador infiere el formato
+    link.setAttribute('href', href);
+  } else {
+    link.setAttribute('type', 'image/svg+xml');
+    link.setAttribute('href', defaultFavicon);
+  }
+}
+
 interface State {
   systemTitle: string | null;
   subtitle: string | null;
@@ -84,6 +100,7 @@ export const useBrandingStore = defineStore('branding', {
         ACCENT_VARS.forEach((v) => root.style.removeProperty(v));
       }
       document.title = this.systemTitle || 'Finanzas Mensuales';
+      setFavicon(this.logoUrl);
     },
 
     persist() {
@@ -126,11 +143,12 @@ export const useBrandingStore = defineStore('branding', {
     },
 
     async loadLogo() {
-      if (!this.hasLogo) { this.logoUrl = null; return; }
+      if (!this.hasLogo) { this.logoUrl = null; setFavicon(null); return; }
       try {
         const blob = await brandingApi.logoBlob();
         this.logoUrl = await blobToDataUrl(blob);
       } catch { this.logoUrl = null; }
+      setFavicon(this.logoUrl);
     },
 
     async load() {
@@ -163,6 +181,7 @@ export const useBrandingStore = defineStore('branding', {
       this.hasLogo = false;
       this.logoUrl = null;
       this.persist();
+      setFavicon(null);
     },
 
     /** Vuelve al look por defecto en memoria (ej. super-admin). No borra el snapshot. */
