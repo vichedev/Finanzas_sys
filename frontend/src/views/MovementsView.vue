@@ -9,6 +9,9 @@ import PanelCard from '../components/PanelCard.vue';
 import AppButton from '../components/AppButton.vue';
 import PickerField from '../components/PickerField.vue';
 import AttachmentUploader from '../components/AttachmentUploader.vue';
+import AppModal from '../components/AppModal.vue';
+import AttachmentViewer from '../components/AttachmentViewer.vue';
+import { attachmentsApi, type AttachmentMeta } from '../api/attachments';
 import { useToast } from '../composables/useToast';
 import { useFormat } from '../composables/useFormat';
 
@@ -322,6 +325,47 @@ function accountOrCardLabel(item: Movement) {
   return '—';
 }
 function setType(t: MovementType) { form.value.type = t; }
+
+// ---- Modal de detalle (click en la fila) ----
+const detailOpen = ref(false);
+const detailItem = ref<Movement | null>(null);
+const detailAttachments = ref<AttachmentMeta[]>([]);
+const detailLoadingAtt = ref(false);
+const viewerOpen = ref(false);
+const viewerAtt = ref<AttachmentMeta | null>(null);
+
+async function openDetail(item: Movement) {
+  detailItem.value = item;
+  detailOpen.value = true;
+  detailAttachments.value = [];
+  detailLoadingAtt.value = true;
+  try { detailAttachments.value = await attachmentsApi.list('MOVEMENT', item.id); }
+  catch { /* sin comprobantes */ }
+  finally { detailLoadingAtt.value = false; }
+}
+function openAttachment(att: AttachmentMeta) { viewerAtt.value = att; viewerOpen.value = true; }
+function editFromDetail() {
+  if (!detailItem.value) return;
+  const it = detailItem.value;
+  detailOpen.value = false;
+  startEdit(it);
+}
+function fmtBank(b?: Bank | null): string {
+  if (!b) return '';
+  const parts = [b.name];
+  if (b.accountKind) parts.push(b.accountKind === 'SAVINGS' ? 'Ahorros' : 'Corriente');
+  if (b.accountNumber) parts.push(`****${b.accountNumber.slice(-4)}`);
+  return parts.join(' · ');
+}
+function fmtAccount(a?: Account | null): string {
+  if (!a) return '';
+  const parts = [a.name];
+  if (a.holder) parts.push(a.holder);
+  if (a.bankName) parts.push(a.bankName);
+  if (a.accountNumber) parts.push(`****${a.accountNumber.slice(-4)}`);
+  return parts.join(' · ');
+}
+const fileSize = (n: number) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
 async function load() {
   try {
@@ -766,7 +810,7 @@ onMounted(load);
               </tr>
             </thead>
             <tbody>
-              <tr v-for="item in displayRows" :key="item.id">
+              <tr v-for="item in displayRows" :key="item.id" class="clickable-row" @click="openDetail(item)">
                 <td class="center col-date">{{ formatDate(item.movementDate) }}</td>
                 <td class="col-concept">
                   <span style="margin-right: 6px">{{ TYPE_ICON[item.type] }}</span>
@@ -793,10 +837,10 @@ onMounted(load);
                 <td class="col-notes"><span v-if="item.notes" :title="item.notes" class="notes-cell">{{ item.notes }}</span><small v-else class="hint">—</small></td>
                 <td class="center col-acts">
                   <div class="row-actions" style="justify-content: center">
-                    <button type="button" class="ghost mini" :disabled="editingId === item.id" @click="startEdit(item)">
+                    <button type="button" class="ghost mini" :disabled="editingId === item.id" @click.stop="startEdit(item)">
                       <Pencil :size="14" />
                     </button>
-                    <button type="button" class="ghost mini danger" @click="removeRow(item)">
+                    <button type="button" class="ghost mini danger" @click.stop="removeRow(item)">
                       <Trash2 :size="14" />
                     </button>
                   </div>
@@ -818,10 +862,85 @@ onMounted(load);
         </div>
       </PanelCard>
     </div>
+
+    <!-- Modal de detalle del movimiento -->
+    <AppModal :open="detailOpen" :title="detailItem ? `${TYPE_ICON[detailItem.type]} ${TYPE_LABEL[detailItem.type]}` : 'Detalle'" max-width="600px" @close="detailOpen = false">
+      <div v-if="detailItem" class="mv-detail">
+        <div class="mv-detail-amount" :class="signedAmount(detailItem).cls">{{ signedAmount(detailItem).text }}</div>
+        <p class="mv-detail-desc">{{ detailItem.description }}</p>
+
+        <dl class="mv-detail-grid">
+          <div class="dl-row"><dt>Tipo</dt><dd><span class="cat-pill" :style="TYPE_PILL[detailItem.type]">{{ TYPE_LABEL[detailItem.type] }}</span></dd></div>
+          <div class="dl-row"><dt>Fecha</dt><dd>{{ formatDate(detailItem.movementDate) }}</dd></div>
+          <div class="dl-row"><dt>Método</dt><dd>{{ methodCell(detailItem) }}</dd></div>
+          <div v-if="detailItem.type === 'EXPENSE' && detailItem.expenseKind" class="dl-row"><dt>Subtipo</dt><dd>{{ EXPENSE_KIND_LABEL[detailItem.expenseKind] }}</dd></div>
+          <div v-if="detailItem.category" class="dl-row"><dt>Categoría</dt><dd><span class="cat-pill" :style="detailItem.category.color ? { background: `${detailItem.category.color}22`, color: detailItem.category.color } : {}">{{ detailItem.category.icon ? detailItem.category.icon + ' ' : '' }}{{ detailItem.category.name }}</span></dd></div>
+
+          <div v-if="detailItem.type === 'TRANSFER'" class="dl-row"><dt>Cuenta origen</dt><dd>🏦 {{ fmtAccount(detailItem.account) || '—' }}</dd></div>
+          <div v-if="detailItem.type === 'TRANSFER'" class="dl-row"><dt>Cuenta destino</dt><dd>🏦 {{ fmtAccount(detailItem.toAccount) || '—' }}</dd></div>
+          <div v-else-if="detailItem.account" class="dl-row"><dt>Cuenta afectada</dt><dd>🏦 {{ fmtAccount(detailItem.account) }}</dd></div>
+
+          <div v-if="detailItem.card" class="dl-row"><dt>Tarjeta</dt><dd>💳 {{ detailItem.card.name }}</dd></div>
+          <div v-if="detailItem.wallet" class="dl-row"><dt>Billetera</dt><dd>👛 {{ detailItem.wallet.name }}</dd></div>
+          <div v-if="detailItem.fromBank" class="dl-row"><dt>Banco origen</dt><dd>🏦 {{ fmtBank(detailItem.fromBank) }}</dd></div>
+          <div v-if="detailItem.toBank" class="dl-row"><dt>Banco destino</dt><dd>🏦 {{ fmtBank(detailItem.toBank) }}</dd></div>
+          <div v-if="Number(detailItem.commission)" class="dl-row"><dt>Comisión</dt><dd style="color:#b45309">💸 {{ formatMoney(detailItem.commission) }}</dd></div>
+
+          <div v-if="detailItem.vendor" class="dl-row"><dt>Proveedor</dt><dd>🏪 {{ detailItem.vendor }}</dd></div>
+          <div v-if="detailItem.type === 'PURCHASE'" class="dl-row"><dt>Forma</dt><dd>{{ detailItem.isCredit ? 'Fiada (pago posterior)' : 'Pagada al momento' }}</dd></div>
+          <div v-if="detailItem.dueDate" class="dl-row"><dt>Vence / paga</dt><dd>{{ formatDate(detailItem.dueDate) }}</dd></div>
+          <div v-if="detailItem.familyMember" class="dl-row"><dt>{{ detailItem.type === 'WITHDRAWAL' ? 'Quién retiró' : 'Quién paga' }}</dt><dd>👤 {{ detailItem.familyMember }}</dd></div>
+        </dl>
+
+        <div v-if="detailItem.notes" class="mv-detail-notes">
+          <strong>Notas</strong>
+          <p>{{ detailItem.notes }}</p>
+        </div>
+
+        <div class="mv-detail-att">
+          <strong>Comprobantes</strong>
+          <p v-if="detailLoadingAtt" class="hint">Cargando…</p>
+          <p v-else-if="!detailAttachments.length" class="hint">Sin comprobantes adjuntos.</p>
+          <ul v-else class="att-list">
+            <li v-for="att in detailAttachments" :key="att.id">
+              <button type="button" class="att-chip" @click="openAttachment(att)">
+                📎 {{ att.filename }} <small class="hint">· {{ fileSize(att.size) }}</small>
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+      <template #footer>
+        <AppButton variant="ghost" @click="detailOpen = false"><template #icon><X :size="16" /></template>Cerrar</AppButton>
+        <AppButton @click="editFromDetail"><template #icon><Pencil :size="16" /></template>Editar</AppButton>
+      </template>
+    </AppModal>
+
+    <AttachmentViewer :open="viewerOpen" :attachment="viewerAtt" @close="viewerOpen = false" />
   </section>
 </template>
 
 <style scoped>
+/* Fila clicable → abre detalle */
+.clickable-row { cursor: pointer; transition: background 0.12s ease; }
+.clickable-row:hover { background: var(--color-surface-2, #f8fafc); }
+
+/* Modal de detalle */
+.mv-detail { display: flex; flex-direction: column; gap: 14px; }
+.mv-detail-amount { font-size: 28px; font-weight: 800; }
+.mv-detail-amount.pos { color: var(--color-success-text, #047857); }
+.mv-detail-amount.neg { color: var(--color-danger-text, #b91c1c); }
+.mv-detail-desc { margin: 0; font-size: 16px; font-weight: 600; color: #1f2937; }
+.mv-detail-grid { margin: 0; display: flex; flex-direction: column; gap: 0; border-top: 1px solid #eef0f4; }
+.dl-row { display: grid; grid-template-columns: 140px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid #eef0f4; align-items: center; }
+.dl-row dt { margin: 0; color: #6b7280; font-size: 13px; }
+.dl-row dd { margin: 0; font-weight: 600; color: #1f2937; font-size: 14px; }
+.mv-detail-notes p { margin: 4px 0 0; color: #374151; white-space: pre-wrap; }
+.mv-detail-att .att-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.att-chip { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; cursor: pointer; text-align: left; width: 100%; font-weight: 600; color: #334155; }
+.att-chip:hover { background: #eff6ff; border-color: #bfdbfe; }
+@media (max-width: 540px) { .dl-row { grid-template-columns: 110px 1fr; } }
+
 /* Secciones del formulario (divulgación progresiva) */
 .mov-form { gap: var(--space-2); }
 .form-section { padding: var(--space-2) 0; }
