@@ -32,6 +32,7 @@ import { adminRouter as tenantAdminRouter } from './routes/tenant/admin.routes';
 import { reportsRouter } from './routes/tenant/reports.routes';
 import { budgetsRouter } from './routes/tenant/budgets.routes';
 import { auditRouter } from './routes/tenant/audit.routes';
+import { aiRouter } from './routes/tenant/ai.routes';
 import { requireAuth } from './middleware/auth';
 import { tenantContext } from './middleware/tenantContext';
 
@@ -124,6 +125,7 @@ app.use('/api/admin',      tenantScope, adminWriteLimiter, tenantAdminRouter);
 app.use('/api/reports',    tenantScope, reportsRouter);
 app.use('/api/budgets',    tenantScope, budgetsRouter);
 app.use('/api/audit',      tenantScope, auditRouter);
+app.use('/api/ai',         tenantScope, aiRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) {

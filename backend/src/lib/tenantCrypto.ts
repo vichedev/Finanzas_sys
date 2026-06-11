@@ -13,7 +13,7 @@ function getKey(): Buffer {
   return Buffer.from(hex, 'hex');
 }
 
-function encryptString(plain: string): string {
+export function encryptString(plain: string): string {
   const key = getKey();
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGO, key, iv);
@@ -23,7 +23,7 @@ function encryptString(plain: string): string {
   return `${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
 }
 
-function decryptString(token: string): string {
+export function decryptString(token: string): string {
   const key = getKey();
   const parts = token.split(':');
   if (parts.length !== 3) throw new Error('Token cifrado con formato inválido');

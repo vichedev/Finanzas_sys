@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -Last 12; \"FE $LASTEXITCODE\")",
-      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix: dashboard cuenta gastos igual que Movimientos \\(EXPENSE+retiro+compra pagada+comision\\); filtro por cuenta en tabla; refresco en tiempo real al volver a la pestana\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix: dashboard cuenta gastos igual que Movimientos \\(EXPENSE+retiro+compra pagada+comision\\); filtro por cuenta en tabla; refresco en tiempo real al volver a la pestana\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\backend; npx prisma generate --schema=prisma/tenant/schema.prisma 2>&1 | Select-Object -Last 3; npm run sync:tenants 2>&1 | Select-Object -Last 8; \"SYNC $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\backend; npx tsc --noEmit 2>&1 | Select-Object -First 30; \"BE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -First 30; \"FE $LASTEXITCODE\")"
     ]
   }
 }

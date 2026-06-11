@@ -2,12 +2,13 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette } from 'lucide-vue-next';
+import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette, Sparkles, RefreshCw } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
 import { useBrandingStore } from '../stores/branding';
 import { useEntitiesStore } from '../stores/entities';
 import { http } from '../api/http';
 import { backupApi } from '../api/backup';
+import { aiApi } from '../api/ai';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
 
@@ -23,6 +24,91 @@ type SmtpPublic = { host: string; port: number; user: string; hasPass: boolean; 
 
 const auth = useAuthStore();
 const entities = useEntitiesStore();
+
+// ---- FinancIA (IA de análisis con Groq) ----
+const aiCfg = ref<{ model: string; enabled: boolean; hasKey: boolean }>({ model: 'llama-3.3-70b-versatile', enabled: false, hasKey: false });
+const aiKeyInput = ref('');
+const aiMsg = ref(''); const aiErr = ref(''); const aiSaving = ref(false);
+const aiAnalyzing = ref(false);
+const aiResult = ref(''); const aiGeneratedAt = ref('');
+const aiQuestion = ref('');
+const AI_MODELS = [
+  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (recomendado)' },
+  { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B (rápido)' },
+  { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
+  { value: 'qwen/qwen3-32b', label: 'Qwen3 32B' }
+];
+
+async function loadAiConfig() {
+  try {
+    const cfg = await aiApi.getConfig();
+    aiCfg.value = { model: cfg.model, enabled: cfg.enabled, hasKey: cfg.hasKey };
+  } catch { /* ignora */ }
+}
+async function saveAiConfig() {
+  aiErr.value = ''; aiMsg.value = ''; aiSaving.value = true;
+  try {
+    const payload: { apiKey?: string; model?: string; enabled?: boolean } = {
+      model: aiCfg.value.model,
+      enabled: aiCfg.value.enabled
+    };
+    if (aiKeyInput.value.trim()) payload.apiKey = aiKeyInput.value.trim();
+    const cfg = await aiApi.saveConfig(payload);
+    aiCfg.value = { model: cfg.model, enabled: cfg.enabled, hasKey: cfg.hasKey };
+    aiKeyInput.value = '';
+    aiMsg.value = 'Configuración de FinancIA guardada.';
+    setTimeout(() => (aiMsg.value = ''), 2500);
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    aiErr.value = err?.response?.data?.message || 'No se pudo guardar la configuración.';
+  } finally { aiSaving.value = false; }
+}
+async function clearAiKey() {
+  if (!confirm('¿Eliminar la clave de API y desactivar FinancIA?')) return;
+  try {
+    await aiApi.clearKey();
+    aiCfg.value = { ...aiCfg.value, enabled: false, hasKey: false };
+    aiMsg.value = 'Clave eliminada.';
+    setTimeout(() => (aiMsg.value = ''), 2500);
+  } catch { aiErr.value = 'No se pudo eliminar la clave.'; }
+}
+async function runAnalysis() {
+  aiErr.value = ''; aiAnalyzing.value = true; aiResult.value = '';
+  try {
+    const res = await aiApi.analyze(aiQuestion.value);
+    aiResult.value = res.analysis;
+    aiGeneratedAt.value = new Date(res.generatedAt).toLocaleString('es-EC', { dateStyle: 'short', timeStyle: 'short' });
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    aiErr.value = err?.response?.data?.message || 'No se pudo generar el análisis.';
+  } finally { aiAnalyzing.value = false; }
+}
+
+// Markdown mínimo y seguro (escapa HTML, luego aplica negritas, títulos y viñetas).
+const aiResultHtml = computed(() => {
+  const raw = aiResult.value;
+  if (!raw) return '';
+  const esc = raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lines = esc.split('\n');
+  const out: string[] = [];
+  let inList = false;
+  for (let line of lines) {
+    line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`(.+?)`/g, '<code>$1</code>');
+    const heading = line.match(/^\s*#{1,4}\s+(.*)$/);
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (heading) { if (inList) { out.push('</ul>'); inList = false; } out.push(`<h4>${heading[1]}</h4>`); continue; }
+    if (bullet || numbered) {
+      if (!inList) { out.push('<ul>'); inList = true; }
+      out.push(`<li>${(bullet ? bullet[1] : numbered![1])}</li>`);
+      continue;
+    }
+    if (inList) { out.push('</ul>'); inList = false; }
+    if (line.trim()) out.push(`<p>${line}</p>`);
+  }
+  if (inList) out.push('</ul>');
+  return out.join('');
+});
 const categories = ref<Category[]>([]);
 const filter = ref<FilterType>('ALL');
 const emptyCategoryForm = () => ({ name: '', type: 'EXPENSE' as 'INCOME' | 'EXPENSE', icon: '' });
@@ -156,8 +242,8 @@ const profile = ref<Profile | null>(null);
 const profileForm = ref({ name: '', email: '', currency: 'USD', currentPassword: '', newPassword: '' });
 const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = ref(false);
 
-type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
-const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
+type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
+const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
 const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users'];
 const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
 
@@ -903,6 +989,7 @@ const SECTIONS = computed<SectionCard[]>(() => {
     base.push({ key: 'identity', title: 'Identidad', description: 'Logo, título y colores de tu sistema.', icon: Palette, accent: 'purple' });
     base.push({ key: 'smtp', title: 'Servidor de correo', description: 'Configura el SMTP para enviar emails (bienvenida, avisos).', icon: Mail, accent: 'cyan' });
     base.push({ key: 'backups', title: 'Respaldos', description: 'Exporta e importa todos tus datos para migrar o restaurar.', icon: Archive, accent: 'green' });
+    base.push({ key: 'financia', title: 'FinancIA', description: 'Asistente de IA (Groq) que analiza tus datos y da recomendaciones.', icon: Sparkles, accent: 'indigo' });
   }
   return base;
 });
@@ -955,7 +1042,8 @@ onMounted(async () => {
     loadWallets(),
     loadProfile(),
     auth.isAdmin ? loadSmtp() : Promise.resolve(),
-    auth.isAdmin ? loadIdentity() : Promise.resolve()
+    auth.isAdmin ? loadIdentity() : Promise.resolve(),
+    auth.isAdmin ? loadAiConfig() : Promise.resolve()
   ]);
 });
 </script>
@@ -1585,6 +1673,77 @@ onMounted(async () => {
     <RolesPanel v-if="activeSection === 'roles' && auth.isAdmin" />
 
     <AdminUsersPanel v-if="activeSection === 'users' && auth.isAdmin" />
+
+    <div v-if="activeSection === 'financia' && auth.isAdmin" class="panel financia-panel">
+      <div class="financia-banner">
+        <div class="financia-ic"><Sparkles :size="22" /></div>
+        <div>
+          <h3>FinancIA · Asistente financiero con IA</h3>
+          <p>Conecta tu cuenta de <strong>Groq</strong> para que FinancIA analice tus datos (ingresos, gastos, cuentas, tarjetas, deudas, presupuestos) y te dé recomendaciones accionables.</p>
+        </div>
+      </div>
+
+      <div class="financia-grid">
+        <!-- Configuración -->
+        <div class="financia-config">
+          <h4>Configuración</h4>
+          <div class="field">
+            <label>Clave de API de Groq</label>
+            <input v-model="aiKeyInput" type="password" autocomplete="off"
+                   :placeholder="aiCfg.hasKey ? '•••••••••• (ya configurada)' : 'gsk_...'" />
+            <small class="hint">
+              Consíguela gratis en <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a>.
+              Se guarda cifrada. {{ aiCfg.hasKey ? 'Deja vacío para conservar la actual.' : '' }}
+            </small>
+          </div>
+          <div class="field">
+            <label>Modelo</label>
+            <select v-model="aiCfg.model">
+              <option v-for="m in AI_MODELS" :key="m.value" :value="m.value">{{ m.label }}</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="financia-toggle">
+              <input type="checkbox" v-model="aiCfg.enabled" />
+              <span>Activar FinancIA</span>
+            </label>
+          </div>
+          <div class="financia-actions">
+            <button type="button" @click="saveAiConfig" :disabled="aiSaving"><Check :size="16" /> {{ aiSaving ? 'Guardando…' : 'Guardar' }}</button>
+            <button v-if="aiCfg.hasKey" type="button" class="ghost danger" @click="clearAiKey"><Trash2 :size="16" /> Quitar clave</button>
+          </div>
+          <p v-if="aiMsg" class="hint-msg">{{ aiMsg }}</p>
+          <p v-if="aiErr" class="error">{{ aiErr }}</p>
+          <div class="financia-status" :class="{ ok: aiCfg.enabled && aiCfg.hasKey }">
+            <span class="dot"></span>
+            {{ aiCfg.enabled && aiCfg.hasKey ? 'FinancIA está lista para analizar.' : 'Configura la clave y activa para usarla.' }}
+          </div>
+        </div>
+
+        <!-- Análisis -->
+        <div class="financia-analysis">
+          <h4>Análisis</h4>
+          <div class="field">
+            <label>Pregunta (opcional)</label>
+            <input v-model="aiQuestion" maxlength="500" placeholder="ej. ¿Dónde puedo ahorrar este mes?" @keyup.enter="runAnalysis" />
+          </div>
+          <button type="button" class="financia-run" :disabled="aiAnalyzing || !aiCfg.enabled || !aiCfg.hasKey" @click="runAnalysis">
+            <component :is="aiAnalyzing ? RefreshCw : Sparkles" :size="16" :class="{ spin: aiAnalyzing }" />
+            {{ aiAnalyzing ? 'Analizando…' : 'Analizar mis finanzas' }}
+          </button>
+
+          <div v-if="aiResult" class="financia-result">
+            <div class="financia-result-head"><Sparkles :size="14" /> FinancIA · <small>{{ aiGeneratedAt }}</small></div>
+            <!-- eslint-disable-next-line vue/no-v-html -->
+            <div class="md" v-html="aiResultHtml"></div>
+          </div>
+          <div v-else-if="!aiAnalyzing" class="financia-empty">
+            <Sparkles :size="28" />
+            <p>El análisis aparecerá aquí. FinancIA revisará tus datos del mes y te dará recomendaciones.</p>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div v-if="activeSection === 'smtp' && auth.isAdmin" class="smtp-card">
       <div class="smtp-banner">
@@ -2330,4 +2489,35 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
   margin-top: 20px; padding-top: 14px;
   border-top: 1px solid #f1f5f9;
 }
+
+/* FinancIA */
+.financia-banner { display: flex; gap: 14px; align-items: flex-start; padding: 16px; border-radius: 12px; background: linear-gradient(135deg, #eef2ff, #faf5ff); border: 1px solid #e0e7ff; margin-bottom: 18px; }
+.financia-ic { width: 44px; height: 44px; border-radius: 12px; background: #6366f1; color: #fff; display: grid; place-items: center; flex-shrink: 0; }
+.financia-banner h3 { margin: 0 0 4px; }
+.financia-banner p { margin: 0; color: #4b5563; font-size: 13px; }
+.financia-grid { display: grid; grid-template-columns: minmax(280px, 360px) 1fr; gap: 20px; align-items: start; }
+.financia-config, .financia-analysis { display: flex; flex-direction: column; gap: 12px; }
+.financia-config h4, .financia-analysis h4 { margin: 0 0 4px; font-size: 15px; }
+.financia-config .field, .financia-analysis .field { display: flex; flex-direction: column; gap: 4px; }
+.financia-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.financia-toggle input { width: 16px; height: 16px; }
+.financia-actions { display: flex; gap: 8px; }
+.financia-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; padding: 8px 12px; border-radius: 8px; }
+.financia-status.ok { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+.financia-status .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.financia-run { display: inline-flex; align-items: center; gap: 8px; justify-content: center; background: #6366f1; color: #fff; border: none; padding: 11px 16px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+.financia-run:disabled { opacity: 0.55; cursor: not-allowed; }
+.financia-run .spin { animation: financia-spin 1s linear infinite; }
+@keyframes financia-spin { to { transform: rotate(360deg); } }
+.financia-result { border: 1px solid #e6e9ef; border-radius: 12px; padding: 14px 16px; background: #fff; }
+.financia-result-head { display: flex; align-items: center; gap: 6px; font-weight: 700; color: #4338ca; margin-bottom: 8px; }
+.financia-result-head small { color: #9ca3af; font-weight: 500; }
+.financia-result .md :deep(h4) { margin: 12px 0 4px; font-size: 14px; color: #111827; }
+.financia-result .md :deep(p) { margin: 4px 0; color: #374151; font-size: 14px; line-height: 1.5; }
+.financia-result .md :deep(ul) { margin: 4px 0 8px; padding-left: 20px; }
+.financia-result .md :deep(li) { margin: 3px 0; color: #374151; font-size: 14px; line-height: 1.45; }
+.financia-result .md :deep(code) { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.financia-empty { text-align: center; color: #9ca3af; padding: 28px 16px; border: 1px dashed #e2e8f0; border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.financia-empty p { margin: 0; font-size: 13px; max-width: 320px; }
+@media (max-width: 880px) { .financia-grid { grid-template-columns: 1fr; } }
 </style>

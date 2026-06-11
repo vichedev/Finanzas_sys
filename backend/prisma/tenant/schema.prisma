@@ -427,6 +427,15 @@ model Budget {
   @@index([userId])
 }
 
+model AiConfig {
+  id          Int      @id @default(1) // singleton por empresa
+  provider    String   @default("groq")
+  apiKeyEnc   String?  // clave de API cifrada (AES-256-GCM)
+  model       String   @default("llama-3.3-70b-versatile")
+  enabled     Boolean  @default(false)
+  updatedAt   DateTime @updatedAt @default(now())
+}
+
 model AuditLog {
   id        Int      @id @default(autoincrement())
   userId    Int?     // quién hizo el cambio (sin FK: el log sobrevive al borrado del usuario)
