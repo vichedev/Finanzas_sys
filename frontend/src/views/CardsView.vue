@@ -1,16 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { CreditCard, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
+import { CreditCard, Pencil, Trash2, Plus, X, Wallet } from 'lucide-vue-next';
 import { http } from '../api/http';
 import { useEntitiesStore } from '../stores/entities';
+import AppModal from '../components/AppModal.vue';
 
 const entities = useEntitiesStore();
 const activeBanks = computed(() => entities.activeBanks);
+const activeAccounts = computed(() => entities.accounts.filter((a) => a.isActive !== false));
 
 interface Card {
   id: number | string;
   name: string;
   type: 'CREDIT' | 'DEBIT';
+  bankId?: number | null;
   bankName?: string | null;
   last4?: string | null;
   creditLimit?: number | string | null;
@@ -22,7 +25,7 @@ interface Card {
 interface CardForm {
   name: string;
   type: 'CREDIT' | 'DEBIT';
-  bankName: string;
+  bankId: number | null;
   last4: string;
   creditLimit: number | null;
   cutoffDay: number | null;
@@ -31,7 +34,7 @@ interface CardForm {
 }
 
 const emptyForm = (): CardForm => ({
-  name: '', type: 'CREDIT', bankName: '', last4: '',
+  name: '', type: 'CREDIT', bankId: null, last4: '',
   creditLimit: null, cutoffDay: null, paymentDueDay: null, currentBalance: 0
 });
 
@@ -66,7 +69,7 @@ async function save() {
   if (form.value.last4 && !/^\d{1,4}$/.test(form.value.last4)) { errorMsg.value = 'Los últimos 4 dígitos deben ser numéricos.'; return; }
   const payload: Record<string, unknown> = {
     name: form.value.name.trim(), type: form.value.type,
-    bankName: form.value.bankName.trim() || null,
+    bankId: form.value.bankId ?? null,
     last4: form.value.last4 || null,
     currentBalance: toNumber(form.value.currentBalance)
   };
@@ -101,7 +104,7 @@ function startEdit(item: Card) {
   form.value = {
     name: item.name,
     type: item.type,
-    bankName: item.bankName || '',
+    bankId: item.bankId ?? null,
     last4: item.last4 || '',
     creditLimit: item.creditLimit !== null && item.creditLimit !== undefined ? toNumber(item.creditLimit) : null,
     cutoffDay: item.cutoffDay ?? null,
@@ -116,19 +119,62 @@ function cancelEdit() {
   form.value = emptyForm();
 }
 
-async function removeRow(item: Card) {
-  if (!confirm(`Eliminar la tarjeta "${item.name}"? Se marcará inactiva. Sus movimientos NO se eliminan.`)) return;
+async function removeRow(item: Card, force = false) {
+  if (!force && !confirm(`Eliminar la tarjeta "${item.name}"? Se marcará inactiva. Sus movimientos NO se eliminan.`)) return;
   try {
-    await http.delete(`/cards/${item.id}`);
+    await http.delete(`/cards/${item.id}`, { params: force ? { force: 1 } : undefined });
     successMsg.value = 'Tarjeta eliminada.';
     if (editingId.value === Number(item.id)) cancelEdit();
     await load();
     setTimeout(() => (successMsg.value = ''), 2500);
-  } catch { errorMsg.value = 'No se pudo eliminar la tarjeta.'; }
+  } catch (err: unknown) {
+    const e = err as { response?: { status?: number; data?: { message?: string; code?: string } } };
+    if (e?.response?.status === 409 && e.response.data?.code === 'NONZERO_BALANCE') {
+      if (confirm(e.response.data.message || 'La tarjeta tiene saldo. ¿Marcar inactiva igual?')) await removeRow(item, true);
+      return;
+    }
+    errorMsg.value = 'No se pudo eliminar la tarjeta.';
+  }
 }
 
-// Fuerza catálogo de bancos fresco al entrar (sin recargar la página).
-onMounted(() => Promise.all([load(), entities.ensureBanks(true)]));
+// ---- Pago de tarjeta de crédito ----
+const payOpen = ref(false);
+const payCardRef = ref<Card | null>(null);
+const payForm = ref<{ accountId: number | null; amount: number | null; notes: string }>({ accountId: null, amount: null, notes: '' });
+const payErr = ref('');
+const paying = ref(false);
+
+function openPay(card: Card) {
+  payCardRef.value = card;
+  payForm.value = { accountId: activeAccounts.value[0]?.id ?? null, amount: toNumber(card.currentBalance) || null, notes: '' };
+  payErr.value = '';
+  payOpen.value = true;
+}
+
+async function submitPay() {
+  payErr.value = '';
+  if (!payCardRef.value) return;
+  if (!payForm.value.accountId) { payErr.value = 'Selecciona la cuenta de origen.'; return; }
+  if (!payForm.value.amount || payForm.value.amount <= 0) { payErr.value = 'Ingresa un monto válido.'; return; }
+  paying.value = true;
+  try {
+    await http.post(`/cards/${payCardRef.value.id}/pay`, {
+      accountId: payForm.value.accountId,
+      amount: payForm.value.amount,
+      notes: payForm.value.notes.trim() || null
+    });
+    payOpen.value = false;
+    successMsg.value = 'Pago registrado. Saldos de tarjeta y cuenta actualizados.';
+    await Promise.all([load(), entities.ensureAccounts(true)]);
+    setTimeout(() => (successMsg.value = ''), 3000);
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { message?: string } } };
+    payErr.value = e?.response?.data?.message ?? 'No se pudo registrar el pago.';
+  } finally { paying.value = false; }
+}
+
+// Fuerza catálogos frescos al entrar (sin recargar la página).
+onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensureAccounts(true)]));
 </script>
 
 <template>
@@ -163,12 +209,9 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true)]));
 
             <div class="field">
               <label for="card-bank">Banco emisor</label>
-              <select id="card-bank" v-model="form.bankName">
-                <option value="">— Sin banco —</option>
-                <option v-for="b in activeBanks" :key="b.id" :value="b.name">{{ b.name }}</option>
-                <option v-if="form.bankName && !activeBanks.some(b => b.name === form.bankName)" :value="form.bankName">
-                  {{ form.bankName }} (no listado)
-                </option>
+              <select id="card-bank" v-model.number="form.bankId">
+                <option :value="null">— Sin banco —</option>
+                <option v-for="b in activeBanks" :key="b.id" :value="b.id">{{ b.name }}</option>
               </select>
               <small v-if="activeBanks.length" class="hint">Tomado de Configuración → Bancos.</small>
               <small v-else class="hint warn-hint">Sin bancos. Agrégalos en <strong>Configuración → Bancos</strong>.</small>
@@ -284,6 +327,7 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true)]));
                 <td class="center col-status"><span class="cat-pill pill-active">Activa</span></td>
                 <td class="center col-acts">
                   <div class="row-actions" style="justify-content: center">
+                    <button v-if="item.type === 'CREDIT'" type="button" class="ghost mini pay" title="Pagar tarjeta" @click="openPay(item)"><Wallet :size="14" /></button>
                     <button type="button" class="ghost mini" @click="startEdit(item)" :disabled="editingId === Number(item.id)"><Pencil :size="14" /></button>
                     <button type="button" class="ghost mini danger" @click="removeRow(item)"><Trash2 :size="14" /></button>
                   </div>
@@ -294,12 +338,47 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true)]));
         </div>
       </div>
     </div>
+
+    <AppModal :open="payOpen" :title="`Pagar tarjeta${payCardRef ? ' · ' + payCardRef.name : ''}`" @close="payOpen = false">
+      <div class="pay-body">
+        <p class="pay-hint">
+          El pago sale de la cuenta seleccionada y reduce el saldo usado de la tarjeta.
+          <template v-if="payCardRef"><br />Saldo usado actual: <strong>{{ formatMoney(payCardRef.currentBalance) }}</strong>.</template>
+        </p>
+        <div class="field">
+          <label for="pay-acc">Cuenta de origen <span class="required-mark">*</span></label>
+          <select id="pay-acc" v-model.number="payForm.accountId">
+            <option :value="null">— Selecciona —</option>
+            <option v-for="a in activeAccounts" :key="a.id" :value="a.id">{{ a.name }} ({{ formatMoney(a.currentBalance) }})</option>
+          </select>
+          <small v-if="!activeAccounts.length" class="hint warn-hint">Sin cuentas. Crea una en <strong>Cuentas</strong>.</small>
+        </div>
+        <div class="field">
+          <label for="pay-amt">Monto a pagar (USD) <span class="required-mark">*</span></label>
+          <input id="pay-amt" v-model.number="payForm.amount" type="number" step="0.01" min="0" placeholder="0.00" />
+        </div>
+        <div class="field">
+          <label for="pay-notes">Notas</label>
+          <input id="pay-notes" v-model="payForm.notes" type="text" maxlength="500" placeholder="Opcional" />
+        </div>
+        <p v-if="payErr" class="error">{{ payErr }}</p>
+      </div>
+      <template #footer>
+        <button type="button" class="ghost" @click="payOpen = false"><X :size="16" /> Cancelar</button>
+        <button type="button" @click="submitPay" :disabled="paying"><Wallet :size="16" /> {{ paying ? 'Procesando…' : 'Registrar pago' }}</button>
+      </template>
+    </AppModal>
   </section>
 </template>
 
 <style scoped>
 .required-mark { color: #ef4444; font-weight: 700; }
 .warn-hint { color: var(--color-warning-text, #b45309); }
+.row-actions button.mini.pay { color: #047857; border-color: #a7f3d0; }
+.row-actions button.mini.pay:hover { background: #ecfdf5; }
+.pay-body { display: flex; flex-direction: column; gap: 12px; }
+.pay-body .field { display: flex; flex-direction: column; gap: 4px; }
+.pay-hint { font-size: 13px; color: #6b7280; margin: 0; }
 .card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 .card-last4 { font-family: ui-monospace, monospace; font-size: 12px; color: #6b7280; letter-spacing: 0.05em; margin-top: 2px; }
 .pill-credit { background: #ecfdf5; color: #047857; }

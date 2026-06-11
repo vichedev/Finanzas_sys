@@ -30,6 +30,8 @@ import { brandingRouter } from './routes/tenant/branding.routes';
 import { runReminderScan } from './lib/reminders';
 import { adminRouter as tenantAdminRouter } from './routes/tenant/admin.routes';
 import { reportsRouter } from './routes/tenant/reports.routes';
+import { budgetsRouter } from './routes/tenant/budgets.routes';
+import { auditRouter } from './routes/tenant/audit.routes';
 import { requireAuth } from './middleware/auth';
 import { tenantContext } from './middleware/tenantContext';
 
@@ -120,12 +122,17 @@ app.use('/api/backup',      tenantScope, backupRouter);
 app.use('/api/branding',    tenantScope, brandingRouter);
 app.use('/api/admin',      tenantScope, adminWriteLimiter, tenantAdminRouter);
 app.use('/api/reports',    tenantScope, reportsRouter);
+app.use('/api/budgets',    tenantScope, budgetsRouter);
+app.use('/api/audit',      tenantScope, auditRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) {
     return res.status(400).json({ message: 'Datos inválidos', errors: err.flatten() });
   }
-  const e = err as { type?: string; code?: string; message?: string };
+  const e = err as { type?: string; code?: string; message?: string; status?: number };
+  if (typeof e?.status === 'number' && e.status >= 400 && e.status < 600) {
+    return res.status(e.status).json({ message: e.message || 'Error' });
+  }
   if (e?.type === 'entity.parse.failed') return res.status(400).json({ message: 'JSON inválido' });
   if (e?.type === 'entity.too.large') return res.status(413).json({ message: 'Carga demasiado grande' });
   if (e?.code === 'P2025') return res.status(404).json({ message: 'Recurso no encontrado' });

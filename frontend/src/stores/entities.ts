@@ -60,6 +60,18 @@ export const useEntitiesStore = defineStore('entities', {
     /** Marca un catálogo como obsoleto para que la próxima lectura lo recargue. */
     invalidate(key: CatalogKey) {
       this.loaded[key] = false;
+    },
+    /**
+     * Re-descarga (en paralelo) todos los catálogos que ya estaban cargados.
+     * Se usa para refrescar al volver a la pestaña sin recargar la página.
+     */
+    async refreshLoaded() {
+      const tasks: Promise<unknown>[] = [];
+      if (this.loaded.banks) tasks.push(this.ensureBanks(true));
+      if (this.loaded.accounts) tasks.push(this.ensureAccounts(true));
+      if (this.loaded.categories) tasks.push(this.ensureCategories(true));
+      if (this.loaded.wallets) tasks.push(this.ensureWallets(true));
+      await Promise.all(tasks).catch(() => { /* refresco best-effort */ });
     }
   }
 });

@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
-import { Landmark, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
+import { computed, onMounted, ref } from 'vue';
+import { Landmark, Pencil, Trash2, Plus, X, Scale } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
 import PanelCard from '../components/PanelCard.vue';
 import FormField from '../components/FormField.vue';
 import AppButton from '../components/AppButton.vue';
+import AppModal from '../components/AppModal.vue';
 import DataTable, { type Column } from '../components/DataTable.vue';
+import { http } from '../api/http';
 import { useCrud } from '../composables/useCrud';
 import { useFormat } from '../composables/useFormat';
 import { useEntitiesStore } from '../stores/entities';
@@ -56,7 +58,7 @@ const crud = useCrud<Account, AccountPayload>({
     removeError: 'No se pudo eliminar la cuenta.'
   }
 });
-const { rows, form, editingId, saving, save, startEdit, cancelEdit, remove, load } = crud;
+const { rows, form, editingId, saving, save, startEdit, cancelEdit, load } = crud;
 
 const showBankFields = computed(() => form.value.type === 'BANK' || form.value.type === 'DEBIT');
 
@@ -85,12 +87,54 @@ async function onSave() {
   await save();
   entities.invalidate('accounts');
 }
-async function onRemove(item: Account) {
-  await remove(
-    item,
-    `Eliminar la cuenta "${item.name}"? Esto la marcará inactiva. Sus movimientos NO se eliminan.`
-  );
-  entities.invalidate('accounts');
+async function onRemove(item: Account, force = false) {
+  if (!force && !confirm(`Eliminar la cuenta "${item.name}"? Esto la marcará inactiva. Sus movimientos NO se eliminan.`)) return;
+  try {
+    await http.delete(`/accounts/${item.id}`, { params: force ? { force: 1 } : undefined });
+    await load();
+    entities.invalidate('accounts');
+  } catch (err: unknown) {
+    const e = err as { response?: { status?: number; data?: { message?: string; code?: string } } };
+    if (e?.response?.status === 409 && e.response.data?.code === 'NONZERO_BALANCE') {
+      if (confirm(e.response.data.message || 'La cuenta tiene saldo. ¿Marcar inactiva igual?')) await onRemove(item, true);
+      return;
+    }
+    alert('No se pudo eliminar la cuenta.');
+  }
+}
+
+// ---- Conciliación de saldo ----
+const reconcileOpen = ref(false);
+const reconcileAcc = ref<Account | null>(null);
+const reconcileForm = ref<{ realBalance: number | null; notes: string }>({ realBalance: null, notes: '' });
+const reconcileErr = ref('');
+const reconciling = ref(false);
+
+function openReconcile(item: Account) {
+  reconcileAcc.value = item;
+  reconcileForm.value = { realBalance: Number(item.currentBalance), notes: '' };
+  reconcileErr.value = '';
+  reconcileOpen.value = true;
+}
+async function submitReconcile() {
+  reconcileErr.value = '';
+  if (!reconcileAcc.value) return;
+  if (reconcileForm.value.realBalance === null || Number.isNaN(reconcileForm.value.realBalance)) {
+    reconcileErr.value = 'Ingresa el saldo real.'; return;
+  }
+  reconciling.value = true;
+  try {
+    await http.post(`/accounts/${reconcileAcc.value.id}/reconcile`, {
+      realBalance: reconcileForm.value.realBalance,
+      notes: reconcileForm.value.notes.trim() || null
+    });
+    reconcileOpen.value = false;
+    await load();
+    entities.invalidate('accounts');
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: { message?: string } } };
+    reconcileErr.value = e?.response?.data?.message ?? 'No se pudo conciliar.';
+  } finally { reconciling.value = false; }
 }
 
 onMounted(() => Promise.all([load(), entities.ensureBanks()]));
@@ -207,6 +251,9 @@ onMounted(() => Promise.all([load(), entities.ensureBanks()]));
           </template>
 
           <template #actions="{ row }">
+            <AppButton variant="ghost" mini title="Conciliar saldo" @click="openReconcile(row)">
+              <template #icon><Scale :size="14" /></template>
+            </AppButton>
             <AppButton variant="ghost" mini :disabled="editingId === row.id" @click="startEdit(row)">
               <template #icon><Pencil :size="14" /></template>
             </AppButton>
@@ -217,6 +264,26 @@ onMounted(() => Promise.all([load(), entities.ensureBanks()]));
         </DataTable>
       </PanelCard>
     </div>
+
+    <AppModal :open="reconcileOpen" :title="`Conciliar saldo${reconcileAcc ? ' · ' + reconcileAcc.name : ''}`" @close="reconcileOpen = false">
+      <div class="recon-body">
+        <p class="recon-hint">
+          Ajusta el saldo del sistema al saldo real (el de tu banco/efectivo). Se creará un movimiento de ajuste con la diferencia.
+          <template v-if="reconcileAcc"><br />Saldo en el sistema: <strong>{{ formatMoney(reconcileAcc.currentBalance) }}</strong>.</template>
+        </p>
+        <FormField label="Saldo real (USD)" html-for="recon-real" hint="El saldo correcto que debería tener la cuenta.">
+          <input id="recon-real" v-model.number="reconcileForm.realBalance" type="number" step="0.01" placeholder="0.00" />
+        </FormField>
+        <FormField label="Notas" html-for="recon-notes">
+          <input id="recon-notes" v-model="reconcileForm.notes" maxlength="300" placeholder="Motivo del ajuste (opcional)" />
+        </FormField>
+        <p v-if="reconcileErr" class="error">{{ reconcileErr }}</p>
+      </div>
+      <template #footer>
+        <AppButton variant="ghost" @click="reconcileOpen = false"><template #icon><X :size="16" /></template>Cancelar</AppButton>
+        <AppButton :loading="reconciling" @click="submitReconcile"><template #icon><Scale :size="16" /></template>Conciliar</AppButton>
+      </template>
+    </AppModal>
   </section>
 </template>
 
@@ -227,4 +294,6 @@ onMounted(() => Promise.all([load(), entities.ensureBanks()]));
 .badge-active { background: #ecfdf5; color: #047857; }
 .badge-inactive { background: #fef2f2; color: #b91c1c; }
 .warn-hint { color: var(--color-warning-text); }
+.recon-body { display: flex; flex-direction: column; gap: 12px; }
+.recon-hint { font-size: 13px; color: #6b7280; margin: 0; }
 </style>

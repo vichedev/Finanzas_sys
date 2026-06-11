@@ -114,6 +114,41 @@ export interface VatSummary {
   netVat: number;
 }
 
+export interface Budget {
+  id: number;
+  categoryId: number;
+  categoryName: string;
+  categoryColor?: string | null;
+  amount: number;
+  period: 'MONTHLY';
+  spent: number;
+  remaining: number;
+  pct: number;
+}
+
+export interface BudgetsResponse {
+  year: number;
+  month: number;
+  budgets: Budget[];
+}
+
+export interface BudgetPayload {
+  categoryId: number;
+  amount: number;
+  period?: 'MONTHLY';
+}
+
+export interface AuditEntry {
+  id: number;
+  userId?: number | null;
+  userEmail?: string | null;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  entity: string;
+  entityId?: number | null;
+  summary?: string | null;
+  createdAt: string;
+}
+
 /** Mínimo común para tablas/CRUD genéricos. */
 export interface Identifiable {
   id: number;

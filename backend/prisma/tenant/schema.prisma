@@ -27,6 +27,12 @@ enum MovementType {
   TRANSFER
   WITHDRAWAL
   PURCHASE
+  CARD_PAYMENT // Pago de tarjeta de crédito (cuenta -, tarjeta -)
+  ADJUSTMENT   // Ajuste/conciliación de saldo de una cuenta
+}
+
+enum BudgetPeriod {
+  MONTHLY
 }
 
 enum ExpenseKind {
@@ -119,6 +125,7 @@ model User {
   wallets    Wallet[]
   notifications Notification[]
   attachments Attachment[]
+  budgets    Budget[]
 }
 
 model Branding {
@@ -196,6 +203,8 @@ model Card {
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
   type           CardType
+  bankId         Int?
+  bank           Bank?     @relation(fields: [bankId], references: [id], onDelete: SetNull)
   bankName       String?
   last4          String?
   creditLimit    Decimal?  @db.Decimal(14, 2)
@@ -224,6 +233,7 @@ model Category {
 
   movements Movement[]
   recurrings RecurringRule[]
+  budgets   Budget[]
 
   @@unique([userId, name, type])
   @@index([userId, type])
@@ -296,6 +306,7 @@ model Bank {
   movementsFrom Movement[] @relation("MovementFromBank")
   movementsTo   Movement[] @relation("MovementToBank")
   accounts      Account[]
+  cards         Card[]
 
   @@unique([userId, name])
   @@index([userId])
@@ -398,4 +409,34 @@ model Invoice {
 
   @@index([userId, kind, issueDate])
   @@index([userId, issueDate])
+}
+
+model Budget {
+  id         Int          @id @default(autoincrement())
+  userId     Int
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId Int
+  category   Category     @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  amount     Decimal      @db.Decimal(14, 2) // límite mensual
+  period     BudgetPeriod @default(MONTHLY)
+  isActive   Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([userId, categoryId, period])
+  @@index([userId])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?     // quién hizo el cambio (sin FK: el log sobrevive al borrado del usuario)
+  userEmail String?
+  action    String   // CREATE | UPDATE | DELETE
+  entity    String   // movement | account | card | bank | budget | recurring
+  entityId  Int?
+  summary   String?  // descripción legible del cambio
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entity, entityId])
 }

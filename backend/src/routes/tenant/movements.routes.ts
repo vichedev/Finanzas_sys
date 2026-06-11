@@ -4,6 +4,7 @@ import { Prisma } from '.prisma/tenant';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { createNotification } from '../../lib/notifications';
+import { auditFromReq } from '../../lib/tenantAudit';
 
 const MOVE_LABEL: Record<string, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra' };
 const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
@@ -15,7 +16,7 @@ const trimmedString = (min = 2, max = 200) => z.string().trim().min(min).max(max
 const moneyAmount = z.coerce.number().finite().gt(0).lte(99_999_999_999.99);
 
 const movementSchema = z.object({
-  type: z.enum(['INCOME', 'EXPENSE', 'TRANSFER', 'WITHDRAWAL', 'PURCHASE']),
+  type: z.enum(['INCOME', 'EXPENSE', 'TRANSFER', 'WITHDRAWAL', 'PURCHASE', 'CARD_PAYMENT', 'ADJUSTMENT']),
   expenseKind: z.enum(['FIXED', 'VARIABLE', 'NON_ACCOUNTABLE']).optional().nullable(),
   amount: moneyAmount,
   movementDate: z.coerce.date(),
@@ -107,6 +108,17 @@ async function applyDeltas(
     if (body.toAccountId) await tx.account.update({ where: { id: body.toAccountId, userId }, data: { currentBalance: { increment: amt } } });
     return;
   }
+  // Pago de tarjeta: sale de la cuenta y baja el saldo usado de la tarjeta.
+  if (body.type === 'CARD_PAYMENT') {
+    if (body.accountId) await tx.account.update({ where: { id: body.accountId, userId }, data: { currentBalance: { decrement: amt } } });
+    if (body.cardId) await tx.card.update({ where: { id: body.cardId, userId }, data: { currentBalance: { decrement: amt } } });
+    return;
+  }
+  // Ajuste/conciliación: isCredit=true sube el saldo, false lo baja.
+  if (body.type === 'ADJUSTMENT') {
+    if (body.accountId) await tx.account.update({ where: { id: body.accountId, userId }, data: { currentBalance: { increment: ic ? amt : -amt } } });
+    return;
+  }
   if (body.accountId) {
     const d = accountDelta(body.type, amt, ic);
     if (d !== 0) await tx.account.update({ where: { id: body.accountId, userId }, data: { currentBalance: { increment: d } } });
@@ -132,6 +144,15 @@ async function revertDeltas(
     const com = Number(prev.commission || 0);
     if (prev.accountId) await tx.account.update({ where: { id: prev.accountId, userId }, data: { currentBalance: { increment: amt + com } } });
     if (prev.toAccountId) await tx.account.update({ where: { id: prev.toAccountId, userId }, data: { currentBalance: { decrement: amt } } });
+    return;
+  }
+  if (prev.type === 'CARD_PAYMENT') {
+    if (prev.accountId) await tx.account.update({ where: { id: prev.accountId, userId }, data: { currentBalance: { increment: amt } } });
+    if (prev.cardId) await tx.card.update({ where: { id: prev.cardId, userId }, data: { currentBalance: { increment: amt } } });
+    return;
+  }
+  if (prev.type === 'ADJUSTMENT') {
+    if (prev.accountId) await tx.account.update({ where: { id: prev.accountId, userId }, data: { currentBalance: { increment: ic ? -amt : amt } } });
     return;
   }
   if (prev.accountId) {
@@ -187,6 +208,8 @@ movementsRouter.post('/', async (req, res) => {
     return movement;
   });
 
+  void auditFromReq(req, 'CREATE', 'movement', row.id, `${MOVE_LABEL[row.type] || row.type}: "${row.description}" · ${fmtMoney(row.amount)}`);
+
   // Notificaciones (no bloquean la respuesta)
   void (async () => {
     const prisma = req.tenantPrisma!;
@@ -232,6 +255,7 @@ movementsRouter.put('/:id', async (req, res) => {
     return updated;
   });
 
+  void auditFromReq(req, 'UPDATE', 'movement', id, `${MOVE_LABEL[row.type] || row.type}: "${row.description}" · ${fmtMoney(row.amount)}`);
   res.json(row);
 });
 
@@ -247,6 +271,7 @@ movementsRouter.delete('/:id', async (req, res) => {
     await tx.movement.delete({ where: { id } });
   });
 
+  void auditFromReq(req, 'DELETE', 'movement', id, 'Movimiento eliminado');
   res.status(204).send();
 });
 

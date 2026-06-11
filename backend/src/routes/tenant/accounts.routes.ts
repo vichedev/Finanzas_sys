@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
-import type { Prisma } from '.prisma/tenant';
+import { auditFromReq } from '../../lib/tenantAudit';
+
+const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
 
 export const accountsRouter = Router();
 accountsRouter.use(requireAuth, (req, res, next) => requirePermission('accounts', req.method === 'GET' ? 'read' : 'write')(req, res, next));
@@ -54,6 +56,7 @@ accountsRouter.post('/', async (req, res) => {
     },
     include: { bank: true }
   });
+  void auditFromReq(req, 'CREATE', 'account', row.id, `Cuenta "${row.name}"`);
   res.status(201).json(row);
 });
 
@@ -78,14 +81,66 @@ accountsRouter.put('/:id', async (req, res) => {
     data,
     include: { bank: true }
   });
+  void auditFromReq(req, 'UPDATE', 'account', id, `Cuenta "${row.name}"`);
   res.json(row);
 });
 
 accountsRouter.delete('/:id', async (req, res) => {
   const id = Number(req.params.id);
-  await req.tenantPrisma!.account.update({
-    where: { id, userId: req.tenantUserId! },
-    data: { isActive: false }
-  });
+  const userId = req.tenantUserId!;
+  const force = req.query.force === '1' || req.query.force === 'true';
+  const account = await req.tenantPrisma!.account.findFirst({ where: { id, userId } });
+  if (!account) return res.status(404).json({ message: 'Cuenta no encontrada' });
+  if (!force && Math.abs(Number(account.currentBalance)) > 0.009) {
+    return res.status(409).json({
+      message: `La cuenta tiene un saldo de ${fmtMoney(account.currentBalance)}. ¿Deseas marcarla inactiva igualmente?`,
+      code: 'NONZERO_BALANCE',
+      balance: Number(account.currentBalance)
+    });
+  }
+  await req.tenantPrisma!.account.update({ where: { id, userId }, data: { isActive: false } });
+  void auditFromReq(req, 'DELETE', 'account', id, `Cuenta "${account.name}" marcada inactiva`);
   res.status(204).send();
+});
+
+/**
+ * Conciliación: ajusta el saldo de la cuenta al saldo real informado, creando
+ * un movimiento ADJUSTMENT que deja rastro de la diferencia.
+ */
+const reconcileSchema = z.object({
+  realBalance: z.coerce.number().finite().gte(-99_999_999_999.99).lte(99_999_999_999.99),
+  notes: z.string().trim().max(300).optional().nullable()
+}).strict();
+
+accountsRouter.post('/:id/reconcile', async (req, res) => {
+  const id = Number(req.params.id);
+  const userId = req.tenantUserId!;
+  const body = reconcileSchema.parse(req.body);
+
+  const result = await req.tenantPrisma!.$transaction(async (tx) => {
+    const account = await tx.account.findFirst({ where: { id, userId } });
+    if (!account) throw Object.assign(new Error('Cuenta no encontrada'), { status: 404 });
+    const current = Number(account.currentBalance);
+    const diff = Number((body.realBalance - current).toFixed(2));
+    if (Math.abs(diff) < 0.005) return { account, diff: 0, movement: null };
+
+    await tx.account.update({ where: { id }, data: { currentBalance: body.realBalance } });
+    const movement = await tx.movement.create({
+      data: {
+        userId,
+        type: 'ADJUSTMENT',
+        amount: Math.abs(diff),
+        isCredit: diff > 0, // true = subió el saldo
+        movementDate: new Date(),
+        description: `Ajuste de saldo "${account.name}"`,
+        paymentMethod: 'OTHER',
+        accountId: id,
+        notes: body.notes ?? `De ${fmtMoney(current)} a ${fmtMoney(body.realBalance)}`
+      }
+    });
+    return { account, diff, movement };
+  });
+
+  void auditFromReq(req, 'UPDATE', 'account', id, `Conciliación de "${result.account.name}": ${fmtMoney(result.diff)}`);
+  res.json({ ok: true, diff: result.diff, movementId: result.movement?.id ?? null });
 });

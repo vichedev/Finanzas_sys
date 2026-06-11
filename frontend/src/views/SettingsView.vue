@@ -536,16 +536,20 @@ function cancelEditBank() {
   newBank.value = emptyBankForm();
 }
 
-async function removeBank(b: Bank) {
-  if (!confirm(`Eliminar el banco "${b.name}"? Los movimientos que lo referencian quedarán sin banco asociado.`)) return;
+async function removeBank(b: Bank, force = false) {
+  if (!force && !confirm(`Eliminar el banco "${b.name}"? Los movimientos que lo referencian quedarán sin banco asociado.`)) return;
   try {
-    await http.delete(`/banks/${b.id}`);
+    await http.delete(`/banks/${b.id}`, { params: force ? { force: 1 } : undefined });
     bankMsg.value = 'Banco eliminado.';
     if (editingBankId.value === b.id) cancelEditBank();
     await loadBanks();
     setTimeout(() => (bankMsg.value = ''), 2500);
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { message?: string } } };
+    const err = e as { response?: { status?: number; data?: { message?: string; code?: string } } };
+    if (err?.response?.status === 409 && err.response.data?.code === 'BANK_IN_USE') {
+      if (confirm(err.response.data.message || 'El banco está en uso. ¿Eliminar igual?')) { await removeBank(b, true); return; }
+      return;
+    }
     bankErr.value = err?.response?.data?.message || 'No se pudo eliminar el banco.';
   }
 }

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useAuthStore, type ModuleName } from './stores/auth';
 import { useBrandingStore } from './stores/branding';
+import { useEntitiesStore } from './stores/entities';
+import { http } from './api/http';
 import { useRoute, useRouter } from 'vue-router';
 import ToastHost from './components/ToastHost.vue';
 import NotificationBell from './components/NotificationBell.vue';
@@ -16,6 +18,8 @@ import {
   FileText,
   FolderOpen,
   BarChart3,
+  PiggyBank,
+  History,
   Settings,
   ShieldCheck,
   LogOut,
@@ -25,8 +29,26 @@ import {
 
 const auth = useAuthStore();
 const branding = useBrandingStore();
+const entities = useEntitiesStore();
 const router = useRouter();
 const route = useRoute();
+
+// Genera los movimientos recurrentes vencidos (idempotente en el backend).
+function runRecurrings() {
+  if (!auth.isAuthenticated || auth.isSuper) return;
+  http.post('/recurrings/run').catch(() => { /* best-effort */ });
+}
+
+// Sincronización en tiempo real al volver a la pestaña/ventana (sin recargar).
+let lastRefresh = 0;
+function onFocusRefresh() {
+  if (!auth.isAuthenticated || auth.isSuper) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  const t = Date.now();
+  if (t - lastRefresh < 5000) return; // throttle
+  lastRefresh = t;
+  entities.refreshLoaded();
+}
 
 // Identidad: empresa → carga del servidor; super-admin → look por defecto;
 // sin sesión (login) → identidad recordada de la última empresa usada.
@@ -58,8 +80,24 @@ watch(() => route.fullPath, () => {
 });
 
 onMounted(() => {
-  if (auth.isAuthenticated) auth.refreshSession();
+  if (auth.isAuthenticated) {
+    auth.refreshSession();
+    runRecurrings();
+  }
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', onFocusRefresh);
+    document.addEventListener('visibilitychange', onFocusRefresh);
+  }
 });
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('focus', onFocusRefresh);
+    document.removeEventListener('visibilitychange', onFocusRefresh);
+  }
+});
+
+// Al iniciar sesión (login → autenticado), genera recurrentes vencidos.
+watch(() => auth.isAuthenticated, (v, prev) => { if (v && !prev) runRecurrings(); });
 
 function logout() {
   auth.logout();
@@ -76,9 +114,9 @@ function item(to: string, icon: Component, label: string, module?: ModuleName): 
 const groups: NavGroup[] = [
   { heading: 'Principal', items: [item('/', LayoutDashboard, 'Resumen'), item('/movements', ArrowLeftRight, 'Movimientos', 'movements')] },
   { heading: 'Tu dinero', items: [item('/accounts', Landmark, 'Cuentas', 'accounts'), item('/cards', CreditCard, 'Tarjetas', 'cards')] },
-  { heading: 'Compromisos', items: [item('/debts', HandCoins, 'Deudas y cobros', 'debts'), item('/recurrings', Repeat, 'Pagos recurrentes', 'recurrings')] },
+  { heading: 'Compromisos', items: [item('/debts', HandCoins, 'Deudas y cobros', 'debts'), item('/recurrings', Repeat, 'Pagos recurrentes', 'recurrings'), item('/budgets', PiggyBank, 'Presupuestos', 'movements')] },
   { heading: 'Facturación', items: [item('/invoices', FileText, 'Facturas e IVA', 'invoices')] },
-  { heading: 'Análisis', items: [item('/reports', BarChart3, 'Reportes', 'reports'), item('/documents', FolderOpen, 'Documentos')] }
+  { heading: 'Análisis', items: [item('/reports', BarChart3, 'Reportes', 'reports'), item('/audit', History, 'Auditoría', 'reports'), item('/documents', FolderOpen, 'Documentos')] }
 ];
 
 const settingsItem = item('/settings', Settings, 'Configuración');

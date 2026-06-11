@@ -12,7 +12,7 @@ import AttachmentUploader from '../components/AttachmentUploader.vue';
 import { useToast } from '../composables/useToast';
 import { useFormat } from '../composables/useFormat';
 
-type MovementType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'WITHDRAWAL' | 'PURCHASE';
+type MovementType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'WITHDRAWAL' | 'PURCHASE' | 'CARD_PAYMENT' | 'ADJUSTMENT';
 type ExpenseKind = 'FIXED' | 'VARIABLE' | 'NON_ACCOUNTABLE';
 type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'DEPOSIT' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'WALLET' | 'OTHER';
 
@@ -118,7 +118,7 @@ const buildEmptyForm = () => ({
 const form = ref(buildEmptyForm());
 
 const PAYMENT_LABEL: Record<PaymentMethod, string> = { CASH: 'Efectivo', BANK_TRANSFER: 'Transferencia bancaria', DEPOSIT: 'Depósito', DEBIT_CARD: 'Tarjeta de débito', CREDIT_CARD: 'Tarjeta de crédito', WALLET: 'Billetera digital', OTHER: 'Otro' };
-const TYPE_ICON: Record<MovementType, string> = { INCOME: '💵', EXPENSE: '🛒', TRANSFER: '🔁', WITHDRAWAL: '🏧', PURCHASE: '🛍️' };
+const TYPE_ICON: Record<MovementType, string> = { INCOME: '💵', EXPENSE: '🛒', TRANSFER: '🔁', WITHDRAWAL: '🏧', PURCHASE: '🛍️', CARD_PAYMENT: '💳', ADJUSTMENT: '⚖️' };
 
 // Método de pago como selector visual de chips (más intuitivo que un dropdown).
 const PAYMENT_OPTIONS: { value: PaymentMethod; label: string; icon: string }[] = [
@@ -166,6 +166,12 @@ const showCreditToggle = computed(() => isPurchase.value);
 const showDueDate = computed(() => isCreditPurchase.value);
 const showPaymentMethod = computed(() => !isWithdrawal.value && !isCreditPurchase.value);
 const showAccount = computed(() => isWithdrawal.value); // cuenta de la que sale el efectivo
+// Cuenta opcional para ingreso/gasto: si se elige, mueve el saldo de esa cuenta.
+// Solo con métodos que tocan una cuenta (no tarjeta/billetera, para no duplicar el saldo).
+const showOptionalAccount = computed(() =>
+  ['INCOME', 'EXPENSE'].includes(form.value.type) &&
+  ['CASH', 'BANK_TRANSFER', 'DEPOSIT', 'OTHER'].includes(form.value.paymentMethod)
+);
 const accountMap = computed(() => new Map(accounts.value.map((a) => [a.id, a])));
 // Interbancaria = transferencia entre cuentas de bancos DISTINTOS.
 const isInterbankTransfer = computed(() => {
@@ -221,7 +227,7 @@ const walletOptions = computed<PickOpt[]>(() => [
 
 // Sección "dinero": sólo se muestra si algún campo de pago/cuenta aplica.
 const showMoneySection = computed(() =>
-  isTransfer.value || showPaymentMethod.value || showAccount.value || showCard.value || showWallet.value || showFromBank.value || showToBank.value
+  isTransfer.value || showPaymentMethod.value || showAccount.value || showOptionalAccount.value || showCard.value || showWallet.value || showFromBank.value || showToBank.value
 );
 const moneySectionTitle = computed(() => {
   if (isWithdrawal.value) return 'Retiro de efectivo';
@@ -286,6 +292,8 @@ function signedAmount(item: Movement) {
   if (item.type === 'INCOME') return { text: `+${formatMoney(a)}`, cls: 'pos' };
   if (item.type === 'EXPENSE' || item.type === 'WITHDRAWAL') return { text: `-${formatMoney(a)}`, cls: 'neg' };
   if (item.type === 'PURCHASE') return { text: (item.isCredit ? '' : '-') + formatMoney(a), cls: item.isCredit ? '' : 'neg' };
+  if (item.type === 'CARD_PAYMENT') return { text: `-${formatMoney(a)}`, cls: 'neg' };
+  if (item.type === 'ADJUSTMENT') return { text: (item.isCredit ? '+' : '-') + formatMoney(a), cls: item.isCredit ? 'pos' : 'neg' };
   return { text: formatMoney(a), cls: '' };
 }
 function accountOrCardLabel(item: Movement) {
@@ -327,7 +335,7 @@ async function save() {
       expenseKind: form.value.type === 'EXPENSE' ? form.value.expenseKind : null,
       amount: Number(form.value.amount), movementDate: form.value.movementDate,
       description: form.value.description.trim(), paymentMethod: effectivePaymentMethod,
-      accountId: isTransfer.value ? (form.value.accountId || null) : (showAccount.value ? form.value.accountId || null : null),
+      accountId: isTransfer.value ? (form.value.accountId || null) : ((showAccount.value || showOptionalAccount.value) ? form.value.accountId || null : null),
       toAccountId: isTransfer.value ? (form.value.toAccountId || null) : null,
       cardId: !isTransfer.value && showCard.value ? form.value.cardId || null : null,
       walletId: !isTransfer.value && showWallet.value ? form.value.walletId || null : null,
@@ -612,6 +620,17 @@ onMounted(load);
                   />
                   <small class="hint">Cuenta de la que sale el efectivo.</small>
                 </div>
+                <div v-if="showOptionalAccount" class="field">
+                  <label>🏦 Cuenta afectada <small class="opt-tag">(opcional)</small></label>
+                  <PickerField
+                    v-model="form.accountId"
+                    :options="accountOptions"
+                    title="Selecciona una cuenta"
+                    placeholder="Sin cuenta"
+                    empty-text="No tienes cuentas. Créalas en la sección Cuentas."
+                  />
+                  <small class="hint">Si la eliges, {{ form.type === 'INCOME' ? 'suma' : 'resta' }} el saldo de esa cuenta.</small>
+                </div>
                 <div v-if="showWallet" class="field">
                   <label>👛 Billetera digital</label>
                   <PickerField
@@ -853,6 +872,7 @@ onMounted(load);
 .amount-field input { font-size: var(--text-xl); font-weight: 700; height: 48px; }
 .warn-hint { color: var(--color-warning-text); margin-top: var(--space-2); }
 
+.opt-tag { font-weight: 400; color: #9ca3af; }
 /* Método de pago: chips visuales */
 .pay-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .pay-chip {
