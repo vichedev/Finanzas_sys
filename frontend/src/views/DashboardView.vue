@@ -49,12 +49,14 @@ type SeriesPoint = { key: string; label: string; income: number; expense: number
 
 type CategoryRow = { categoryId: number | null; name: string; color: string; amount: number };
 
+type MovementKind = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'WITHDRAWAL' | 'PURCHASE' | 'CARD_PAYMENT' | 'ADJUSTMENT';
 type Movement = {
   id: number;
   date: string;
   description: string;
-  type: 'INCOME' | 'EXPENSE' | 'TRANSFER';
+  type: MovementKind;
   paymentMethod: string;
+  isCredit?: boolean;
   amount: number;
   category: { id: number; name: string; color: string | null } | null;
   account: { id: number; name: string; type: string } | null;
@@ -253,6 +255,25 @@ const ACCOUNT_LABEL: Record<string, string> = {
 };
 
 function paymentLabel(method: string) { return PAYMENT_LABEL[method] || method; }
+
+// --- Coherencia por tipo de movimiento (igual que la tabla de Movimientos) ---
+const TYPE_ICON: Record<string, string> = { INCOME: '💵', EXPENSE: '🛒', TRANSFER: '🔁', WITHDRAWAL: '🏧', PURCHASE: '🛍️', CARD_PAYMENT: '💳', ADJUSTMENT: '⚖️' };
+const TYPE_LABEL: Record<string, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra', CARD_PAYMENT: 'Pago de tarjeta', ADJUSTMENT: 'Ajuste' };
+function methodCell(row: Movement): string {
+  if (row.type === 'WITHDRAWAL') return 'Retiro de efectivo';
+  if (row.type === 'TRANSFER') return 'Transferencia entre cuentas';
+  if (row.type === 'CARD_PAYMENT') return 'Pago de tarjeta';
+  if (row.type === 'ADJUSTMENT') return 'Ajuste de saldo';
+  return PAYMENT_LABEL[row.paymentMethod] || row.paymentMethod;
+}
+function rowAmount(row: Movement): { text: string; cls: string } {
+  const m = formatMoney(row.amount);
+  if (row.type === 'INCOME') return { text: `+${m}`, cls: 'pos' };
+  if (row.type === 'EXPENSE' || row.type === 'WITHDRAWAL' || row.type === 'CARD_PAYMENT') return { text: `-${m}`, cls: 'neg' };
+  if (row.type === 'PURCHASE') return { text: (row.isCredit ? '' : '-') + m, cls: row.isCredit ? '' : 'neg' };
+  if (row.type === 'ADJUSTMENT') return { text: (row.isCredit ? '+' : '-') + m, cls: row.isCredit ? 'pos' : 'neg' };
+  return { text: m, cls: '' }; // TRANSFER
+}
 function accountTypeLabel(type: string) { return ACCOUNT_LABEL[type] || type; }
 function formatDate(value: string) {
   const d = new Date(value);
@@ -266,12 +287,6 @@ function pctOfTotal(amount: number) {
   const total = totalExpenseCategoryAmount.value;
   if (!total) return '0.0%';
   return `${((amount / total) * 100).toFixed(1)}%`;
-}
-function categoryIcon(type: string, paymentMethod: string) {
-  if (type === 'INCOME') return '💵';
-  if (paymentMethod === 'CREDIT_CARD') return '💳';
-  if (paymentMethod === 'DEBIT_CARD') return '🏦';
-  return '🛒';
 }
 function accountIcon(type: string) {
   if (type === 'CASH') return '💵';
@@ -513,16 +528,14 @@ function accountIcon(type: string) {
             <tbody>
               <tr v-for="row in data.recentMovements" :key="row.id">
                 <td>{{ formatDate(row.date) }}</td>
-                <td><span class="concept-icon">{{ categoryIcon(row.type, row.paymentMethod) }}</span>{{ row.description }}</td>
+                <td><span class="concept-icon">{{ TYPE_ICON[row.type] || '•' }}</span>{{ row.description }}</td>
                 <td>
                   <span class="cat-pill" :style="row.category?.color ? { background: `${row.category.color}22`, color: row.category.color } : {}">
-                    {{ row.category?.name || (row.type === 'INCOME' ? 'Ingreso' : 'Sin categoría') }}
+                    {{ row.category?.name || TYPE_LABEL[row.type] || 'Sin categoría' }}
                   </span>
                 </td>
-                <td>{{ paymentLabel(row.paymentMethod) }}</td>
-                <td class="right" :class="{ neg: row.type === 'EXPENSE', pos: row.type === 'INCOME' }">
-                  {{ row.type === 'EXPENSE' ? '-' : row.type === 'INCOME' ? '+' : '' }}{{ formatMoney(row.amount) }}
-                </td>
+                <td>{{ methodCell(row) }}</td>
+                <td class="right" :class="rowAmount(row).cls">{{ rowAmount(row).text }}</td>
               </tr>
             </tbody>
           </table>

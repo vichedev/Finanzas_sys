@@ -192,6 +192,7 @@ dashboardRouter.get('/', async (req, res) => {
       description: m.description,
       type: m.type,
       paymentMethod: m.paymentMethod,
+      isCredit: m.isCredit,
       amount: Number(m.amount),
       category: m.category ? { id: m.category.id, name: m.category.name, color: m.category.color } : null,
       account: m.account ? { id: m.account.id, name: m.account.name, type: m.account.type } : null,
