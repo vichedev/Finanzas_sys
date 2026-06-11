@@ -15,7 +15,10 @@ const MAX_FAILED = 5;
 const LOCK_MS = 15 * 60 * 1000;
 
 const loginSchema = z.object({
-  email: z.string().email().max(120),
+  // Identificador de acceso: aceptamos emails normales y también usuarios tipo
+  // "admin@maat-finanzas" (sin TLD) usados por el admin sembrado. Solo se usa
+  // como clave de búsqueda, así que no exigimos formato RFC de email.
+  email: z.string().trim().min(3).max(120),
   password: z.string().min(1).max(200)
 });
 

@@ -247,7 +247,11 @@ FRESH_ENV=0
 
 # --- Credenciales del administrador inicial (se siembran desde el .env) ---
 if [[ -z "$ADMIN_EMAIL" ]]; then
-  ADMIN_EMAIL=$(ask_str "Email del administrador (SuperAdmin, dueño de la plataforma)" "admin@$(hostname -f 2>/dev/null || echo finanzas.local)")
+  # El hostname (ej. "maat-finanzas") suele NO tener dominio, lo que produce un
+  # email sin TLD. Default seguro con dominio válido para no romper el login.
+  _hn="$(hostname -f 2>/dev/null || echo finanzas)"
+  [[ "$_hn" == *.* ]] || _hn="${_hn}.local"   # garantiza un TLD
+  ADMIN_EMAIL=$(ask_str "Email del administrador (SuperAdmin, dueño de la plataforma)" "admin@${_hn}")
 fi
 if [[ -z "$ADMIN_NAME" || "$ADMIN_NAME" == "Administrador" ]]; then
   ADMIN_NAME=$(ask_str "Nombre del administrador" "Administrador")

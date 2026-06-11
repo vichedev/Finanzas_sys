@@ -6,7 +6,9 @@
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\backend; npx prisma generate --schema=prisma/tenant/schema.prisma 2>&1 | Select-Object -Last 3; npm run sync:tenants 2>&1 | Select-Object -Last 8; \"SYNC $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\backend; npx tsc --noEmit 2>&1 | Select-Object -First 30; \"BE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -First 30; \"FE $LASTEXITCODE\")",
-      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix\\(nginx\\): no enviar HSTS en despliegue HTTP plano \\(causaba ERR_CONNECTION_CLOSED al forzar HTTPS inexistente\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix\\(nginx\\): no enviar HSTS en despliegue HTTP plano \\(causaba ERR_CONNECTION_CLOSED al forzar HTTPS inexistente\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\backend; npx tsc --noEmit 2>&1 | Select-Object -Last 6; \"BE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix\\(auth\\): login no exige email RFC \\(acepta admin tipo 'admin@maat-finanzas' sin TLD\\); install.sh genera email admin valido\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
     ]
   }
 }
