@@ -2,6 +2,10 @@
 import { computed, onMounted, ref } from 'vue';
 import { CreditCard, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
 import { http } from '../api/http';
+import { useEntitiesStore } from '../stores/entities';
+
+const entities = useEntitiesStore();
+const activeBanks = computed(() => entities.activeBanks);
 
 interface Card {
   id: number | string;
@@ -123,7 +127,8 @@ async function removeRow(item: Card) {
   } catch { errorMsg.value = 'No se pudo eliminar la tarjeta.'; }
 }
 
-onMounted(load);
+// Fuerza catálogo de bancos fresco al entrar (sin recargar la página).
+onMounted(() => Promise.all([load(), entities.ensureBanks(true)]));
 </script>
 
 <template>
@@ -158,8 +163,15 @@ onMounted(load);
 
             <div class="field">
               <label for="card-bank">Banco emisor</label>
-              <input id="card-bank" v-model="form.bankName" type="text" placeholder="Pichincha, Pacífico, Guayaquil…" autocomplete="off" />
-              <small class="hint">Opcional.</small>
+              <select id="card-bank" v-model="form.bankName">
+                <option value="">— Sin banco —</option>
+                <option v-for="b in activeBanks" :key="b.id" :value="b.name">{{ b.name }}</option>
+                <option v-if="form.bankName && !activeBanks.some(b => b.name === form.bankName)" :value="form.bankName">
+                  {{ form.bankName }} (no listado)
+                </option>
+              </select>
+              <small v-if="activeBanks.length" class="hint">Tomado de Configuración → Bancos.</small>
+              <small v-else class="hint warn-hint">Sin bancos. Agrégalos en <strong>Configuración → Bancos</strong>.</small>
             </div>
 
             <div class="field">
@@ -287,6 +299,7 @@ onMounted(load);
 
 <style scoped>
 .required-mark { color: #ef4444; font-weight: 700; }
+.warn-hint { color: var(--color-warning-text, #b45309); }
 .card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
 .card-last4 { font-family: ui-monospace, monospace; font-size: 12px; color: #6b7280; letter-spacing: 0.05em; margin-top: 2px; }
 .pill-credit { background: #ecfdf5; color: #047857; }

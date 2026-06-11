@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
 import { useBrandingStore } from '../stores/branding';
+import { useEntitiesStore } from '../stores/entities';
 import { http } from '../api/http';
 import { backupApi } from '../api/backup';
 import AdminUsersPanel from './AdminUsersPanel.vue';
@@ -21,6 +22,7 @@ type Profile = { id?: number; name?: string; email?: string; currency?: string; 
 type SmtpPublic = { host: string; port: number; user: string; hasPass: boolean; secure: boolean; from: string; publicUrl: string };
 
 const auth = useAuthStore();
+const entities = useEntitiesStore();
 const categories = ref<Category[]>([]);
 const filter = ref<FilterType>('ALL');
 const emptyCategoryForm = () => ({ name: '', type: 'EXPENSE' as 'INCOME' | 'EXPENSE', icon: '' });
@@ -486,8 +488,8 @@ async function loadCategories() {
 }
 
 async function loadBanks() {
-  const { data } = await http.get<Bank[]>('/banks');
-  banks.value = data;
+  // Fuente única: el store de entidades (reactivo y compartido entre vistas).
+  banks.value = (await entities.ensureBanks(true)) as Bank[];
 }
 
 async function addBank() {
