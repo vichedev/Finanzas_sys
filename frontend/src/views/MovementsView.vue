@@ -346,7 +346,7 @@ async function save() {
       isCredit: isPurchase.value ? !!form.value.isCredit : false,
       dueDate: isCreditPurchase.value && form.value.dueDate ? form.value.dueDate : null,
       commission: isInterbankTransfer.value ? (Number(form.value.commission) || null) : null,
-      familyMember: isWithdrawal.value ? null : (form.value.familyMember.trim() || null),
+      familyMember: form.value.familyMember.trim() || null,
       notes: form.value.notes.trim() || null
     };
     if (editingId.value !== null) {
@@ -619,6 +619,11 @@ onMounted(load);
                     empty-text="No tienes cuentas. Créalas en la sección Cuentas."
                   />
                   <small class="hint">Cuenta de la que sale el efectivo.</small>
+                </div>
+                <div v-if="isWithdrawal" class="field">
+                  <label for="mv-withdrawer">👤 Quién retiró</label>
+                  <input id="mv-withdrawer" v-model="form.familyMember" type="text" maxlength="80" placeholder="ej. Juan Pérez" />
+                  <small class="hint">Persona que hizo el retiro.</small>
                 </div>
                 <div v-if="showOptionalAccount" class="field">
                   <label>🏦 Cuenta afectada <small class="opt-tag">(opcional)</small></label>
