@@ -288,12 +288,20 @@ function setTab(key: TabKey) {
   }
 }
 
-// Filas mostradas según la pestaña activa
-const displayRows = computed(() =>
-  activeTab.value === 'ALL'
+// Filtro por cuenta (origen o destino). null = todas.
+const accountFilter = ref<number | null>(null);
+
+// Filas mostradas según la pestaña activa + filtro de cuenta
+const displayRows = computed(() => {
+  let list = activeTab.value === 'ALL'
     ? rows.value
-    : rows.value.filter((r) => r.type === 'EXPENSE' && r.expenseKind === activeTab.value)
-);
+    : rows.value.filter((r) => r.type === 'EXPENSE' && r.expenseKind === activeTab.value);
+  if (accountFilter.value != null) {
+    const id = accountFilter.value;
+    list = list.filter((r) => r.accountId === id || r.toAccountId === id);
+  }
+  return list;
+});
 
 const totals = computed(() => {
   let income = 0, expense = 0;
@@ -781,7 +789,16 @@ onMounted(load);
           <h2>
             {{ activeTab === 'ALL' ? 'Movimientos del mes' : 'Gastos ' + (TABS.find(t => t.key === activeTab)?.label || '').toLowerCase() }}
           </h2>
-          <span class="panel-hint">{{ MONTHS.find(m => m.value === month)?.label }} {{ year }} · {{ displayRows.length }} registro{{ displayRows.length === 1 ? '' : 's' }}</span>
+          <div class="panel-header-right">
+            <label class="acc-filter">
+              <span>Cuenta:</span>
+              <select v-model.number="accountFilter">
+                <option :value="null">Todas las cuentas</option>
+                <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+              </select>
+            </label>
+            <span class="panel-hint">{{ MONTHS.find(m => m.value === month)?.label }} {{ year }} · {{ displayRows.length }} registro{{ displayRows.length === 1 ? '' : 's' }}</span>
+          </div>
         </div>
 
         <div v-if="!displayRows.length" class="empty-state">
@@ -1016,6 +1033,9 @@ onMounted(load);
 .warn-hint { color: var(--color-warning-text); margin-top: var(--space-2); }
 
 .opt-tag { font-weight: 400; color: #9ca3af; }
+.panel-header-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.acc-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #64748b; font-weight: 600; }
+.acc-filter select { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; max-width: 220px; }
 /* Método de pago: chips visuales */
 .pay-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .pay-chip {

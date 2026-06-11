@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { Bar, Doughnut } from 'vue-chartjs';
 import {
   Chart as ChartJS,
@@ -235,7 +235,29 @@ async function load() {
   }
 }
 
-onMounted(load);
+// Refresco en tiempo real: al volver a la pestaña/ventana, recarga el dashboard.
+let lastRefresh = 0;
+function onFocusRefresh() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  const t = Date.now();
+  if (t - lastRefresh < 4000) return;
+  lastRefresh = t;
+  load();
+}
+
+onMounted(() => {
+  load();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', onFocusRefresh);
+    document.addEventListener('visibilitychange', onFocusRefresh);
+  }
+});
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('focus', onFocusRefresh);
+    document.removeEventListener('visibilitychange', onFocusRefresh);
+  }
+});
 
 const PAYMENT_LABEL: Record<string, string> = {
   CASH: 'Efectivo',

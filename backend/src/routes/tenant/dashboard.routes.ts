@@ -36,6 +36,19 @@ dashboardRouter.get('/', async (req, res) => {
     return new Date(Date.UTC(s.year, s.month - 1, 1));
   })();
 
+  // Definición unificada de Ingresos/Gastos (igual que la tabla de Movimientos):
+  //  - Ingreso  = movimientos INCOME
+  //  - Gasto    = EXPENSE + WITHDRAWAL + PURCHASE pagada (no fiada) + comisiones
+  //  (TRANSFER, CARD_PAYMENT y ADJUSTMENT se reflejan en los saldos de cuentas/tarjetas, no en estos KPIs)
+  const sumExpr = Prisma.sql`
+    SUM(CASE WHEN "type" = 'INCOME' THEN "amount" ELSE 0 END)::float8 AS income,
+    (SUM(CASE
+        WHEN "type" IN ('EXPENSE', 'WITHDRAWAL') THEN "amount"
+        WHEN "type" = 'PURCHASE' AND "isCredit" = false THEN "amount"
+        ELSE 0 END)
+     + COALESCE(SUM("commission"), 0))::float8 AS expense
+  `;
+
   const [
     totals,
     prevTotals,
@@ -49,34 +62,33 @@ dashboardRouter.get('/', async (req, res) => {
     debtCounts,
     activeRecurrings
   ] = await Promise.all([
-    req.tenantPrisma!.movement.groupBy({
-      by: ['type'],
-      where: { userId, movementDate: { gte: start, lt: end } },
-      _sum: { amount: true }
-    }),
-    req.tenantPrisma!.movement.groupBy({
-      by: ['type'],
-      where: { userId, movementDate: { gte: prevRange.start, lt: prevRange.end } },
-      _sum: { amount: true }
-    }),
-    req.tenantPrisma!.$queryRaw<Array<{ y: number; m: number; type: string; total: Prisma.Decimal }>>(Prisma.sql`
+    req.tenantPrisma!.$queryRaw<Array<{ income: number; expense: number }>>(Prisma.sql`
+      SELECT ${sumExpr} FROM "Movement"
+      WHERE "userId" = ${userId} AND "movementDate" >= ${start} AND "movementDate" < ${end}
+    `),
+    req.tenantPrisma!.$queryRaw<Array<{ income: number; expense: number }>>(Prisma.sql`
+      SELECT ${sumExpr} FROM "Movement"
+      WHERE "userId" = ${userId} AND "movementDate" >= ${prevRange.start} AND "movementDate" < ${prevRange.end}
+    `),
+    req.tenantPrisma!.$queryRaw<Array<{ y: number; m: number; income: number; expense: number }>>(Prisma.sql`
       SELECT EXTRACT(YEAR FROM "movementDate")::int AS y,
              EXTRACT(MONTH FROM "movementDate")::int AS m,
-             "type"::text AS type,
-             SUM("amount") AS total
+             ${sumExpr}
       FROM "Movement"
       WHERE "userId" = ${userId}
         AND "movementDate" >= ${seriesStart}
         AND "movementDate" < ${end}
-      GROUP BY 1, 2, 3
+      GROUP BY 1, 2
       ORDER BY 1, 2
     `),
-    req.tenantPrisma!.movement.groupBy({
-      by: ['categoryId'],
-      where: { userId, type: 'EXPENSE', movementDate: { gte: start, lt: end } },
-      _sum: { amount: true },
-      orderBy: { _sum: { amount: 'desc' } }
-    }),
+    req.tenantPrisma!.$queryRaw<Array<{ categoryId: number | null; amount: number }>>(Prisma.sql`
+      SELECT "categoryId", SUM("amount")::float8 AS amount
+      FROM "Movement"
+      WHERE "userId" = ${userId} AND "movementDate" >= ${start} AND "movementDate" < ${end}
+        AND ("type" = 'EXPENSE' OR ("type" = 'PURCHASE' AND "isCredit" = false))
+      GROUP BY "categoryId"
+      ORDER BY amount DESC
+    `),
     req.tenantPrisma!.category.findMany({ where: { userId } }),
     req.tenantPrisma!.movement.findMany({
       where: { userId, movementDate: { gte: start, lt: end } },
@@ -105,10 +117,10 @@ dashboardRouter.get('/', async (req, res) => {
     })
   ]);
 
-  const income = Number(totals.find((t) => t.type === 'INCOME')?._sum.amount || 0);
-  const expense = Number(totals.find((t) => t.type === 'EXPENSE')?._sum.amount || 0);
-  const prevIncome = Number(prevTotals.find((t) => t.type === 'INCOME')?._sum.amount || 0);
-  const prevExpense = Number(prevTotals.find((t) => t.type === 'EXPENSE')?._sum.amount || 0);
+  const income = Number(totals[0]?.income || 0);
+  const expense = Number(totals[0]?.expense || 0);
+  const prevIncome = Number(prevTotals[0]?.income || 0);
+  const prevExpense = Number(prevTotals[0]?.expense || 0);
   const balance = income - expense;
   const prevBalance = prevIncome - prevExpense;
 
@@ -128,9 +140,8 @@ dashboardRouter.get('/', async (req, res) => {
     for (const row of seriesRows) {
       const bucket = buckets.find((b) => b.year === row.y && b.month === row.m);
       if (!bucket) continue;
-      const amount = Number(row.total || 0);
-      if (row.type === 'INCOME') bucket.income = amount;
-      if (row.type === 'EXPENSE') bucket.expense = amount;
+      bucket.income = Number(row.income || 0);
+      bucket.expense = Number(row.expense || 0);
     }
     return buckets.map(({ year: _y, month: _m, ...rest }) => rest);
   })();
@@ -142,7 +153,7 @@ dashboardRouter.get('/', async (req, res) => {
       categoryId: row.categoryId,
       name: cat?.name || 'Sin categoría',
       color: cat?.color || PALETTE[idx % PALETTE.length],
-      amount: Number(row._sum.amount || 0)
+      amount: Number(row.amount || 0)
     };
   });
 
