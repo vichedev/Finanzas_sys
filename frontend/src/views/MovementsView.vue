@@ -16,7 +16,7 @@ type MovementType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'WITHDRAWAL' | 'PURCHASE
 type ExpenseKind = 'FIXED' | 'VARIABLE' | 'NON_ACCOUNTABLE';
 type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'DEPOSIT' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'WALLET' | 'OTHER';
 
-interface Account { id: number; name: string; type?: string; bankName?: string | null }
+interface Account { id: number; name: string; type?: string; holder?: string | null; accountKind?: string | null; bankId?: number | null; bankName?: string | null; accountNumber?: string | null }
 interface Card { id: number; name: string }
 interface Wallet { id: number; name: string; provider?: string | null; isActive?: boolean }
 interface Category { id: number; name: string; color?: string | null; icon?: string | null }
@@ -32,11 +32,11 @@ function bankOptionLabel(b: Bank): string {
 interface Movement {
   id: number; type: MovementType; expenseKind: ExpenseKind | null; amount: number | string;
   movementDate: string; description: string; paymentMethod: PaymentMethod;
-  accountId: number | null; cardId: number | null; walletId: number | null; categoryId: number | null;
+  accountId: number | null; toAccountId: number | null; cardId: number | null; walletId: number | null; categoryId: number | null;
   fromBankId: number | null; toBankId: number | null;
   vendor: string | null; isCredit: boolean; dueDate: string | null; commission: number | string | null;
   familyMember: string | null; notes: string | null;
-  account?: Account | null; card?: Card | null; wallet?: Wallet | null; category?: Category | null;
+  account?: Account | null; toAccount?: Account | null; card?: Card | null; wallet?: Wallet | null; category?: Category | null;
   fromBank?: Bank | null; toBank?: Bank | null;
 }
 
@@ -107,7 +107,7 @@ const buildEmptyForm = () => ({
   expenseKind: (filterExpenseKind.value ?? 'VARIABLE') as ExpenseKind,
   amount: 0, movementDate: todayStr,
   description: '', paymentMethod: 'CASH' as PaymentMethod,
-  accountId: null as number | null, cardId: null as number | null,
+  accountId: null as number | null, toAccountId: null as number | null, cardId: null as number | null,
   walletId: null as number | null,
   categoryId: null as number | null,
   fromBankId: null as number | null, toBankId: null as number | null,
@@ -159,20 +159,20 @@ const yearOptions = computed<number[]>(() => { const y = now.getFullYear(); retu
 
 const isWithdrawal = computed(() => form.value.type === 'WITHDRAWAL');
 const isTransfer = computed(() => form.value.type === 'TRANSFER');
-// Interbancaria = transferencia con banco origen y destino DISTINTOS.
-const isInterbankTransfer = computed(() =>
-  isTransfer.value && !!form.value.fromBankId && !!form.value.toBankId && form.value.fromBankId !== form.value.toBankId
-);
 const isPurchase = computed(() => form.value.type === 'PURCHASE');
 const isCreditPurchase = computed(() => isPurchase.value && form.value.isCredit);
 const showVendor = computed(() => isPurchase.value);
 const showCreditToggle = computed(() => isPurchase.value);
 const showDueDate = computed(() => isCreditPurchase.value);
 const showPaymentMethod = computed(() => !isWithdrawal.value && !isCreditPurchase.value);
-const showAccount = computed(() => {
-  if (isWithdrawal.value) return true;
-  if (isCreditPurchase.value) return false;
-  return ['CASH', 'BANK_TRANSFER', 'DEPOSIT', 'DEBIT_CARD'].includes(form.value.paymentMethod);
+const showAccount = computed(() => isWithdrawal.value); // cuenta de la que sale el efectivo
+const accountMap = computed(() => new Map(accounts.value.map((a) => [a.id, a])));
+// Interbancaria = transferencia entre cuentas de bancos DISTINTOS.
+const isInterbankTransfer = computed(() => {
+  if (!isTransfer.value) return false;
+  const o = form.value.accountId != null ? accountMap.value.get(form.value.accountId) : null;
+  const d = form.value.toAccountId != null ? accountMap.value.get(form.value.toAccountId) : null;
+  return !!(o?.bankId && d?.bankId && o.bankId !== d.bankId);
 });
 const showCard = computed(() => {
   if (isWithdrawal.value) return false;
@@ -194,14 +194,17 @@ const activeBanks = computed(() => banks.value.filter((b) => b.isActive !== fals
 
 // Opciones para los selectores en modal (PickerField)
 type PickOpt = { value: number | null; label: string; sublabel?: string; icon?: string };
+function accountSubLabel(a: Account): string | undefined {
+  const parts: string[] = [];
+  if (a.holder) parts.push(a.holder);
+  if (a.bankName) parts.push(a.bankName);
+  if (a.accountNumber) parts.push(`****${a.accountNumber.slice(-4)}`);
+  if (!parts.length) parts.push(ACCOUNT_TYPE_LABEL[a.type || ''] || '');
+  return parts.filter(Boolean).join(' · ') || undefined;
+}
 const accountOptions = computed<PickOpt[]>(() => [
-  { value: null, label: 'Sin cuenta vinculada', icon: '∅' },
-  ...accounts.value.map((a) => ({
-    value: a.id,
-    label: a.name,
-    sublabel: a.bankName || ACCOUNT_TYPE_LABEL[a.type || ''] || undefined,
-    icon: accountIcon(a.type)
-  }))
+  { value: null, label: 'Sin cuenta', icon: '∅' },
+  ...accounts.value.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }))
 ]);
 const cardOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Sin tarjeta', icon: '∅' },
@@ -218,7 +221,7 @@ const walletOptions = computed<PickOpt[]>(() => [
 
 // Sección "dinero": sólo se muestra si algún campo de pago/cuenta aplica.
 const showMoneySection = computed(() =>
-  showPaymentMethod.value || showAccount.value || showCard.value || showWallet.value || showFromBank.value || showToBank.value
+  isTransfer.value || showPaymentMethod.value || showAccount.value || showCard.value || showWallet.value || showFromBank.value || showToBank.value
 );
 const moneySectionTitle = computed(() => {
   if (isWithdrawal.value) return 'Retiro de efectivo';
@@ -285,7 +288,13 @@ function signedAmount(item: Movement) {
   if (item.type === 'PURCHASE') return { text: (item.isCredit ? '' : '-') + formatMoney(a), cls: item.isCredit ? '' : 'neg' };
   return { text: formatMoney(a), cls: '' };
 }
-function accountOrCardLabel(item: Movement) { if (item.card) return `💳 ${item.card.name}`; if (item.wallet) return `👛 ${item.wallet.name}`; if (item.account) return `🏦 ${item.account.name}`; return '—'; }
+function accountOrCardLabel(item: Movement) {
+  if (item.type === 'TRANSFER' && (item.account || item.toAccount)) return `${item.account?.name || '?'} → ${item.toAccount?.name || '?'}`;
+  if (item.card) return `💳 ${item.card.name}`;
+  if (item.wallet) return `👛 ${item.wallet.name}`;
+  if (item.account) return `🏦 ${item.account.name}`;
+  return '—';
+}
 function setType(t: MovementType) { form.value.type = t; }
 
 async function load() {
@@ -302,24 +311,29 @@ async function load() {
 }
 
 async function save() {
-  if (form.value.description.trim().length < 2) { toast.error('La descripción es obligatoria (mínimo 2 caracteres).'); return; }
+  if (form.value.description.trim().length < 2) { toast.error('El detalle es obligatorio (mínimo 2 caracteres).'); return; }
   if (!(Number(form.value.amount) > 0)) { toast.error('El monto debe ser mayor a 0.'); return; }
+  if (isTransfer.value) {
+    if (!form.value.accountId || !form.value.toAccountId) { toast.error('Elige la cuenta de origen y la de destino.'); return; }
+    if (form.value.accountId === form.value.toAccountId) { toast.error('La cuenta de origen y la de destino deben ser distintas.'); return; }
+  }
   saving.value = true;
   try {
     let effectivePaymentMethod: PaymentMethod = form.value.paymentMethod;
-    if (isWithdrawal.value) effectivePaymentMethod = 'BANK_TRANSFER';
+    if (isWithdrawal.value || isTransfer.value) effectivePaymentMethod = 'BANK_TRANSFER';
     if (isCreditPurchase.value) effectivePaymentMethod = 'OTHER';
     const payload = {
       type: form.value.type,
       expenseKind: form.value.type === 'EXPENSE' ? form.value.expenseKind : null,
       amount: Number(form.value.amount), movementDate: form.value.movementDate,
       description: form.value.description.trim(), paymentMethod: effectivePaymentMethod,
-      accountId: showAccount.value ? form.value.accountId || null : null,
-      cardId: showCard.value ? form.value.cardId || null : null,
-      walletId: showWallet.value ? form.value.walletId || null : null,
-      categoryId: isWithdrawal.value ? null : (form.value.categoryId || null),
-      fromBankId: showFromBank.value ? form.value.fromBankId || null : null,
-      toBankId: showToBank.value ? form.value.toBankId || null : null,
+      accountId: isTransfer.value ? (form.value.accountId || null) : (showAccount.value ? form.value.accountId || null : null),
+      toAccountId: isTransfer.value ? (form.value.toAccountId || null) : null,
+      cardId: !isTransfer.value && showCard.value ? form.value.cardId || null : null,
+      walletId: !isTransfer.value && showWallet.value ? form.value.walletId || null : null,
+      categoryId: (isWithdrawal.value || isTransfer.value) ? null : (form.value.categoryId || null),
+      fromBankId: !isTransfer.value && showFromBank.value ? form.value.fromBankId || null : null,
+      toBankId: !isTransfer.value && showToBank.value ? form.value.toBankId || null : null,
       vendor: isPurchase.value ? (form.value.vendor.trim() || null) : null,
       isCredit: isPurchase.value ? !!form.value.isCredit : false,
       dueDate: isCreditPurchase.value && form.value.dueDate ? form.value.dueDate : null,
@@ -336,7 +350,7 @@ async function save() {
       toast.success('Movimiento registrado.');
     }
     const keepType = form.value.type, keepDate = form.value.movementDate, keepPm = form.value.paymentMethod, keepKind = form.value.expenseKind;
-    form.value = { type: keepType, expenseKind: keepKind, amount: 0, movementDate: keepDate, description: '', paymentMethod: keepPm, accountId: null, cardId: null, walletId: null, categoryId: null, fromBankId: null, toBankId: null, vendor: '', isCredit: false, dueDate: '', commission: 0, familyMember: '', notes: '' };
+    form.value = { type: keepType, expenseKind: keepKind, amount: 0, movementDate: keepDate, description: '', paymentMethod: keepPm, accountId: null, toAccountId: null, cardId: null, walletId: null, categoryId: null, fromBankId: null, toBankId: null, vendor: '', isCredit: false, dueDate: '', commission: 0, familyMember: '', notes: '' };
     editingId.value = null;
     await load();
   } catch { toast.error('No se pudo registrar el movimiento.'); }
@@ -353,6 +367,7 @@ function startEdit(item: Movement) {
     description: item.description,
     paymentMethod: item.paymentMethod,
     accountId: item.accountId,
+    toAccountId: item.toAccountId,
     cardId: item.cardId,
     walletId: item.walletId,
     categoryId: item.categoryId,
@@ -426,9 +441,10 @@ onMounted(load);
             <p class="form-section-title"><span class="step-num">2</span> Detalle</p>
             <div class="form-grid">
               <div class="field">
-                <label for="mv-desc">Descripción<span class="required-mark">*</span></label>
-                <input id="mv-desc" v-model="form.description" minlength="2" maxlength="120" required placeholder="ej. Compra supermercado, Pago Netflix" />
-                <small class="hint">En qué se gastó o de dónde vino.</small>
+                <label for="mv-desc">Detalle<span class="required-mark">*</span></label>
+                <input id="mv-desc" v-model="form.description" minlength="2" maxlength="120" required
+                       :placeholder="isTransfer ? 'ej. Transferí $X a la cuenta de Juan' : 'ej. Compra supermercado, Pago Netflix'" />
+                <small class="hint">{{ isTransfer ? 'Describe la transferencia.' : 'En qué se gastó o de dónde vino.' }}</small>
               </div>
               <div class="field">
                 <label for="mv-date">Fecha <span class="required-mark">*</span></label>
@@ -505,99 +521,123 @@ onMounted(load);
           <div v-if="showMoneySection" class="form-section">
             <p class="form-section-title"><span class="step-num">3</span> {{ moneySectionTitle }}</p>
 
-            <!-- Método de pago: selector visual (chips) -->
-            <div v-if="showPaymentMethod" class="field">
-              <label>Método de pago <span class="required-mark">*</span></label>
-              <div class="pay-picker">
-                <button
-                  v-for="p in PAYMENT_OPTIONS"
-                  :key="p.value"
-                  type="button"
-                  class="pay-chip"
-                  :class="{ active: form.paymentMethod === p.value }"
-                  @click="form.paymentMethod = p.value"
-                >
-                  <span class="pay-chip-ic">{{ p.icon }}</span>
-                  <span class="pay-chip-label">{{ p.label }}</span>
-                </button>
-              </div>
-            </div>
-
-            <!-- Cuenta / tarjeta / bancos / billetera: selectores elegantes en modal -->
-            <div class="form-grid picker-grid">
-              <div v-if="showFromBank" class="field">
-                <label>🏦 {{ isWithdrawal ? 'Banco del retiro' : 'Banco origen' }} <span v-if="isWithdrawal" class="required-mark">*</span></label>
-                <PickerField
-                  v-model="form.fromBankId"
-                  :options="bankOptions"
-                  :title="isWithdrawal ? 'Banco del retiro' : 'Banco origen'"
-                  :placeholder="isWithdrawal ? 'Elige el banco' : 'Elige el banco origen'"
-                  empty-text="No tienes bancos. Agrégalos en Configuración → Bancos."
-                />
-                <small class="hint">{{ isWithdrawal ? 'Banco del que retiras.' : 'Desde dónde salió el dinero.' }}</small>
-              </div>
-              <div v-if="showToBank" class="field">
-                <label>🏦 Banco destino</label>
-                <PickerField
-                  v-model="form.toBankId"
-                  :options="bankOptions"
-                  title="Banco destino"
-                  placeholder="Elige banco destino"
-                />
-                <small class="hint">A dónde llegó el dinero.</small>
-              </div>
-              <div v-if="showAccount" class="field">
-                <label>{{ isWithdrawal ? 'Cuenta bancaria' : 'Cuenta' }} <span v-if="isWithdrawal" class="required-mark">*</span></label>
-                <PickerField
-                  v-model="form.accountId"
-                  :options="accountOptions"
-                  title="Selecciona una cuenta"
-                  placeholder="Elige una cuenta"
-                  empty-text="No tienes cuentas. Créalas en la sección Cuentas."
-                />
-                <small class="hint">{{ isWithdrawal ? 'Cuenta de la que sale el efectivo.' : 'Cuenta que se afecta.' }}</small>
-              </div>
-              <div v-if="showWallet" class="field">
-                <label>👛 Billetera digital</label>
-                <PickerField
-                  v-model="form.walletId"
-                  :options="walletOptions"
-                  title="Selecciona una billetera"
-                  placeholder="Elige una billetera"
-                  empty-text="No tienes billeteras. Agrégalas en Configuración → Billeteras digitales."
-                />
-                <small class="hint">Payphone, PayPal, Takenos, etc.</small>
-              </div>
-              <div v-if="showCard" class="field">
-                <label>Tarjeta</label>
-                <PickerField
-                  v-model="form.cardId"
-                  :options="cardOptions"
-                  title="Selecciona una tarjeta"
-                  placeholder="Elige una tarjeta"
-                  empty-text="No tienes tarjetas. Créalas en la sección Tarjetas."
-                />
-              </div>
-            </div>
-            <p v-if="(showFromBank || showToBank) && activeBanks.length === 0" class="hint warn-hint">
-              No tienes bancos cargados todavía. Agrégalos en <strong>Configuración → Bancos</strong>.
-            </p>
-
-            <!-- Comisión: solo en transferencias interbancarias (bancos distintos) -->
-            <div v-if="isInterbankTransfer" class="interbank-block">
-              <div class="interbank-head">
-                <span class="interbank-ic">🔀</span>
-                <div>
-                  <strong>Transferencia interbancaria</strong>
-                  <small>Entre bancos distintos; suele tener comisión.</small>
+            <!-- TRANSFERENCIA: cuenta de origen + cuenta de destino -->
+            <template v-if="isTransfer">
+              <div class="form-grid picker-grid">
+                <div class="field">
+                  <label>Cuenta de origen <span class="required-mark">*</span></label>
+                  <PickerField
+                    v-model="form.accountId"
+                    :options="accountOptions"
+                    title="Cuenta de origen"
+                    placeholder="Elige la cuenta de origen"
+                    empty-text="No tienes cuentas. Créalas en la sección Cuentas."
+                  />
+                  <small class="hint">De qué cuenta sale el dinero.</small>
+                </div>
+                <div class="field">
+                  <label>Cuenta de destino <span class="required-mark">*</span></label>
+                  <PickerField
+                    v-model="form.toAccountId"
+                    :options="accountOptions"
+                    title="Cuenta de destino"
+                    placeholder="Elige la cuenta de destino"
+                    empty-text="No tienes cuentas. Créalas en la sección Cuentas."
+                  />
+                  <small class="hint">A qué cuenta llega el dinero.</small>
                 </div>
               </div>
-              <div class="field field-narrow interbank-commission">
-                <label for="mv-commission">Comisión cobrada (USD)</label>
-                <input id="mv-commission" v-model.number="form.commission" type="number" step="0.01" min="0" placeholder="0.00" />
-                <small class="hint">Se registra como costo del mes (la transferencia en sí no cambia tu patrimonio).</small>
+
+              <!-- Comisión: solo si las cuentas son de bancos distintos -->
+              <div v-if="isInterbankTransfer" class="interbank-block">
+                <div class="interbank-head">
+                  <span class="interbank-ic">🔀</span>
+                  <div>
+                    <strong>Transferencia interbancaria</strong>
+                    <small>Las cuentas son de bancos distintos; suele tener comisión.</small>
+                  </div>
+                </div>
+                <div class="field field-narrow interbank-commission">
+                  <label for="mv-commission">Comisión cobrada (USD)</label>
+                  <input id="mv-commission" v-model.number="form.commission" type="number" step="0.01" min="0" placeholder="0.00" />
+                  <small class="hint">Se descuenta del saldo de la cuenta de origen.</small>
+                </div>
               </div>
-            </div>
+            </template>
+
+            <!-- OTROS MOVIMIENTOS: método de pago + instrumentos -->
+            <template v-else>
+              <div v-if="showPaymentMethod" class="field">
+                <label>Método de pago <span class="required-mark">*</span></label>
+                <div class="pay-picker">
+                  <button
+                    v-for="p in PAYMENT_OPTIONS"
+                    :key="p.value"
+                    type="button"
+                    class="pay-chip"
+                    :class="{ active: form.paymentMethod === p.value }"
+                    @click="form.paymentMethod = p.value"
+                  >
+                    <span class="pay-chip-ic">{{ p.icon }}</span>
+                    <span class="pay-chip-label">{{ p.label }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="form-grid picker-grid">
+                <div v-if="showFromBank" class="field">
+                  <label>🏦 {{ isWithdrawal ? 'Banco del retiro' : 'Banco origen' }} <span v-if="isWithdrawal" class="required-mark">*</span></label>
+                  <PickerField
+                    v-model="form.fromBankId"
+                    :options="bankOptions"
+                    :title="isWithdrawal ? 'Banco del retiro' : 'Banco origen'"
+                    :placeholder="isWithdrawal ? 'Elige el banco' : 'Elige el banco origen'"
+                    empty-text="No tienes bancos. Agrégalos en Configuración → Bancos."
+                  />
+                  <small class="hint">{{ isWithdrawal ? 'Banco del que retiras.' : 'Desde dónde salió el dinero.' }}</small>
+                </div>
+                <div v-if="showToBank" class="field">
+                  <label>🏦 Banco destino</label>
+                  <PickerField v-model="form.toBankId" :options="bankOptions" title="Banco destino" placeholder="Elige banco destino" />
+                  <small class="hint">A dónde llegó el dinero.</small>
+                </div>
+                <div v-if="showAccount" class="field">
+                  <label>Cuenta bancaria <span class="required-mark">*</span></label>
+                  <PickerField
+                    v-model="form.accountId"
+                    :options="accountOptions"
+                    title="Selecciona una cuenta"
+                    placeholder="Elige una cuenta"
+                    empty-text="No tienes cuentas. Créalas en la sección Cuentas."
+                  />
+                  <small class="hint">Cuenta de la que sale el efectivo.</small>
+                </div>
+                <div v-if="showWallet" class="field">
+                  <label>👛 Billetera digital</label>
+                  <PickerField
+                    v-model="form.walletId"
+                    :options="walletOptions"
+                    title="Selecciona una billetera"
+                    placeholder="Elige una billetera"
+                    empty-text="No tienes billeteras. Agrégalas en Configuración → Billeteras digitales."
+                  />
+                  <small class="hint">Payphone, PayPal, Takenos, etc.</small>
+                </div>
+                <div v-if="showCard" class="field">
+                  <label>Tarjeta</label>
+                  <PickerField
+                    v-model="form.cardId"
+                    :options="cardOptions"
+                    title="Selecciona una tarjeta"
+                    placeholder="Elige una tarjeta"
+                    empty-text="No tienes tarjetas. Créalas en la sección Tarjetas."
+                  />
+                </div>
+              </div>
+              <p v-if="(showFromBank || showToBank) && activeBanks.length === 0" class="hint warn-hint">
+                No tienes bancos cargados todavía. Agrégalos en <strong>Configuración → Bancos</strong>.
+              </p>
+            </template>
           </div>
 
           <!-- Notas (izquierda) · Monto + acción (derecha) -->

@@ -18,6 +18,8 @@ export interface Account {
   id: number;
   name: string;
   type: AccountType;
+  holder?: string | null;
+  accountKind?: BankAccountKind | null;
   bankId: number | null;
   bankName: string | null;
   accountNumber: string | null;
@@ -30,6 +32,9 @@ export interface Account {
 export interface AccountPayload {
   name: string;
   type: AccountType;
+  holder?: string | null;
+  accountKind?: BankAccountKind | null;
+  accountNumber?: string | null;
   bankId: number | null;
   initialBalance: number;
 }

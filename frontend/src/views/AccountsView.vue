@@ -14,8 +14,7 @@ import {
   ACCOUNT_TYPE_LABEL,
   ACCOUNT_TYPE_ICON,
   ACCOUNT_TYPE_OPTIONS,
-  BANK_KIND_LABEL,
-  bankFullLabel
+  BANK_KIND_LABEL
 } from '../constants/domain';
 import type { Account, AccountPayload } from '../types';
 
@@ -25,19 +24,28 @@ const activeBanks = computed(() => entities.activeBanks);
 
 const crud = useCrud<Account, AccountPayload>({
   service: accountsApi,
-  emptyForm: () => ({ name: '', type: 'CASH', bankId: null, initialBalance: 0 }),
+  emptyForm: () => ({ name: '', type: 'CASH', holder: '', accountKind: null, accountNumber: '', bankId: null, initialBalance: 0 }),
   toForm: (a) => ({
     name: a.name,
     type: a.type,
+    holder: a.holder ?? '',
+    accountKind: a.accountKind ?? null,
+    accountNumber: a.accountNumber ?? '',
     bankId: a.bankId,
     initialBalance: Number(a.initialBalance)
   }),
-  toPayload: (f) => ({
-    name: f.name.trim(),
-    type: f.type,
-    bankId: f.type === 'BANK' || f.type === 'DEBIT' ? f.bankId || null : null,
-    initialBalance: Number(f.initialBalance) || 0
-  }),
+  toPayload: (f) => {
+    const isBank = f.type === 'BANK' || f.type === 'DEBIT';
+    return {
+      name: f.name.trim(),
+      type: f.type,
+      holder: (f.holder || '').trim() || null,
+      accountKind: isBank ? (f.accountKind || null) : null,
+      accountNumber: isBank ? ((f.accountNumber || '').trim() || null) : null,
+      bankId: isBank ? (f.bankId || null) : null,
+      initialBalance: Number(f.initialBalance) || 0
+    };
+  },
   validate: (f) => (f.name.trim() ? null : 'El nombre de la cuenta es obligatorio.'),
   labels: {
     created: 'Cuenta creada correctamente.',
@@ -51,7 +59,6 @@ const crud = useCrud<Account, AccountPayload>({
 const { rows, form, editingId, saving, save, startEdit, cancelEdit, remove, load } = crud;
 
 const showBankFields = computed(() => form.value.type === 'BANK' || form.value.type === 'DEBIT');
-const selectedBank = computed(() => activeBanks.value.find((b) => b.id === form.value.bankId) || null);
 
 const columns: Column<Account>[] = [
   { key: 'name', label: 'Cuenta', width: '22%' },
@@ -101,7 +108,11 @@ onMounted(() => Promise.all([load(), entities.ensureBanks()]));
               <input id="acc-name" v-model="form.name" required maxlength="80" placeholder="ej. Cuenta Pichincha sueldo" />
             </FormField>
 
-            <FormField label="Tipo de cuenta" required html-for="acc-type" hint="Para reportes y filtros.">
+            <FormField label="Titular de la cuenta" html-for="acc-holder" hint="A nombre de quién está.">
+              <input id="acc-holder" v-model="form.holder" maxlength="120" placeholder="ej. Juan Pérez" />
+            </FormField>
+
+            <FormField label="Tipo / Naturaleza" required html-for="acc-type" hint="Efectivo, banco, billetera…">
               <select id="acc-type" v-model="form.type" required>
                 <option v-for="o in ACCOUNT_TYPE_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
               </select>
@@ -110,13 +121,23 @@ onMounted(() => Promise.all([load(), entities.ensureBanks()]));
             <FormField v-if="showBankFields" label="Banco" html-for="acc-bank">
               <select id="acc-bank" v-model.number="form.bankId">
                 <option :value="null">— Selecciona un banco —</option>
-                <option v-for="b in activeBanks" :key="b.id" :value="b.id">{{ bankFullLabel(b) }}</option>
+                <option v-for="b in activeBanks" :key="b.id" :value="b.id">{{ b.name }}</option>
               </select>
               <small v-if="!activeBanks.length" class="hint warn-hint">
                 Sin bancos. Ve a <strong>Configuración → Bancos</strong>.
               </small>
-              <small v-else-if="selectedBank" class="hint">{{ bankFullLabel(selectedBank) }}</small>
-              <small v-else class="hint">Selecciona del catálogo.</small>
+            </FormField>
+
+            <FormField v-if="showBankFields" label="Tipo de cuenta" html-for="acc-kind" hint="Ahorros o corriente.">
+              <select id="acc-kind" v-model="form.accountKind">
+                <option :value="null">— Sin especificar —</option>
+                <option value="SAVINGS">Ahorros</option>
+                <option value="CHECKING">Corriente</option>
+              </select>
+            </FormField>
+
+            <FormField v-if="showBankFields" label="Número de cuenta" html-for="acc-num" hint="Se mostrarán solo los últimos 4 dígitos.">
+              <input id="acc-num" v-model="form.accountNumber" maxlength="40" inputmode="numeric" placeholder="ej. 2200123456" />
             </FormField>
           </div>
 
@@ -150,22 +171,18 @@ onMounted(() => Promise.all([load(), entities.ensureBanks()]));
           <template #cell-name="{ row }">
             <span class="acc-icon-tbl">{{ ACCOUNT_TYPE_ICON[row.type] }}</span>
             <strong>{{ row.name }}</strong>
-            <div><small class="hint">{{ ACCOUNT_TYPE_LABEL[row.type] }}</small></div>
+            <div><small class="hint">{{ ACCOUNT_TYPE_LABEL[row.type] }}<template v-if="row.holder"> · 👤 {{ row.holder }}</template></small></div>
           </template>
 
           <template #cell-bank="{ row }">
-            <template v-if="row.bank">
-              <div>🏦 {{ row.bank.name }}</div>
+            <template v-if="row.bankName || row.bank">
+              <div>🏦 {{ row.bank?.name || row.bankName }}</div>
               <small class="hint">
-                {{ row.bank.accountKind ? BANK_KIND_LABEL[row.bank.accountKind] : '' }}
-                {{ row.bank.accountKind && row.bank.accountNumber ? ' · ' : '' }}
-                {{ row.bank.accountNumber ? '****' + row.bank.accountNumber.slice(-4) : '' }}
-                {{ !row.bank.accountKind && !row.bank.accountNumber ? 'Sin tipo / n°' : '' }}
+                {{ row.accountKind ? BANK_KIND_LABEL[row.accountKind] : '' }}
+                {{ row.accountKind && row.accountNumber ? ' · ' : '' }}
+                {{ row.accountNumber ? '****' + row.accountNumber.slice(-4) : '' }}
+                {{ !row.accountKind && !row.accountNumber ? 'Sin tipo / n°' : '' }}
               </small>
-            </template>
-            <template v-else-if="row.bankName">
-              <div>{{ row.bankName }}</div>
-              <small class="hint">{{ row.accountNumber || 'Sin n°' }}</small>
             </template>
             <small v-else class="hint">—</small>
           </template>

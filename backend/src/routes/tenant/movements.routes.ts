@@ -22,6 +22,7 @@ const movementSchema = z.object({
   description: trimmedString(2, 200),
   paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'DEPOSIT', 'DEBIT_CARD', 'CREDIT_CARD', 'WALLET', 'OTHER']),
   accountId: z.coerce.number().optional().nullable(),
+  toAccountId: z.coerce.number().optional().nullable(),
   cardId: z.coerce.number().optional().nullable(),
   walletId: z.coerce.number().optional().nullable(),
   categoryId: z.coerce.number().optional().nullable(),
@@ -77,10 +78,11 @@ function debtDelta(type: string, amount: number) {
 async function assertOwnership(
   tx: Prisma.TransactionClient,
   userId: number,
-  ids: { accountId?: number | null; cardId?: number | null; walletId?: number | null; categoryId?: number | null; debtId?: number | null; recurringRuleId?: number | null; fromBankId?: number | null; toBankId?: number | null }
+  ids: { accountId?: number | null; toAccountId?: number | null; cardId?: number | null; walletId?: number | null; categoryId?: number | null; debtId?: number | null; recurringRuleId?: number | null; fromBankId?: number | null; toBankId?: number | null }
 ) {
   const checks: Promise<unknown>[] = [];
   if (ids.accountId) checks.push(tx.account.findFirstOrThrow({ where: { id: ids.accountId, userId }, select: { id: true } }));
+  if (ids.toAccountId) checks.push(tx.account.findFirstOrThrow({ where: { id: ids.toAccountId, userId }, select: { id: true } }));
   if (ids.cardId) checks.push(tx.card.findFirstOrThrow({ where: { id: ids.cardId, userId }, select: { id: true } }));
   if (ids.walletId) checks.push(tx.wallet.findFirstOrThrow({ where: { id: ids.walletId, userId }, select: { id: true } }));
   if (ids.categoryId) checks.push(tx.category.findFirstOrThrow({ where: { id: ids.categoryId, userId }, select: { id: true } }));
@@ -94,10 +96,17 @@ async function assertOwnership(
 async function applyDeltas(
   tx: Prisma.TransactionClient,
   userId: number,
-  body: { type: string; amount: number | string; accountId?: number | null; cardId?: number | null; debtId?: number | null; isCredit?: boolean | null }
+  body: { type: string; amount: number | string; accountId?: number | null; toAccountId?: number | null; commission?: number | string | null; cardId?: number | null; debtId?: number | null; isCredit?: boolean | null }
 ) {
   const amt = Number(body.amount);
   const ic = !!body.isCredit;
+  // Transferencia entre cuentas: sale del origen (+comisión), entra al destino.
+  if (body.type === 'TRANSFER') {
+    const com = Number(body.commission || 0);
+    if (body.accountId) await tx.account.update({ where: { id: body.accountId, userId }, data: { currentBalance: { decrement: amt + com } } });
+    if (body.toAccountId) await tx.account.update({ where: { id: body.toAccountId, userId }, data: { currentBalance: { increment: amt } } });
+    return;
+  }
   if (body.accountId) {
     const d = accountDelta(body.type, amt, ic);
     if (d !== 0) await tx.account.update({ where: { id: body.accountId, userId }, data: { currentBalance: { increment: d } } });
@@ -115,10 +124,16 @@ async function applyDeltas(
 async function revertDeltas(
   tx: Prisma.TransactionClient,
   userId: number,
-  prev: { type: string; amount: Prisma.Decimal | number | string; accountId: number | null; cardId: number | null; debtId: number | null; isCredit?: boolean | null }
+  prev: { type: string; amount: Prisma.Decimal | number | string; accountId: number | null; toAccountId?: number | null; commission?: Prisma.Decimal | number | string | null; cardId: number | null; debtId: number | null; isCredit?: boolean | null }
 ) {
   const amt = Number(prev.amount);
   const ic = !!prev.isCredit;
+  if (prev.type === 'TRANSFER') {
+    const com = Number(prev.commission || 0);
+    if (prev.accountId) await tx.account.update({ where: { id: prev.accountId, userId }, data: { currentBalance: { increment: amt + com } } });
+    if (prev.toAccountId) await tx.account.update({ where: { id: prev.toAccountId, userId }, data: { currentBalance: { decrement: amt } } });
+    return;
+  }
   if (prev.accountId) {
     const d = -accountDelta(prev.type, amt, ic);
     if (d !== 0) await tx.account.update({ where: { id: prev.accountId, userId }, data: { currentBalance: { increment: d } } });
@@ -152,7 +167,7 @@ movementsRouter.get('/', async (req, res) => {
 
   const rows = await req.tenantPrisma!.movement.findMany({
     where,
-    include: { category: true, account: true, card: true, wallet: true, debt: true, fromBank: true, toBank: true },
+    include: { category: true, account: true, toAccount: true, card: true, wallet: true, debt: true, fromBank: true, toBank: true },
     orderBy: { movementDate: 'desc' },
     take: 500
   });

@@ -170,6 +170,8 @@ model Account {
   user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
   type           AccountType
+  holder         String?                          // titular de la cuenta
+  accountKind    BankAccountKind?                 // tipo bancario: Ahorros / Corriente
   bankId         Int?
   bank           Bank?       @relation(fields: [bankId], references: [id], onDelete: SetNull)
   bankName       String?
@@ -180,7 +182,8 @@ model Account {
   createdAt      DateTime    @default(now())
   updatedAt      DateTime    @updatedAt
 
-  movements      Movement[]
+  movements      Movement[]  @relation("MovementAccount")
+  movementsTo    Movement[]  @relation("MovementToAccount")
   debts          Debt[]
   invoices       Invoice[]
 
@@ -241,7 +244,9 @@ model Movement {
   attachmentMeta  Json?
 
   accountId       Int?
-  account         Account?      @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  account         Account?      @relation("MovementAccount", fields: [accountId], references: [id], onDelete: SetNull)
+  toAccountId     Int?
+  toAccount       Account?      @relation("MovementToAccount", fields: [toAccountId], references: [id], onDelete: SetNull)
   cardId          Int?
   card            Card?         @relation(fields: [cardId], references: [id], onDelete: SetNull)
   walletId        Int?

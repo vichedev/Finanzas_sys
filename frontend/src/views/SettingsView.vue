@@ -1141,21 +1141,7 @@ onMounted(async () => {
           <div class="field">
             <label for="bank-name">Nombre del banco</label>
             <input id="bank-name" v-model="newBank.name" required minlength="2" maxlength="80" placeholder="ej. Banco Pichincha, BCP, Pacífico" />
-            <small class="hint">Aparecerá en los dropdowns de Movimientos.</small>
-          </div>
-          <div class="field">
-            <label for="bank-kind">Tipo de cuenta</label>
-            <select id="bank-kind" v-model="newBank.accountKind">
-              <option value="">— Sin especificar —</option>
-              <option value="SAVINGS">Ahorros</option>
-              <option value="CHECKING">Corriente</option>
-            </select>
-            <small class="hint">Opcional. Para distinguir cuentas del mismo banco.</small>
-          </div>
-          <div class="field">
-            <label for="bank-num">Número de cuenta</label>
-            <input id="bank-num" v-model="newBank.accountNumber" maxlength="40" placeholder="ej. 2200123456" inputmode="numeric" />
-            <small class="hint">Opcional. Se mostrarán solo los últimos 4 dígitos.</small>
+            <small class="hint">Solo el nombre del banco. El titular, tipo y número de cuenta se configuran en <strong>Cuentas</strong>.</small>
           </div>
         </div>
 
@@ -1198,8 +1184,6 @@ onMounted(async () => {
         <thead>
           <tr>
             <th class="col-name">Banco</th>
-            <th class="col-kind center">Tipo</th>
-            <th class="col-num center">N° cuenta</th>
             <th class="col-status center">Estado</th>
             <th class="col-notes">Notas</th>
             <th class="col-actions center">Acciones</th>
@@ -1208,14 +1192,6 @@ onMounted(async () => {
         <tbody>
           <tr v-for="b in banks" :key="b.id">
             <td>🏦 <strong>{{ b.name }}</strong></td>
-            <td class="center">
-              <span v-if="b.accountKind" class="cat-pill">{{ BANK_KIND_LABEL[b.accountKind] }}</span>
-              <small v-else class="hint">—</small>
-            </td>
-            <td class="center">
-              <span v-if="b.accountNumber" style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace">****{{ b.accountNumber.slice(-4) }}</span>
-              <small v-else class="hint">—</small>
-            </td>
             <td class="center">
               <span v-if="b.isActive" class="cat-pill" style="background:#dcfce7;color:#166534">Activo</span>
               <span v-else class="cat-pill" style="background:#fee2e2;color:#991b1b">Inactivo</span>
@@ -1228,7 +1204,7 @@ onMounted(async () => {
               </div>
             </td>
           </tr>
-          <tr v-if="!banks.length"><td colspan="6">
+          <tr v-if="!banks.length"><td colspan="4">
             <div class="empty-state">
               <div class="empty-state-illustration"><Landmark :size="36" /></div>
               <strong>Sin bancos</strong>

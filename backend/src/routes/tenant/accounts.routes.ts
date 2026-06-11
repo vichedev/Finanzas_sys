@@ -10,17 +10,21 @@ accountsRouter.use(requireAuth, (req, res, next) => requirePermission('accounts'
 const accountSchema = z.object({
   name: z.string().trim().min(2).max(80),
   type: z.enum(['CASH', 'BANK', 'WALLET', 'DEBIT', 'RECEIVABLE']),
+  holder: z.string().trim().max(120).optional().nullable(),
+  accountKind: z.enum(['SAVINGS', 'CHECKING']).optional().nullable(),
+  accountNumber: z.string().trim().max(40).optional().nullable(),
   bankId: z.coerce.number().int().positive().optional().nullable(),
   initialBalance: z.coerce.number().finite().gte(-99_999_999_999.99).lte(99_999_999_999.99).default(0)
 }).strict();
 
-async function resolveBankMeta(req: any, userId: number, bankId: number | null | undefined) {
-  if (!bankId) return { bankId: null, bankName: null, accountNumber: null };
+// Solo resuelve el nombre del banco (el número de cuenta ahora es propio de la cuenta).
+async function resolveBankName(req: any, userId: number, bankId: number | null | undefined) {
+  if (!bankId) return null;
   const bank = await req.tenantPrisma!.bank.findFirstOrThrow({
     where: { id: bankId, userId },
-    select: { id: true, name: true, accountNumber: true }
+    select: { name: true }
   });
-  return { bankId: bank.id, bankName: bank.name, accountNumber: bank.accountNumber ?? null };
+  return bank.name;
 }
 
 accountsRouter.get('/', async (req, res) => {
@@ -34,15 +38,17 @@ accountsRouter.get('/', async (req, res) => {
 
 accountsRouter.post('/', async (req, res) => {
   const body = accountSchema.parse(req.body);
-  const meta = await resolveBankMeta(req, req.tenantUserId!, body.bankId);
+  const bankName = await resolveBankName(req, req.tenantUserId!, body.bankId);
   const row = await req.tenantPrisma!.account.create({
     data: {
       userId: req.tenantUserId!,
       name: body.name,
       type: body.type,
-      bankId: meta.bankId,
-      bankName: meta.bankName,
-      accountNumber: meta.accountNumber,
+      holder: body.holder?.trim() || null,
+      accountKind: body.accountKind ?? null,
+      accountNumber: body.accountNumber?.trim() || null,
+      bankId: body.bankId ?? null,
+      bankName,
       initialBalance: body.initialBalance,
       currentBalance: body.initialBalance
     },
@@ -59,11 +65,12 @@ accountsRouter.put('/:id', async (req, res) => {
   const data: Record<string, unknown> = {};
   if (body.name !== undefined) data.name = body.name;
   if (body.type !== undefined) data.type = body.type;
+  if (body.holder !== undefined) data.holder = body.holder?.trim() || null;
+  if (body.accountKind !== undefined) data.accountKind = body.accountKind ?? null;
+  if (body.accountNumber !== undefined) data.accountNumber = body.accountNumber?.trim() || null;
   if (Object.prototype.hasOwnProperty.call(body, 'bankId')) {
-    const meta = await resolveBankMeta(req, userId, body.bankId ?? null);
-    data.bankId = meta.bankId;
-    data.bankName = meta.bankName;
-    data.accountNumber = meta.accountNumber;
+    data.bankId = body.bankId ?? null;
+    data.bankName = await resolveBankName(req, userId, body.bankId ?? null);
   }
 
   const row = await req.tenantPrisma!.account.update({
