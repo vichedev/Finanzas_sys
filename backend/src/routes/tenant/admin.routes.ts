@@ -45,12 +45,29 @@ const passwordSchema = z.string()
   .refine((v) => /[^A-Za-z0-9]/.test(v), 'Debe incluir símbolo o espacio')
   .refine((v) => !/(.)\1{3,}/.test(v), 'Evita más de 3 caracteres repetidos seguidos');
 
+const ALL_MODULES = ['movements', 'accounts', 'cards', 'debts', 'recurrings', 'invoices', 'reports'] as const;
+const FULL_PERMS: Record<string, 'edit'> = Object.fromEntries(ALL_MODULES.map((m) => [m, 'edit'])) as Record<string, 'edit'>;
+const DEFAULT_USER_PERMS: Record<string, 'edit' | 'view' | 'none'> = {
+  movements: 'edit', accounts: 'edit', cards: 'edit', debts: 'edit', recurrings: 'edit', invoices: 'edit', reports: 'view'
+};
+const permsSchema = z.record(z.string(), z.enum(['edit', 'view', 'none'])).optional();
+
+// Campos que el modelo User del tenant NO persiste pero el panel puede enviar.
+// Se aceptan (para no romper con .strict) y simplemente se ignoran.
+const uiOnly = {
+  username: z.string().max(40).nullish(),
+  phone: z.string().max(20).nullish(),
+  avatarUrl: z.string().max(2_000_000).nullish()
+};
+
 const createUserSchema = z.object({
   name: z.string().min(2).max(80),
   email: z.string().email().max(120),
   password: passwordSchema,
   role: z.enum(['ADMIN_EMPRESA', 'USUARIO_EMPRESA']).optional().default('USUARIO_EMPRESA'),
-  sendEmail: z.boolean().optional().default(true)
+  permissions: permsSchema,
+  sendEmail: z.boolean().optional().default(true),
+  ...uiOnly
 }).strict();
 
 const updateUserSchema = z.object({
@@ -58,8 +75,16 @@ const updateUserSchema = z.object({
   email: z.string().email().max(120).optional(),
   role: z.enum(['ADMIN_EMPRESA', 'USUARIO_EMPRESA']).optional(),
   isActive: z.boolean().optional(),
-  password: passwordSchema.optional()
+  password: passwordSchema.optional(),
+  permissions: permsSchema,
+  ...uiOnly
 }).strict();
+
+/** Permisos efectivos a guardar: el admin tiene acceso total; el usuario, lo elegido o el default. */
+function resolvePerms(role: string | undefined, provided: Record<string, string> | undefined) {
+  if (role === 'ADMIN_EMPRESA') return FULL_PERMS;
+  return { ...DEFAULT_USER_PERMS, ...(provided || {}) };
+}
 
 const defaultCategories = [
   { name: 'Sueldo', type: 'INCOME' as const, color: '#16a34a', icon: 'wallet' },
@@ -82,7 +107,14 @@ adminRouter.get('/users', async (req, res) => {
       _count: { select: { accounts: true, movements: true, debts: true } }
     }
   });
-  res.json({ users, mailerConfigured: await isMailerConfigured() });
+  // Adjunta los permisos guardados en la membership global (por email+tenant).
+  const memberships = await globalPrisma.tenantMembership.findMany({
+    where: { tenantId: req.tenantId!, email: { in: users.map((u) => u.email) } },
+    select: { email: true, permissions: true }
+  });
+  const permByEmail = new Map(memberships.map((m) => [m.email, m.permissions]));
+  const withPerms = users.map((u) => ({ ...u, permissions: permByEmail.get(u.email) ?? null }));
+  res.json({ users: withPerms, mailerConfigured: await isMailerConfigured() });
 });
 
 adminRouter.post('/users', async (req, res) => {
@@ -123,7 +155,7 @@ adminRouter.post('/users', async (req, res) => {
     return created;
   });
 
-  // 2) Crea TenantMembership en global DB con la passwordHash y rol.
+  // 2) Crea TenantMembership en global DB con la passwordHash, rol y permisos.
   await globalPrisma.tenantMembership.create({
     data: {
       email: body.email,
@@ -131,7 +163,8 @@ adminRouter.post('/users', async (req, res) => {
       name: body.name,
       tenantId,
       role: body.role,
-      isActive: true
+      isActive: true,
+      permissions: resolvePerms(body.role, body.permissions)
     }
   });
 
@@ -194,6 +227,11 @@ adminRouter.put('/users/:id', async (req, res) => {
     if (body.role !== undefined) membershipData.role = body.role;
     if (body.isActive !== undefined) membershipData.isActive = body.isActive;
     if (body.password) membershipData.passwordHash = await bcrypt.hash(body.password, 12);
+    // Permisos: si cambia el rol a admin → acceso total; si llegan permisos → guardarlos.
+    const effectiveRole = body.role ?? target.role;
+    if (body.role !== undefined || body.permissions !== undefined) {
+      membershipData.permissions = resolvePerms(effectiveRole, body.permissions);
+    }
     if (Object.keys(membershipData).length > 0) {
       await globalPrisma.tenantMembership.update({
         where: { id: membership.id },

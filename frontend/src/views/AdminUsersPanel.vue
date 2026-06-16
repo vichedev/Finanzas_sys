@@ -3,7 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { http } from '../api/http';
 import { useAuthStore, type Permissions, type ModuleName, type PermissionLevel } from '../stores/auth';
 
-type SystemRole = 'SUPERADMIN' | 'ADMIN' | 'CLIENT';
+type SystemRole = 'ADMIN_EMPRESA' | 'USUARIO_EMPRESA';
+const ROLE_LABEL: Record<SystemRole, string> = { ADMIN_EMPRESA: 'Administrador', USUARIO_EMPRESA: 'Usuario normal' };
 
 interface UserRow {
   id: number;
@@ -78,7 +79,7 @@ const LEVEL_LABEL: Record<PermissionLevel, string> = { edit: 'Editar', view: 'Ve
 const emptyForm = () => ({
   name: '', username: '', email: '', phone: '',
   password: '', confirmPassword: '',
-  role: 'CLIENT' as SystemRole,
+  role: 'USUARIO_EMPRESA' as SystemRole,
   roleTemplateId: null as number | null,
   permissions: { ...DEFAULT_PERMS } as Permissions,
   isActive: true,
@@ -93,7 +94,8 @@ const checks = computed(() => ({
   length: form.value.password.length >= 10,
   upper: /[A-Z]/.test(form.value.password),
   lower: /[a-z]/.test(form.value.password),
-  number: /[0-9]/.test(form.value.password)
+  number: /[0-9]/.test(form.value.password),
+  symbol: /[^A-Za-z0-9]/.test(form.value.password)
 }));
 const allOk = computed(() => Object.values(checks.value).every(Boolean));
 const passwordsMatch = computed(() => !form.value.password || form.value.password === form.value.confirmPassword);
@@ -136,10 +138,14 @@ function generatePassword() {
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   const lower = 'abcdefghijkmnpqrstuvwxyz';
   const num = '23456789';
-  const all = upper + lower + num;
+  const sym = '!@#$%&*?-_';
+  const all = upper + lower + num + sym;
   const pick = (s: string) => s.charAt(Math.floor(Math.random() * s.length));
-  let pwd = pick(upper) + pick(lower) + pick(num);
+  // Garantiza al menos uno de cada tipo (incluido símbolo, que el backend exige).
+  let pwd = pick(upper) + pick(lower) + pick(num) + pick(sym);
   while (pwd.length < 12) pwd += pick(all);
+  // Mezcla para que el símbolo no quede siempre en la misma posición
+  pwd = pwd.split('').sort(() => Math.random() - 0.5).join('');
   form.value.password = pwd;
   form.value.confirmPassword = pwd;
 }
@@ -253,7 +259,7 @@ async function submitForm() {
 
 async function changeRole(u: UserRow, newRole: SystemRole) {
   if (u.id === auth.user?.id || u.role === newRole) return;
-  if (!confirm(`¿Cambiar el rol de ${u.email} a "${newRole}"?`)) return;
+  if (!confirm(`¿Cambiar el rol de ${u.email} a "${ROLE_LABEL[newRole] || newRole}"?`)) return;
   try {
     await http.put(`/admin/users/${u.id}`, { role: newRole });
     await load();
@@ -394,7 +400,7 @@ onUnmounted(() => {
             <td v-if="isColVisible('acciones')">
               <div class="row-actions">
                 <button type="button" class="icon-btn" title="Editar" @click="openEdit(u)">✏️</button>
-                <button type="button" class="icon-btn danger" title="Eliminar" :disabled="u.id === auth.user?.id || (u.role === 'SUPERADMIN' && !auth.isSuperAdmin)" @click="removeUser(u)">🗑️</button>
+                <button type="button" class="icon-btn danger" title="Eliminar" :disabled="u.id === auth.user?.id" @click="removeUser(u)">🗑️</button>
               </div>
             </td>
             <td v-if="isColVisible('foto')">
@@ -409,12 +415,11 @@ onUnmounted(() => {
             <td v-if="isColVisible('celular')">{{ u.phone || '—' }}</td>
             <td v-if="isColVisible('rol')">
               <select class="role-select-inline" :class="`role-${u.role.toLowerCase()}`"
-                      :disabled="u.id === auth.user?.id || (u.role === 'SUPERADMIN' && !auth.isSuperAdmin)"
+                      :disabled="u.id === auth.user?.id"
                       :value="u.role"
                       @change="changeRole(u, ($event.target as HTMLSelectElement).value as SystemRole)">
-                <option value="CLIENT">👤 Cliente</option>
-                <option value="ADMIN">🔧 Admin</option>
-                <option v-if="auth.isSuperAdmin" value="SUPERADMIN">👑 Super-admin</option>
+                <option value="USUARIO_EMPRESA">👤 Usuario normal</option>
+                <option value="ADMIN_EMPRESA">🔧 Administrador</option>
               </select>
             </td>
             <td v-if="isColVisible('estado')">
@@ -467,12 +472,11 @@ onUnmounted(() => {
                 <div class="field-row">
                   <label>Rol:</label>
                   <select v-model="form.role">
-                    <option value="CLIENT">👤 Cliente</option>
-                    <option value="ADMIN">🔧 Administrador</option>
-                    <option v-if="auth.isSuperAdmin" value="SUPERADMIN">👑 Super-administrador</option>
+                    <option value="USUARIO_EMPRESA">👤 Usuario normal</option>
+                    <option value="ADMIN_EMPRESA">🔧 Administrador</option>
                   </select>
                 </div>
-                <div v-if="form.role === 'CLIENT'" class="field-row">
+                <div v-if="form.role === 'USUARIO_EMPRESA' && rolesTpl.length" class="field-row">
                   <label>Plantilla:</label>
                   <select :value="form.roleTemplateId"
                           @change="applyTemplate(($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)">
@@ -522,6 +526,7 @@ onUnmounted(() => {
                   <li :class="checks.upper ? 'met' : 'unmet'">{{ checks.upper ? '✓' : '○' }} Una mayúscula</li>
                   <li :class="checks.lower ? 'met' : 'unmet'">{{ checks.lower ? '✓' : '○' }} Una minúscula</li>
                   <li :class="checks.number ? 'met' : 'unmet'">{{ checks.number ? '✓' : '○' }} Un número</li>
+                  <li :class="checks.symbol ? 'met' : 'unmet'">{{ checks.symbol ? '✓' : '○' }} Un símbolo (ej. !@#$)</li>
                   <li :class="passwordsMatch ? 'met' : 'unmet'">{{ passwordsMatch ? '✓' : '○' }} Las contraseñas coinciden</li>
                 </ul>
 
@@ -535,8 +540,8 @@ onUnmounted(() => {
             <!-- Columna derecha: Permisos -->
             <div class="col-right">
               <h3 class="permissions-title">Permisos:</h3>
-              <p v-if="form.role !== 'CLIENT'" class="permissions-disabled-note">
-                Los administradores y super-administradores tienen acceso total a todos los módulos. La matriz solo aplica a clientes.
+              <p v-if="form.role === 'ADMIN_EMPRESA'" class="permissions-disabled-note">
+                Los administradores tienen acceso total a todos los módulos. La matriz de permisos solo aplica a "Usuario normal".
               </p>
               <div v-else class="permissions-list">
                 <div v-for="m in MODULES" :key="m.key" class="perm-module">
@@ -634,9 +639,8 @@ onUnmounted(() => {
 
 .role-select-inline { padding: 3px 22px 3px 8px; border: 1px solid #e2e8f0; border-radius: 999px; font-size: 11px; cursor: pointer; background: white; font-weight: 600; line-height: 1.4; max-width: 130px; appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'><path fill='%2394a3b8' d='M2 4l3 3 3-3z'/></svg>"); background-repeat: no-repeat; background-position: right 6px center; }
 .role-select-inline:disabled { opacity: 0.5; cursor: not-allowed; }
-.role-select-inline.role-superadmin { background-color: #fef3c7; color: #b45309; border-color: #fde68a; }
-.role-select-inline.role-admin { background-color: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
-.role-select-inline.role-client { background-color: #f1f5f9; color: #475569; }
+.role-select-inline.role-admin_empresa { background-color: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+.role-select-inline.role-usuario_empresa { background-color: #f1f5f9; color: #475569; }
 
 .status-pill { padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 700; cursor: pointer; border: 1px solid; transition: all 0.15s; }
 .status-pill.active { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
