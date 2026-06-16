@@ -20,7 +20,7 @@ type ExpenseKind = 'FIXED' | 'VARIABLE' | 'NON_ACCOUNTABLE';
 type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'DEPOSIT' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'WALLET' | 'OTHER';
 
 interface Account { id: number; name: string; type?: string; holder?: string | null; accountKind?: string | null; bankId?: number | null; bankName?: string | null; accountNumber?: string | null }
-interface Card { id: number; name: string }
+interface Card { id: number; name: string; type?: string | null; bankName?: string | null; last4?: string | null }
 interface Wallet { id: number; name: string; provider?: string | null; isActive?: boolean }
 interface Category { id: number; name: string; color?: string | null; icon?: string | null }
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
@@ -233,9 +233,17 @@ const accountOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Sin cuenta', icon: '∅' },
   ...accounts.value.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }))
 ]);
+const CARD_TYPE_LABEL: Record<string, string> = { CREDIT: 'Crédito', DEBIT: 'Débito' };
+function cardSubLabel(c: Card): string | undefined {
+  const parts: string[] = [];
+  if (c.type) parts.push(CARD_TYPE_LABEL[c.type] || c.type);
+  if (c.bankName) parts.push(c.bankName);
+  if (c.last4) parts.push(`****${c.last4}`);
+  return parts.join(' · ') || undefined;
+}
 const cardOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Sin tarjeta', icon: '∅' },
-  ...cards.value.map((c) => ({ value: c.id, label: c.name, icon: '💳' }))
+  ...cards.value.map((c) => ({ value: c.id, label: c.name, sublabel: cardSubLabel(c), icon: '💳' }))
 ]);
 const bankOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Ninguno', icon: '∅' },

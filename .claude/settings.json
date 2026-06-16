@@ -14,7 +14,8 @@
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -First 25; \"FE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\backend; npx tsc --noEmit 2>&1 | Select-Object -First 25; \"BE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -Last 8; \"FE $LASTEXITCODE\")",
-      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(recurrentes\\): quita 'Fecha fin'; 'Proxima fecha' pasa a llamarse 'Fecha maxima de pago' \\(form y tabla\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(recurrentes\\): quita 'Fecha fin'; 'Proxima fecha' pasa a llamarse 'Fecha maxima de pago' \\(form y tabla\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): el selector de tarjeta muestra tipo, banco y ultimos 4 digitos para distinguirlas\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
     ]
   }
 }
