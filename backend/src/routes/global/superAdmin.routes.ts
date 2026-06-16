@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { globalPrisma } from '../../lib/globalPrisma';
 import { requireAuth } from '../../middleware/auth';
 import { requireSuperAdmin } from '../../middleware/superAdmin';
-import { provisionTenant, suspendTenant, reactivateTenant } from '../../lib/tenantProvisioning';
+import { provisionTenant, suspendTenant, reactivateTenant, deprovisionTenant } from '../../lib/tenantProvisioning';
 import { logSuperAccess } from '../../lib/auditLog';
 import { logger } from '../../lib/logger';
 
@@ -126,6 +126,28 @@ superAdminRouter.post('/tenants/:id/reactivate', async (req, res) => {
     return res.json({ ok: true });
   } catch (e: any) {
     return res.status(400).json({ message: e.message });
+  }
+});
+
+// ------------------------- DELETE /tenants/:id -------------------------
+// Elimina la empresa por completo (registro + base de datos). IRREVERSIBLE.
+// Requiere confirmar enviando { confirm: "<razón social exacta>" }.
+const deleteSchema = z.object({ confirm: z.string().min(1) });
+superAdminRouter.delete('/tenants/:id', async (req, res) => {
+  const actorId = req.auth!.kind === 'super' ? req.auth!.id : '';
+  const tenant = await globalPrisma.tenant.findUnique({ where: { id: req.params.id } });
+  if (!tenant) return res.status(404).json({ message: 'Empresa no encontrada' });
+
+  const parsed = deleteSchema.safeParse(req.body ?? {});
+  if (!parsed.success || parsed.data.confirm.trim() !== tenant.legalName) {
+    return res.status(400).json({ message: `Para eliminar, confirma escribiendo el nombre exacto: "${tenant.legalName}"` });
+  }
+
+  try {
+    await deprovisionTenant(req.params.id, actorId);
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(e.status || 400).json({ message: e.message || 'No se pudo eliminar la empresa' });
   }
 });
 

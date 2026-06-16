@@ -383,8 +383,60 @@ async function loadTenants() {
 type TenantModal =
   | { kind: 'reset-pwd'; tenant: TenantRow }
   | { kind: 'change-email'; tenant: TenantRow }
+  | { kind: 'edit'; tenant: TenantRow }
+  | { kind: 'delete'; tenant: TenantRow }
   | null;
 const tenantModal = ref<TenantModal>(null);
+
+// Editar empresa
+const editTenantForm = ref({ legalName: '', ruc: '' });
+const editTenantSubmitting = ref(false);
+const editTenantError = ref('');
+// Eliminar empresa
+const deleteConfirmInput = ref('');
+const deleteTenantSubmitting = ref(false);
+const deleteTenantError = ref('');
+
+function openEditTenant(t: TenantRow) {
+  tenantModal.value = { kind: 'edit', tenant: t };
+  editTenantForm.value = { legalName: t.legalName, ruc: t.ruc || '' };
+  editTenantError.value = '';
+}
+function openDeleteTenant(t: TenantRow) {
+  tenantModal.value = { kind: 'delete', tenant: t };
+  deleteConfirmInput.value = '';
+  deleteTenantError.value = '';
+}
+async function submitEditTenant() {
+  if (!tenantModal.value || tenantModal.value.kind !== 'edit' || editTenantSubmitting.value) return;
+  if (!editTenantForm.value.legalName.trim()) { editTenantError.value = 'La razón social es obligatoria.'; return; }
+  editTenantSubmitting.value = true; editTenantError.value = '';
+  try {
+    await http.patch(`/super-admin/tenants/${tenantModal.value.tenant.id}`, {
+      legalName: editTenantForm.value.legalName.trim(),
+      ruc: editTenantForm.value.ruc.trim() || null
+    });
+    await loadTenants();
+    closeTenantModal();
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    editTenantError.value = err?.response?.data?.message || 'No se pudo actualizar la empresa.';
+  } finally { editTenantSubmitting.value = false; }
+}
+async function submitDeleteTenant() {
+  if (!tenantModal.value || tenantModal.value.kind !== 'delete' || deleteTenantSubmitting.value) return;
+  deleteTenantSubmitting.value = true; deleteTenantError.value = '';
+  try {
+    await http.delete(`/super-admin/tenants/${tenantModal.value.tenant.id}`, {
+      data: { confirm: deleteConfirmInput.value.trim() }
+    });
+    await loadTenants();
+    closeTenantModal();
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    deleteTenantError.value = err?.response?.data?.message || 'No se pudo eliminar la empresa.';
+  } finally { deleteTenantSubmitting.value = false; }
+}
 
 const resetPwdMode = ref<'random' | 'manual'>('random');
 const resetPwdInput = ref('');
@@ -419,6 +471,9 @@ function closeTenantModal() {
   resetPwdError.value = '';
   emailInput.value = '';
   emailError.value = '';
+  editTenantError.value = '';
+  deleteConfirmInput.value = '';
+  deleteTenantError.value = '';
 }
 
 async function submitResetPwd() {
@@ -519,12 +574,14 @@ async function submitChangeEmail() {
 
 async function toggleTenantStatus(t: TenantRow) {
   const next = t.status === 'ACTIVE' ? 'suspend' : 'reactivate';
+  const verb = next === 'suspend' ? 'suspender' : 'reactivar';
+  if (next === 'suspend' && !confirm(`¿Suspender la empresa "${t.legalName}"? Sus usuarios no podrán iniciar sesión hasta reactivarla.`)) return;
   try {
     await http.post(`/super-admin/tenants/${t.id}/${next}`);
     await loadTenants();
   } catch (e: unknown) {
     const err = e as { response?: { data?: { message?: string } } };
-    alert(err?.response?.data?.message || `No se pudo ${next === 'suspend' ? 'suspender' : 'reactivar'} la empresa.`);
+    alert(err?.response?.data?.message || `No se pudo ${verb} la empresa.`);
   }
 }
 
@@ -1629,39 +1686,23 @@ onMounted(async () => {
             <td>{{ formatDate(t.createdAt) }}</td>
             <td class="right">
               <div class="row-actions">
-                <button
-                  type="button"
-                  class="ghost mini"
-                  title="Restablecer contraseña del admin"
-                  @click="openResetPwd(t)"
-                >
+                <button type="button" class="ghost mini" title="Editar empresa" @click="openEditTenant(t)">
+                  <Pencil :size="14" />
+                </button>
+                <button type="button" class="ghost mini" title="Restablecer contraseña del admin" @click="openResetPwd(t)">
                   <Key :size="14" />
                 </button>
-                <button
-                  type="button"
-                  class="ghost mini"
-                  title="Cambiar email del admin"
-                  @click="openChangeEmail(t)"
-                >
+                <button type="button" class="ghost mini" title="Cambiar email del admin" @click="openChangeEmail(t)">
                   <Mail :size="14" />
                 </button>
-                <button
-                  v-if="t.status === 'ACTIVE'"
-                  type="button"
-                  class="ghost mini"
-                  title="Suspender"
-                  @click="toggleTenantStatus(t)"
-                >
+                <button v-if="t.status === 'ACTIVE'" type="button" class="ghost mini" title="Suspender" @click="toggleTenantStatus(t)">
                   <Pause :size="14" />
                 </button>
-                <button
-                  v-else
-                  type="button"
-                  class="ghost mini"
-                  title="Reactivar"
-                  @click="toggleTenantStatus(t)"
-                >
+                <button v-else type="button" class="ghost mini" title="Reactivar" @click="toggleTenantStatus(t)">
                   <Play :size="14" />
+                </button>
+                <button type="button" class="ghost mini danger" title="Eliminar empresa" @click="openDeleteTenant(t)">
+                  <Trash2 :size="14" />
                 </button>
               </div>
             </td>
@@ -1817,12 +1858,16 @@ onMounted(async () => {
     <div v-if="tenantModal" class="ta-overlay" role="dialog" aria-modal="true" @click.self="closeTenantModal">
       <div class="ta-modal">
         <div class="ta-head">
-          <div class="ta-head-icon" :class="tenantModal.kind === 'reset-pwd' ? 'is-key' : 'is-mail'">
+          <div class="ta-head-icon" :class="tenantModal.kind === 'reset-pwd' ? 'is-key' : tenantModal.kind === 'delete' ? 'is-danger' : 'is-mail'">
             <Key v-if="tenantModal.kind === 'reset-pwd'" :size="18" />
+            <Pencil v-else-if="tenantModal.kind === 'edit'" :size="18" />
+            <Trash2 v-else-if="tenantModal.kind === 'delete'" :size="18" />
             <Mail v-else :size="18" />
           </div>
           <div class="ta-head-text">
             <h3 v-if="tenantModal.kind === 'reset-pwd'">Restablecer contraseña</h3>
+            <h3 v-else-if="tenantModal.kind === 'edit'">Editar empresa</h3>
+            <h3 v-else-if="tenantModal.kind === 'delete'">Eliminar empresa</h3>
             <h3 v-else>Cambiar email del admin</h3>
             <small>Empresa: <strong>{{ tenantModal.tenant.legalName }}</strong></small>
           </div>
@@ -1911,6 +1956,47 @@ onMounted(async () => {
             <button type="button" class="ghost" @click="closeTenantModal">Cancelar</button>
             <button type="button" @click="submitChangeEmail" :disabled="emailSubmitting">
               {{ emailSubmitting ? 'Guardando…' : 'Guardar cambio' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Editar empresa -->
+        <div v-else-if="tenantModal.kind === 'edit'">
+          <div class="field ta-manual-field">
+            <label for="edit-legalname">Razón social</label>
+            <input id="edit-legalname" v-model="editTenantForm.legalName" maxlength="200" placeholder="Nombre de la empresa" />
+          </div>
+          <div class="field ta-manual-field">
+            <label for="edit-ruc">RUC / Identificación</label>
+            <input id="edit-ruc" v-model="editTenantForm.ruc" maxlength="20" placeholder="Opcional" />
+          </div>
+          <p class="ta-hint">El email y la contraseña del administrador se cambian con sus acciones específicas (🔑 / ✉️).</p>
+          <p v-if="editTenantError" class="error ta-error">{{ editTenantError }}</p>
+          <div class="ta-actions">
+            <button type="button" class="ghost" @click="closeTenantModal">Cancelar</button>
+            <button type="button" @click="submitEditTenant" :disabled="editTenantSubmitting">
+              {{ editTenantSubmitting ? 'Guardando…' : 'Guardar cambios' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Eliminar empresa -->
+        <div v-else-if="tenantModal.kind === 'delete'">
+          <p class="ta-hint ta-danger-hint">
+            ⚠️ Esto elimina <strong>de forma permanente</strong> la empresa
+            <strong>{{ tenantModal.tenant.legalName }}</strong>, todos sus usuarios y su base de datos
+            (cuentas, movimientos, facturas, etc.). <strong>No se puede deshacer.</strong>
+          </p>
+          <div class="field ta-manual-field">
+            <label for="delete-confirm">Para confirmar, escribe el nombre exacto: <strong>{{ tenantModal.tenant.legalName }}</strong></label>
+            <input id="delete-confirm" v-model="deleteConfirmInput" autocomplete="off" :placeholder="tenantModal.tenant.legalName" />
+          </div>
+          <p v-if="deleteTenantError" class="error ta-error">{{ deleteTenantError }}</p>
+          <div class="ta-actions">
+            <button type="button" class="ghost" @click="closeTenantModal">Cancelar</button>
+            <button type="button" class="ta-btn-danger" @click="submitDeleteTenant"
+                    :disabled="deleteTenantSubmitting || deleteConfirmInput.trim() !== tenantModal.tenant.legalName">
+              {{ deleteTenantSubmitting ? 'Eliminando…' : 'Eliminar definitivamente' }}
             </button>
           </div>
         </div>
@@ -2385,6 +2471,13 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 }
 .ta-head-icon.is-key { background: rgba(245, 158, 11, 0.14); color: #d97706; }
 .ta-head-icon.is-mail { background: rgba(37, 99, 235, 0.12); color: #2563eb; }
+.ta-head-icon.is-danger { background: rgba(220, 38, 38, 0.12); color: #dc2626; }
+.ta-danger-hint { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; padding: 10px 12px; border-radius: 8px; }
+.ta-btn-danger { background: #dc2626; color: #fff; border: none; }
+.ta-btn-danger:hover:not(:disabled) { background: #b91c1c; }
+.ta-btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
+.row-actions button.mini.danger { color: #dc2626; }
+.row-actions button.mini.danger:hover { background: #fef2f2; }
 .ta-head-text { flex: 1; min-width: 0; padding-top: 2px; }
 .ta-head-text h3 { margin: 0; font-size: 16px; line-height: 1.2; color: #0f172a; font-weight: 600; }
 .ta-head-text small { display: block; margin-top: 4px; font-size: 12.5px; color: #64748b; }

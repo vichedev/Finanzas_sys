@@ -4,8 +4,8 @@ import crypto from 'crypto';
 import { execSync } from 'child_process';
 import path from 'path';
 import { globalPrisma } from './globalPrisma';
-import { encryptConnection } from './tenantCrypto';
-import { getTenantPrisma } from './tenantPrisma';
+import { encryptConnection, decryptConnection } from './tenantCrypto';
+import { getTenantPrisma, invalidateTenantClient } from './tenantPrisma';
 import { logger } from './logger';
 
 function generateStrongPassword(length = 48): string {
@@ -151,4 +151,61 @@ export async function reactivateTenant(tenantId: string, actorSuperAdminId: stri
   await globalPrisma.superAdminAuditLog.create({
     data: { superAdminId: actorSuperAdminId, tenantId, action: 'TENANT_REACTIVATE' }
   });
+}
+
+/**
+ * Elimina por completo una empresa: registro global (cascade borra conexión y
+ * membresías) + base de datos y usuario Postgres del tenant. IRREVERSIBLE.
+ */
+export async function deprovisionTenant(tenantId: string, actorSuperAdminId: string) {
+  const [tenant, conn] = await Promise.all([
+    globalPrisma.tenant.findUnique({ where: { id: tenantId } }),
+    globalPrisma.tenantConnection.findUnique({ where: { tenantId } })
+  ]);
+  if (!tenant) {
+    const err: any = new Error('Empresa no encontrada');
+    err.status = 404;
+    throw err;
+  }
+
+  // Auditoría ANTES de borrar (con la empresa aún existente; queda con tenantId
+  // null por el SetNull, pero el metadata preserva slug/razón social).
+  await globalPrisma.superAdminAuditLog.create({
+    data: {
+      superAdminId: actorSuperAdminId, tenantId, action: 'TENANT_DELETE',
+      metadata: { slug: tenant.slug, legalName: tenant.legalName, dbName: conn?.dbName }
+    }
+  }).catch(() => {});
+
+  // Cierra el cliente Prisma en caché para poder dropear la base.
+  await invalidateTenantClient(tenantId);
+
+  // Borra el registro global → cascade elimina connection + memberships.
+  await globalPrisma.tenant.delete({ where: { id: tenantId } });
+
+  // Dropea la base de datos y el usuario Postgres del tenant.
+  if (conn) {
+    const adminUrl = process.env.POSTGRES_ADMIN_URL;
+    if (!adminUrl) {
+      logger.error({ tenantId }, 'POSTGRES_ADMIN_URL ausente: no se pudo dropear la DB del tenant');
+    } else {
+      const pg = new PgClient({ connectionString: adminUrl });
+      await pg.connect();
+      try {
+        const { user: dbUser } = decryptConnection(conn);
+        const dbName = conn.dbName;
+        // Termina conexiones activas antes del DROP DATABASE.
+        await pg.query(
+          'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid();',
+          [dbName]
+        ).catch(() => {});
+        await pg.query(`DROP DATABASE IF EXISTS "${dbName}";`).catch((e) => logger.error({ err: e, dbName }, 'drop database failed'));
+        await pg.query(`DROP USER IF EXISTS "${dbUser}";`).catch((e) => logger.error({ err: e, dbUser }, 'drop user failed'));
+      } finally {
+        await pg.end();
+      }
+    }
+  }
+
+  logger.info({ tenantId, slug: tenant.slug }, 'tenant deprovisioned');
 }
