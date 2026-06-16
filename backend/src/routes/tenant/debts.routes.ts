@@ -16,6 +16,8 @@ const schema = z.object({
   dueDate: z.coerce.date().optional().nullable(),
   accountId: z.coerce.number().optional().nullable(),
   notes: z.string().optional().nullable(),
+  cutoffDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
+  paymentDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
   installmentAmount: z.coerce.number().optional().nullable(),
   installmentDueDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
   termMonths: z.coerce.number().int().min(1).max(600).optional().nullable(),

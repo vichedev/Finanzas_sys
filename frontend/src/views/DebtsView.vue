@@ -20,13 +20,15 @@ interface DebtRow {
   dueDate?: string | null;
   accountId?: number | null;
   notes?: string | null;
+  cutoffDay?: number | null;
+  paymentDay?: number | null;
   installmentAmount?: number | null;
   installmentDueDay?: number | null;
   termMonths?: number | null;
   totalToPay?: number | null;
 }
 
-interface AccountRef { id: number; name: string }
+interface AccountRef { id: number; name: string; holder?: string | null; bankName?: string | null; accountNumber?: string | null }
 
 const route = useRoute();
 
@@ -72,25 +74,26 @@ const buildEmptyForm = () => ({
   counterparty: '',
   principal: 0,
   interestRate: null as number | null,
-  dueDate: '',
+  cutoffDay: null as number | null,
+  paymentDay: null as number | null,
   accountId: null as number | null,
   notes: '',
   installmentAmount: null as number | null,
-  installmentDueDay: null as number | null,
   termMonths: null as number | null,
   totalToPay: null as number | null
 });
 const form = ref(buildEmptyForm());
 
+// Etiqueta de cuenta: "Nombre · Banco · ****1234"
+function accountLabel(a: AccountRef): string {
+  const parts = [a.name];
+  if (a.bankName) parts.push(a.bankName);
+  if (a.accountNumber) parts.push(`****${a.accountNumber.slice(-4)}`);
+  return parts.join(' · ');
+}
+
 const formatMoney = (value: number | null | undefined) =>
   new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
-
-const formatDate = (value: string | null | undefined) => {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-};
 
 const visibleRows = computed(() =>
   kindFilter.value === 'ALL' ? rows.value : rows.value.filter((row) => row.kind === kindFilter.value)
@@ -102,33 +105,28 @@ const totalMonthlyInstallment = computed(() => visibleRows.value
   .filter((r) => r.kind === 'LOAN' && (r.status === 'OPEN' || r.status === 'PARTIAL'))
   .reduce((acc, r) => acc + Number(r.installmentAmount || 0), 0));
 
+// Próxima ocurrencia de un día del mes (1-31) a partir de hoy (clamp a fin de mes).
+function nextOccurrence(day: number, from: Date): Date {
+  const clampDay = (y: number, m: number) => Math.min(day, new Date(y, m + 1, 0).getDate());
+  let y = from.getFullYear(), m = from.getMonth();
+  let d = new Date(y, m, clampDay(y, m));
+  if (d < from) { m += 1; if (m > 11) { m = 0; y += 1; } d = new Date(y, m, clampDay(y, m)); }
+  return d;
+}
+
 const nextDueLabel = computed(() => {
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  const upcoming = pendingRows.value
-    .filter((r) => !!r.dueDate)
-    .map((r) => new Date(r.dueDate as string))
-    .filter((d) => !Number.isNaN(d.getTime()))
+  const dates = pendingRows.value
+    .filter((r) => r.paymentDay)
+    .map((r) => nextOccurrence(r.paymentDay as number, today))
     .sort((a, b) => a.getTime() - b.getTime());
-  if (!upcoming.length) return 'Sin vencimientos';
-  const next = upcoming[0];
+  if (!dates.length) return 'Sin día de pago';
+  const next = dates[0];
   const diff = Math.round((next.getTime() - today.getTime()) / 86400000);
   const human = `${String(next.getDate()).padStart(2, '0')}/${String(next.getMonth() + 1).padStart(2, '0')}/${next.getFullYear()}`;
-  if (diff < 0) return `Vencido (${human})`;
   if (diff === 0) return `Hoy (${human})`;
   return `${human} (${diff} d)`;
 });
-
-function dueInfo(due: string | null | undefined): { label: string; severity: 'normal' | 'warning' | 'overdue' } {
-  if (!due) return { label: 'Sin fecha', severity: 'normal' };
-  const d = new Date(due); if (Number.isNaN(d.getTime())) return { label: 'Sin fecha', severity: 'normal' };
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const diff = Math.round((d.getTime() - today.getTime()) / 86400000);
-  const human = formatDate(due);
-  if (diff < 0) return { label: `${human} · vencido hace ${Math.abs(diff)} d`, severity: 'overdue' };
-  if (diff === 0) return { label: `${human} · vence hoy`, severity: 'warning' };
-  if (diff <= 7) return { label: `${human} · en ${diff} d`, severity: 'warning' };
-  return { label: `${human} · en ${diff} d`, severity: 'normal' };
-}
 
 function progressPct(row: DebtRow): number {
   const principal = Number(row.principal || 0);
@@ -154,11 +152,7 @@ function kindBadgeClass(kind: DebtKind) { return ['cat-pill', `kind-${kind.toLow
 function statusBadgeClass(status: DebtStatus) { return ['cat-pill', `status-${status.toLowerCase()}`]; }
 
 function resetForm() {
-  form.value = {
-    kind: meta.value.defaultKind, name: '', counterparty: '', principal: 0,
-    interestRate: null, dueDate: '', accountId: null, notes: '',
-    installmentAmount: null, installmentDueDay: null, termMonths: null, totalToPay: null
-  };
+  form.value = { ...buildEmptyForm(), kind: meta.value.defaultKind };
 }
 
 async function load() {
@@ -189,11 +183,13 @@ async function save() {
       counterparty: form.value.counterparty.trim() || null,
       principal: form.value.principal,
       interestRate: isLoan ? form.value.interestRate ?? null : null,
-      dueDate: form.value.dueDate || null,
+      cutoffDay: form.value.cutoffDay ?? null,
+      paymentDay: form.value.paymentDay ?? null,
       accountId: form.value.accountId || null,
       notes: form.value.notes.trim() || null,
       installmentAmount: isLoan ? form.value.installmentAmount ?? null : null,
-      installmentDueDay: isLoan ? form.value.installmentDueDay ?? null : null,
+      // El día de la cuota del préstamo = día de pago general.
+      installmentDueDay: isLoan ? (form.value.paymentDay ?? null) : null,
       termMonths: isLoan ? form.value.termMonths ?? null : null,
       totalToPay: isLoan ? (form.value.totalToPay ?? computedTotalToPay.value) || null : null
     };
@@ -223,11 +219,11 @@ function startEdit(item: DebtRow) {
     counterparty: item.counterparty || '',
     principal: Number(item.principal),
     interestRate: item.interestRate !== null && item.interestRate !== undefined ? Number(item.interestRate) : null,
-    dueDate: item.dueDate ? String(item.dueDate).slice(0, 10) : '',
+    cutoffDay: item.cutoffDay ?? null,
+    paymentDay: item.paymentDay ?? item.installmentDueDay ?? null,
     accountId: item.accountId ?? null,
     notes: item.notes || '',
     installmentAmount: item.installmentAmount !== null && item.installmentAmount !== undefined ? Number(item.installmentAmount) : null,
-    installmentDueDay: item.installmentDueDay ?? null,
     termMonths: item.termMonths ?? null,
     totalToPay: item.totalToPay !== null && item.totalToPay !== undefined ? Number(item.totalToPay) : null
   };
@@ -358,15 +354,21 @@ onMounted(load);
               <label for="dbt-account">Cuenta relacionada</label>
               <select id="dbt-account" v-model="form.accountId">
                 <option :value="null">Sin cuenta vinculada</option>
-                <option v-for="item in accounts" :key="item.id" :value="item.id">{{ item.name }}</option>
+                <option v-for="item in accounts" :key="item.id" :value="item.id">{{ accountLabel(item) }}</option>
               </select>
               <small class="hint">Cuenta afectada al pagar o recibir.</small>
             </div>
 
             <div class="field">
-              <label for="dbt-due">Fecha de vencimiento</label>
-              <input id="dbt-due" v-model="form.dueDate" type="date" />
-              <small class="hint">Opcional.</small>
+              <label for="dbt-cutoff">Día de corte (1-31)</label>
+              <input id="dbt-cutoff" v-model.number="form.cutoffDay" type="number" min="1" max="31" placeholder="ej. 5" />
+              <small class="hint">Día en que cierra el período.</small>
+            </div>
+
+            <div class="field">
+              <label for="dbt-payday">Día de pago (1-31)</label>
+              <input id="dbt-payday" v-model.number="form.paymentDay" type="number" min="1" max="31" placeholder="ej. 20" />
+              <small class="hint">Día límite para pagar/cobrar.</small>
             </div>
           </div>
 
@@ -376,7 +378,7 @@ onMounted(load);
                 <span class="loan-icon">🏦</span>
                 <div>
                   <strong>Detalles del préstamo</strong>
-                  <small>Define cuota, día de pago, plazo y total a pagar.</small>
+                  <small>Define cuota, plazo y total a pagar. El día de pago se toma del campo general de arriba.</small>
                 </div>
               </div>
 
@@ -386,13 +388,6 @@ onMounted(load);
                   <input id="dbt-installment" v-model.number="form.installmentAmount" type="number" step="0.01" min="0.01"
                          placeholder="ej. 250.00" />
                   <small class="hint">Monto que pagas cada mes.</small>
-                </div>
-
-                <div class="field">
-                  <label for="dbt-day">Día de pago (1-31) <span class="required-mark">*</span></label>
-                  <input id="dbt-day" v-model.number="form.installmentDueDay" type="number" min="1" max="31"
-                         placeholder="ej. 15" />
-                  <small class="hint">Día del mes en que vence.</small>
                 </div>
 
                 <div class="field">
@@ -469,7 +464,7 @@ onMounted(load);
                 <th v-if="kindFilter === 'LOAN' || kindFilter === 'ALL'" class="center col-money">Cuota mensual</th>
                 <th v-if="kindFilter === 'LOAN' || kindFilter === 'ALL'" class="center col-term">Día / Plazo</th>
                 <th v-if="kindFilter === 'LOAN' || kindFilter === 'ALL'" class="center col-money">Total a pagar</th>
-                <th class="center col-due">Vencimiento</th>
+                <th class="center col-due">Corte / Pago</th>
                 <th class="center col-status">Estado</th>
                 <th class="center col-acts">Acciones</th>
               </tr>
@@ -515,14 +510,11 @@ onMounted(load);
                   <template v-else>—</template>
                 </td>
                 <td class="center col-due">
-                  <span v-if="item.dueDate"
-                        :class="{
-                          'due-overdue': dueInfo(item.dueDate).severity === 'overdue',
-                          'due-warning': dueInfo(item.dueDate).severity === 'warning'
-                        }">
-                    {{ dueInfo(item.dueDate).label }}
-                  </span>
-                  <span v-else class="hint">Sin fecha</span>
+                  <template v-if="item.cutoffDay || item.paymentDay">
+                    <div v-if="item.cutoffDay"><small class="hint">Corte:</small> <strong>Día {{ item.cutoffDay }}</strong></div>
+                    <div v-if="item.paymentDay"><small class="hint">Pago:</small> <strong>Día {{ item.paymentDay }}</strong></div>
+                  </template>
+                  <span v-else class="hint">—</span>
                 </td>
                 <td class="center col-status"><span :class="statusBadgeClass(item.status)">{{ STATUS_LABEL[item.status] }}</span></td>
                 <td class="center col-acts">
