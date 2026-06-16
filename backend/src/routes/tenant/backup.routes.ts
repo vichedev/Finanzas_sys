@@ -14,7 +14,7 @@ backupRouter.get('/export', async (req, res) => {
   const userId = req.tenantUserId!;
   const p = req.tenantPrisma!;
 
-  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments] =
+  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig] =
     await Promise.all([
       p.bank.findMany({ where: { userId } }),
       p.account.findMany({ where: { userId } }),
@@ -25,20 +25,33 @@ backupRouter.get('/export', async (req, res) => {
       p.recurringRule.findMany({ where: { userId } }),
       p.movement.findMany({ where: { userId } }),
       p.invoice.findMany({ where: { userId } }),
-      p.attachment.findMany({ where: { userId } })
+      p.attachment.findMany({ where: { userId } }),
+      p.budget.findMany({ where: { userId } }),
+      p.branding.findUnique({ where: { id: 1 } }).catch(() => null),
+      p.aiConfig.findUnique({ where: { id: 1 } }).catch(() => null)
     ]);
 
   const data = {
     format: 'finanzas-backup',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     counts: {
       banks: banks.length, accounts: accounts.length, cards: cards.length, wallets: wallets.length,
       categories: categories.length, debts: debts.length, recurrings: recurrings.length,
-      movements: movements.length, invoices: invoices.length, attachments: attachments.length
+      movements: movements.length, invoices: invoices.length, attachments: attachments.length,
+      budgets: budgets.length
     },
-    banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices,
-    attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') }))
+    banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, budgets,
+    attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') })),
+    // Identidad de la empresa (logo en base64) — singleton por empresa.
+    branding: branding ? {
+      systemTitle: branding.systemTitle, subtitle: branding.subtitle,
+      primaryColor: branding.primaryColor, accentColor: branding.accentColor,
+      logoMime: branding.logoMime,
+      logoData: branding.logoData ? Buffer.from(branding.logoData).toString('base64') : null
+    } : null,
+    // Config de FinancIA (sin la clave de API: va cifrada y atada a este servidor).
+    aiConfig: aiConfig ? { provider: aiConfig.provider, model: aiConfig.model, enabled: aiConfig.enabled } : null
   };
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -85,7 +98,8 @@ backupRouter.post('/import', async (req, res) => {
       // Cuentas
       for (const a of data.accounts || []) {
         const created = await tx.account.create({ data: {
-          userId, name: a.name, type: a.type, bankId: remap(mBank, a.bankId), bankName: a.bankName ?? null,
+          userId, name: a.name, type: a.type, holder: a.holder ?? null, accountKind: a.accountKind ?? null,
+          bankId: remap(mBank, a.bankId), bankName: a.bankName ?? null,
           accountNumber: a.accountNumber ?? null, initialBalance: a.initialBalance ?? 0, currentBalance: a.currentBalance ?? 0, isActive: a.isActive ?? true
         } });
         mAccount[a.id] = created.id; bump('accounts');
@@ -93,7 +107,7 @@ backupRouter.post('/import', async (req, res) => {
       // Tarjetas
       for (const c of data.cards || []) {
         const created = await tx.card.create({ data: {
-          userId, name: c.name, type: c.type, bankName: c.bankName ?? null, last4: c.last4 ?? null,
+          userId, name: c.name, type: c.type, bankId: remap(mBank, c.bankId), bankName: c.bankName ?? null, last4: c.last4 ?? null,
           creditLimit: c.creditLimit ?? null, cutoffDay: c.cutoffDay ?? null, paymentDueDay: c.paymentDueDay ?? null,
           currentBalance: c.currentBalance ?? 0, isActive: c.isActive ?? true
         } });
@@ -125,7 +139,7 @@ backupRouter.post('/import', async (req, res) => {
           userId, type: m.type, expenseKind: m.expenseKind ?? null, amount: m.amount ?? 0,
           movementDate: toDate(m.movementDate) ?? new Date(), description: m.description, paymentMethod: m.paymentMethod,
           familyMember: m.familyMember ?? null, notes: m.notes ?? null,
-          accountId: remap(mAccount, m.accountId), cardId: remap(mCard, m.cardId), walletId: remap(mWallet, m.walletId),
+          accountId: remap(mAccount, m.accountId), toAccountId: remap(mAccount, m.toAccountId), cardId: remap(mCard, m.cardId), walletId: remap(mWallet, m.walletId),
           categoryId: remap(mCategory, m.categoryId), debtId: remap(mDebt, m.debtId), recurringRuleId: remap(mRecurring, m.recurringRuleId),
           fromBankId: remap(mBank, m.fromBankId), toBankId: remap(mBank, m.toBankId),
           vendor: m.vendor ?? null, isCredit: m.isCredit ?? false, dueDate: toDate(m.dueDate), commission: m.commission ?? null,
@@ -155,6 +169,49 @@ backupRouter.post('/import', async (req, res) => {
           size: at.size ?? 0, data: Buffer.from(at.data || '', 'base64')
         } });
         bump('attachments');
+      }
+
+      // Presupuestos (remap de categoría; únicos por userId+categoría+periodo)
+      for (const bud of data.budgets || []) {
+        const categoryId = remap(mCategory, bud.categoryId);
+        if (!categoryId) continue;
+        const period = bud.period ?? 'MONTHLY';
+        await tx.budget.upsert({
+          where: { userId_categoryId_period: { userId, categoryId, period } },
+          create: { userId, categoryId, amount: bud.amount ?? 0, period, isActive: bud.isActive ?? true },
+          update: { amount: bud.amount ?? 0, isActive: bud.isActive ?? true }
+        });
+        bump('budgets');
+      }
+
+      // Identidad / Branding (singleton id=1): restaura logo, colores y título.
+      if (data.branding) {
+        const br = data.branding;
+        await tx.branding.upsert({
+          where: { id: 1 },
+          create: {
+            id: 1, systemTitle: br.systemTitle ?? null, subtitle: br.subtitle ?? null,
+            primaryColor: br.primaryColor ?? null, accentColor: br.accentColor ?? null,
+            logoMime: br.logoMime ?? null, logoData: br.logoData ? Buffer.from(br.logoData, 'base64') : null
+          },
+          update: {
+            systemTitle: br.systemTitle ?? null, subtitle: br.subtitle ?? null,
+            primaryColor: br.primaryColor ?? null, accentColor: br.accentColor ?? null,
+            logoMime: br.logoMime ?? null, logoData: br.logoData ? Buffer.from(br.logoData, 'base64') : null
+          }
+        });
+        bump('branding');
+      }
+
+      // Config FinancIA (sin clave de API; se vuelve a ingresar tras restaurar).
+      if (data.aiConfig) {
+        const ai = data.aiConfig;
+        await tx.aiConfig.upsert({
+          where: { id: 1 },
+          create: { id: 1, provider: ai.provider ?? 'groq', model: ai.model ?? 'llama-3.3-70b-versatile', enabled: false },
+          update: { provider: ai.provider ?? 'groq', model: ai.model ?? 'llama-3.3-70b-versatile' }
+        });
+        bump('aiConfig');
       }
 
       return counts;

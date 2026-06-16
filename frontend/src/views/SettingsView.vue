@@ -1543,15 +1543,16 @@ onMounted(async () => {
     <div v-if="activeSection === 'backups'" class="panel">
       <div class="panel-header"><h2>Respaldos y migración</h2></div>
       <p class="hint" style="margin-bottom:16px">
-        Exporta toda tu información (cuentas, movimientos, facturas, comprobantes, deudas, etc.) a un archivo,
-        o impórtala en otra empresa para migrar o restaurar.
+        Respaldo <strong>completo</strong>: bancos, cuentas, tarjetas, billeteras, categorías, movimientos,
+        deudas, recurrentes, facturas, comprobantes, presupuestos, identidad (logo y colores) y la
+        configuración de FinancIA. Exporta a un archivo o impórtalo en otra empresa para migrar o restaurar.
       </p>
 
       <div class="backup-cards">
         <div class="backup-card">
           <div class="backup-ic"><Download :size="22" /></div>
           <strong>Exportar respaldo</strong>
-          <small>Descarga un archivo JSON con TODOS tus datos, incluidos los comprobantes adjuntos.</small>
+          <small>Descarga un archivo JSON con TODOS tus datos: comprobantes, presupuestos, identidad y ajustes de FinancIA incluidos.</small>
           <button type="button" @click="exportBackup" :disabled="backupBusy">
             <Download :size="16" /> {{ backupBusy ? 'Generando…' : 'Descargar respaldo' }}
           </button>
