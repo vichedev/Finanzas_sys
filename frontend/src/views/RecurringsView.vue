@@ -165,15 +165,9 @@ onMounted(load);
             </div>
 
             <div class="field">
-              <label for="rec-next">Próxima fecha <span class="required-mark">*</span></label>
+              <label for="rec-next">Fecha máxima de pago <span class="required-mark">*</span></label>
               <input id="rec-next" v-model="form.nextRunDate" type="date" required />
-              <small class="hint">Próxima ejecución.</small>
-            </div>
-
-            <div class="field">
-              <label for="rec-end">Fecha fin</label>
-              <input id="rec-end" v-model="form.endDate" type="date" />
-              <small class="hint">Vacío = indefinida.</small>
+              <small class="hint">Día límite en que se debe pagar/cobrar.</small>
             </div>
 
             <div class="field">
@@ -232,8 +226,7 @@ onMounted(load);
                 <th class="col-type center">Tipo</th>
                 <th class="col-amount center">Monto</th>
                 <th class="col-freq center">Frecuencia</th>
-                <th class="col-next center">Próxima fecha</th>
-                <th class="col-end center">Fin</th>
+                <th class="col-next center">Fecha máxima de pago</th>
                 <th class="col-status center">Estado</th>
                 <th class="col-actions center">Acciones</th>
               </tr>
@@ -248,7 +241,6 @@ onMounted(load);
                 <td class="center" :class="item.type === 'INCOME' ? 'pos' : 'neg'">{{ amountSign(item) }}</td>
                 <td class="center">{{ FREQ_LABEL[item.frequency] }}</td>
                 <td class="center">{{ formatDate(item.nextRunDate) }}</td>
-                <td class="center">{{ item.endDate ? formatDate(item.endDate) : 'Indefinida' }}</td>
                 <td class="center"><span class="cat-pill" :class="`status-${item.status.toLowerCase()}`">{{ STATUS_LABEL[item.status] }}</span></td>
                 <td class="center">
                   <div class="row-actions">
@@ -262,7 +254,7 @@ onMounted(load);
                 </td>
               </tr>
               <tr v-if="!rows.length">
-                <td colspan="8">
+                <td colspan="7">
                   <div class="empty-state">
                     <div class="empty-state-illustration"><Repeat :size="36" /></div>
                     <strong>Sin pagos recurrentes</strong>
@@ -276,7 +268,7 @@ onMounted(load);
                 <td colspan="2"><strong>Totales mensuales</strong></td>
                 <td class="center pos"><strong>+{{ formatMoney(totalMonthlyIncome) }}</strong></td>
                 <td colspan="2" class="center neg"><strong>-{{ formatMoney(totalMonthlyExpense) }}</strong></td>
-                <td colspan="3" class="center" :class="monthlyNet >= 0 ? 'pos' : 'neg'"><strong>Neto: {{ formatMoney(monthlyNet) }}</strong></td>
+                <td colspan="2" class="center" :class="monthlyNet >= 0 ? 'pos' : 'neg'"><strong>Neto: {{ formatMoney(monthlyNet) }}</strong></td>
               </tr>
             </tfoot>
           </table>
