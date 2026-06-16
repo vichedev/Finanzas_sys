@@ -65,6 +65,9 @@ accountsRouter.put('/:id', async (req, res) => {
   const body = accountSchema.partial().parse(req.body);
   const userId = req.tenantUserId!;
 
+  const existing = await req.tenantPrisma!.account.findFirst({ where: { id, userId } });
+  if (!existing) return res.status(404).json({ message: 'Cuenta no encontrada' });
+
   const data: Record<string, unknown> = {};
   if (body.name !== undefined) data.name = body.name;
   if (body.type !== undefined) data.type = body.type;
@@ -74,6 +77,14 @@ accountsRouter.put('/:id', async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(body, 'bankId')) {
     data.bankId = body.bankId ?? null;
     data.bankName = await resolveBankName(req, userId, body.bankId ?? null);
+  }
+  // Al editar el saldo inicial, ajustamos el saldo actual por la MISMA diferencia,
+  // así el cambio se refleja al momento sin perder el efecto de los movimientos.
+  if (body.initialBalance !== undefined) {
+    const newInitial = Number(body.initialBalance);
+    const delta = newInitial - Number(existing.initialBalance);
+    data.initialBalance = newInitial;
+    data.currentBalance = Number(existing.currentBalance) + delta;
   }
 
   const row = await req.tenantPrisma!.account.update({
