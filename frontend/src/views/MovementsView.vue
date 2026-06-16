@@ -201,6 +201,14 @@ const isInterbankTransfer = computed(() => {
   const d = form.value.toAccountId != null ? accountMap.value.get(form.value.toAccountId) : null;
   return !!(o?.bankId && d?.bankId && o.bankId !== d.bankId);
 });
+// Comisión: en transferencias entre cuentas de bancos distintos, o en movimientos
+// pagados por banco/depósito cuando el banco origen y destino son diferentes.
+const showCommission = computed(() => {
+  if (isTransfer.value) return isInterbankTransfer.value;
+  return showFromBank.value && showToBank.value
+    && !!form.value.fromBankId && !!form.value.toBankId
+    && form.value.fromBankId !== form.value.toBankId;
+});
 const showCard = computed(() => {
   if (isWithdrawal.value) return false;
   if (isCreditPurchase.value) return false;
@@ -423,7 +431,7 @@ async function save() {
       vendor: isPurchase.value ? (form.value.vendor.trim() || null) : null,
       isCredit: isPurchase.value ? !!form.value.isCredit : false,
       dueDate: isCreditPurchase.value && form.value.dueDate ? form.value.dueDate : null,
-      commission: isInterbankTransfer.value ? (Number(form.value.commission) || null) : null,
+      commission: showCommission.value ? (Number(form.value.commission) || null) : null,
       familyMember: form.value.familyMember.trim() || null,
       notes: form.value.notes.trim() || null
     };
@@ -634,19 +642,14 @@ onMounted(load);
                 </div>
               </div>
 
-              <!-- Comisión: solo si las cuentas son de bancos distintos -->
+              <!-- Aviso interbancario (la comisión se ingresa bajo el Monto) -->
               <div v-if="isInterbankTransfer" class="interbank-block">
                 <div class="interbank-head">
                   <span class="interbank-ic">🔀</span>
                   <div>
                     <strong>Transferencia interbancaria</strong>
-                    <small>Las cuentas son de bancos distintos; suele tener comisión.</small>
+                    <small>Las cuentas son de bancos distintos; ingresa la comisión bajo el Monto.</small>
                   </div>
-                </div>
-                <div class="field field-narrow interbank-commission">
-                  <label for="mv-commission">Comisión cobrada (USD)</label>
-                  <input id="mv-commission" v-model.number="form.commission" type="number" step="0.01" min="0" placeholder="0.00" />
-                  <small class="hint">Se descuenta del saldo de la cuenta de origen.</small>
                 </div>
               </div>
             </template>
@@ -757,6 +760,11 @@ onMounted(load);
                 <div class="field amount-field">
                   <label for="mv-amount">Monto (USD) <span class="required-mark">*</span></label>
                   <input id="mv-amount" v-model.number="form.amount" type="number" step="0.01" min="0.01" required placeholder="0.00" />
+                </div>
+                <div v-if="showCommission" class="field commission-field">
+                  <label for="mv-commission">💸 Comisión interbancaria (USD)</label>
+                  <input id="mv-commission" v-model.number="form.commission" type="number" step="0.01" min="0" placeholder="0.00" />
+                  <small class="hint">Valor extra cobrado por transferir entre bancos distintos.</small>
                 </div>
                 <div class="mov-final-actions">
                   <AppButton v-if="editingId !== null" variant="ghost" @click="cancelEdit">
@@ -1038,6 +1046,8 @@ onMounted(load);
 
 .field-wide { grid-column: 1 / -1; }
 .amount-field input { font-size: var(--text-xl); font-weight: 700; height: 48px; }
+.commission-field { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 8px 10px; }
+.commission-field label { color: #b45309; }
 .warn-hint { color: var(--color-warning-text); margin-top: var(--space-2); }
 
 .opt-tag { font-weight: 400; color: #9ca3af; }
