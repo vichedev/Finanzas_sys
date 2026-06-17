@@ -373,6 +373,83 @@ const tableTitle = computed(() => {
   return 'Movimientos del mes';
 });
 
+// Vuelve a la vista "Todos" (no toca el formulario, solo la tabla).
+function viewAll() { typeFilter.value = 'ALL'; activeTab.value = 'ALL'; resetTableAccountFilters(); }
+
+// ---- Resumen adaptativo: cada tipo muestra SOLO sus tarjetas relevantes ----
+const num = (r: Movement) => Number(r.amount || 0);
+const sumOf = (arr: Movement[], f: (r: Movement) => number = num) => arr.reduce((a, r) => a + f(r), 0);
+const rowsOfType = (t: MovementType) => rows.value.filter((r) => r.type === t);
+const monthTotals = computed(() => {
+  let income = 0, expense = 0;
+  for (const r of rows.value) {
+    const a = num(r);
+    if (r.type === 'INCOME') income += a;
+    else if (r.type === 'EXPENSE' || r.type === 'WITHDRAWAL') expense += a;
+    else if (r.type === 'PURCHASE' && !r.isCredit) expense += a;
+    expense += Number(r.commission || 0);
+  }
+  return { income, expense, balance: income - expense };
+});
+
+interface SumCard { key: string; label: string; value: string; badge?: number; clickable?: boolean; active?: boolean; accent?: 'pos' | 'neg' | ''; onClick?: () => void }
+const summaryCards = computed<SumCard[]>(() => {
+  const tf = typeFilter.value;
+  if (tf === 'EXPENSE') {
+    return TABS.map((t) => ({
+      key: t.key, label: t.label, badge: tabCount(t.key),
+      value: t.key === 'ALL' ? 'registros' : formatMoney(tabSum(t.key)),
+      clickable: true, active: activeTab.value === t.key, accent: t.key === 'ALL' ? '' : 'neg',
+      onClick: () => setTab(t.key)
+    }));
+  }
+  if (tf === 'INCOME') {
+    const r = rowsOfType('INCOME');
+    return [
+      { key: 'sum', label: 'Ingresos del mes', value: formatMoney(sumOf(r)), accent: 'pos' },
+      { key: 'cnt', label: 'Registros', value: String(r.length) }
+    ];
+  }
+  if (tf === 'PURCHASE') {
+    const r = rowsOfType('PURCHASE');
+    const paid = r.filter((x) => !x.isCredit), fiada = r.filter((x) => x.isCredit);
+    return [
+      { key: 'tot', label: 'Compras del mes', value: formatMoney(sumOf(r)) },
+      { key: 'paid', label: 'Pagadas', value: formatMoney(sumOf(paid)), accent: 'neg' },
+      { key: 'fiada', label: 'Fiadas (por pagar)', value: formatMoney(sumOf(fiada)), accent: '' }
+    ];
+  }
+  if (tf === 'TRANSFER') {
+    const r = rowsOfType('TRANSFER');
+    return [
+      { key: 'cnt', label: 'Transferencias', value: String(r.length) },
+      { key: 'tot', label: 'Total transferido', value: formatMoney(sumOf(r)) },
+      { key: 'com', label: 'Comisiones', value: formatMoney(sumOf(r, (x) => Number(x.commission || 0))), accent: 'neg' }
+    ];
+  }
+  if (tf === 'WITHDRAWAL') {
+    const r = rowsOfType('WITHDRAWAL');
+    return [
+      { key: 'tot', label: 'Retirado del mes', value: formatMoney(sumOf(r)), accent: 'neg' },
+      { key: 'cnt', label: 'Retiros', value: String(r.length) }
+    ];
+  }
+  if (tf === 'CARD_PAYMENT' || tf === 'ADJUSTMENT') {
+    const r = rowsOfType(tf);
+    return [
+      { key: 'tot', label: TYPE_FILTER_LABEL[tf], value: formatMoney(sumOf(r)) },
+      { key: 'cnt', label: 'Registros', value: String(r.length) }
+    ];
+  }
+  // ALL → panorama del mes
+  return [
+    { key: 'all', label: 'Movimientos', value: 'registros', badge: rows.value.length },
+    { key: 'inc', label: 'Ingresos', value: formatMoney(monthTotals.value.income), accent: 'pos' },
+    { key: 'exp', label: 'Gastos', value: formatMoney(monthTotals.value.expense), accent: 'neg' },
+    { key: 'bal', label: 'Balance', value: formatMoney(monthTotals.value.balance), accent: monthTotals.value.balance >= 0 ? 'pos' : 'neg' }
+  ];
+});
+
 // Cuentas filtradas por el banco del retiro: solo cuentas de ESE banco.
 const withdrawalAccountOptions = computed<PickOpt[]>(() => {
   const bankId = form.value.fromBankId;
@@ -860,22 +937,29 @@ onMounted(load);
       </PanelCard>
 
       <PanelCard>
-        <div class="mov-tabs" role="tablist">
+        <div class="mov-section-head">
+          <span class="mov-section-title">{{ typeFilter === 'ALL' ? 'Resumen del mes' : TYPE_FILTER_LABEL[typeFilter] || 'Resumen' }}</span>
+          <button v-if="typeFilter !== 'ALL'" type="button" class="ghost mini view-all" @click="viewAll">
+            ← Ver todos
+          </button>
+        </div>
+        <div class="mov-tabs" :class="{ 'is-static': typeFilter !== 'EXPENSE' }" role="tablist">
           <button
-            v-for="t in TABS"
-            :key="t.key"
+            v-for="c in summaryCards"
+            :key="c.key"
             type="button"
             class="mov-tab"
-            :class="{ active: activeTab === t.key && (t.key !== 'ALL' || typeFilter === 'ALL') }"
+            :class="{ active: c.active, 'is-readonly': !c.clickable }"
             role="tab"
-            :aria-selected="activeTab === t.key && (t.key !== 'ALL' || typeFilter === 'ALL')"
-            @click="setTab(t.key)"
+            :aria-selected="!!c.active"
+            :disabled="!c.clickable"
+            @click="c.onClick && c.onClick()"
           >
             <span class="mov-tab-top">
-              <span class="mov-tab-label">{{ t.label }}</span>
-              <span class="mov-tab-count">{{ tabCount(t.key) }}</span>
+              <span class="mov-tab-label">{{ c.label }}</span>
+              <span v-if="c.badge != null" class="mov-tab-count">{{ c.badge }}</span>
             </span>
-            <span class="mov-tab-sum">{{ t.key === 'ALL' ? 'registros' : formatMoney(tabSum(t.key)) }}</span>
+            <span class="mov-tab-sum" :class="c.accent">{{ c.value }}</span>
           </button>
         </div>
 
@@ -1300,8 +1384,16 @@ onMounted(load);
   border-radius: 999px;
 }
 .mov-tab.active .mov-tab-count { color: #fff; background: var(--color-primary); }
-.mov-tab-sum { font-size: 12px; color: #64748b; font-weight: 500; }
+.mov-tab-sum { font-size: 12px; color: #64748b; font-weight: 600; }
 .mov-tab.active .mov-tab-sum { color: var(--color-primary-active); }
+.mov-tab-sum.pos { color: var(--color-success-text, #047857); }
+.mov-tab-sum.neg { color: var(--color-danger-text, #b91c1c); }
+/* Tarjetas de solo lectura (resúmenes que no filtran) */
+.mov-tab.is-readonly { cursor: default; opacity: 1; }
+.mov-tab.is-readonly:hover { background: #fff; box-shadow: none; }
+.mov-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.mov-section-title { font-size: 13px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
+.view-all { display: inline-flex; align-items: center; gap: 4px; color: var(--color-primary, #2563eb); border-color: #bfdbfe; font-weight: 600; }
 @media (max-width: 720px) {
   .mov-tabs { grid-template-columns: repeat(2, 1fr); }
 }
