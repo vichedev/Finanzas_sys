@@ -69,8 +69,10 @@ done
 
 # El schema tenant no se aplica con db push directo (cada tenant tiene su DB).
 # sync:tenants:prod recorre TODAS las BD de empresas y aplica el schema tenant
-# actual (aditivo e idempotente: agrega tablas/columnas nuevas como Invoice).
-if [[ "$REBUILD_ALL" == "1" ]] || git diff --name-only "$PREV" "$CURR" | grep -q "prisma/tenant/schema.prisma"; then
+# actual (aditivo e idempotente: agrega tablas/columnas nuevas).
+# Se ejecuta SIEMPRE que se haya (re)construido el backend, para no quedar nunca
+# desincronizado (si una corrida previa no detectó el cambio de schema, esta lo arregla).
+if [[ "$REBUILD_ALL" == "1" || "$BACKEND_CHANGED" == "1" ]]; then
   echo "→ Sincronizando el schema de todas las empresas..."
   if docker compose exec -T backend npm run sync:tenants:prod; then
     echo "✓ Schema tenant sincronizado en todas las empresas."
