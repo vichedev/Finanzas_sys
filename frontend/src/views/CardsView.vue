@@ -349,7 +349,7 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
           <label for="pay-acc">Cuenta de origen <span class="required-mark">*</span></label>
           <select id="pay-acc" v-model.number="payForm.accountId">
             <option :value="null">— Selecciona —</option>
-            <option v-for="a in activeAccounts" :key="a.id" :value="a.id">{{ a.name }} ({{ formatMoney(a.currentBalance) }})</option>
+            <option v-for="a in activeAccounts" :key="a.id" :value="a.id">{{ [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ') }} ({{ formatMoney(a.currentBalance) }})</option>
           </select>
           <small v-if="!activeAccounts.length" class="hint warn-hint">Sin cuentas. Crea una en <strong>Cuentas</strong>.</small>
         </div>

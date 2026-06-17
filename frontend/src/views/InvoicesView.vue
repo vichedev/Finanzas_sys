@@ -30,6 +30,14 @@ const { formatMoney } = useFormat();
 const entities = useEntitiesStore();
 const accounts = computed(() => entities.accounts);
 
+// Etiqueta de cuenta: "Nombre · Banco · ****1234" (igual que en otras secciones).
+function accountLabel(a: { name: string; bankName?: string | null; accountNumber?: string | null }): string {
+  const parts = [a.name];
+  if (a.bankName) parts.push(a.bankName);
+  if (a.accountNumber) parts.push(`****${a.accountNumber.slice(-4)}`);
+  return parts.join(' · ');
+}
+
 const STATUS_LABEL: Record<InvoiceStatus, string> = { ISSUED: 'Emitida', PAID: 'Pagada', VOID: 'Anulada' };
 const KIND_LABEL: Record<InvoiceKind, string> = { SALE: 'Venta', PURCHASE: 'Compra' };
 const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
@@ -287,7 +295,7 @@ onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
             <FormField label="Cuenta relacionada" html-for="inv-account" hint="Solo referencia. No afecta el saldo.">
               <select id="inv-account" v-model.number="form.accountId">
                 <option :value="null">Sin cuenta vinculada</option>
-                <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+                <option v-for="a in accounts" :key="a.id" :value="a.id">{{ accountLabel(a) }}</option>
               </select>
             </FormField>
 
