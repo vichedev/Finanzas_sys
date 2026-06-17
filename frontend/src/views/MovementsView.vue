@@ -317,6 +317,8 @@ const accountFilter = ref<number | null>(null);   // cuenta (ingreso/gasto/compr
 const originFilter = ref<number | null>(null);     // cuenta de origen (transferencias)
 const destFilter = ref<number | null>(null);       // cuenta de destino (transferencias)
 const filterBankId = ref<number | null>(null);     // banco del retiro (retiros)
+const categoryFilter = ref<number | null>(null);   // categoría (ingreso/gasto/compra)
+const paymentFilter = ref<string>('');             // método de pago ('' = todos)
 const dateFrom = ref('');
 const dateTo = ref('');
 const ymd = (v: unknown) => String(v).slice(0, 10);
@@ -326,13 +328,26 @@ const acctOptLabel = (a: Account) => [a.name, a.bankName, a.accountNumber ? '***
 const filterAccounts = computed<Account[]>(() =>
   filterBankId.value ? accounts.value.filter((a) => a.bankId === filterBankId.value) : accounts.value
 );
+// Categorías relevantes al tipo en vista (gasto/compra → gasto; ingreso → ingreso).
+const filterCategories = computed(() => {
+  const t = typeFilter.value;
+  const want = (t === 'EXPENSE' || t === 'PURCHASE') ? 'EXPENSE' : (t === 'INCOME' ? 'INCOME' : null);
+  const list = categories.value as Array<{ id: number; name: string; icon?: string | null; type?: string; kind?: string }>;
+  if (!want) return list;
+  const filtered = list.filter((c) => (c.type || c.kind) === want);
+  return filtered.length ? filtered : list;
+});
+// Tipos que muestran filtros de categoría y método de pago.
+const showCatPayFilters = computed(() => ['INCOME', 'EXPENSE', 'PURCHASE'].includes(typeFilter.value));
 
 function resetTableAccountFilters() {
   accountFilter.value = null; originFilter.value = null; destFilter.value = null; filterBankId.value = null;
+  categoryFilter.value = null; paymentFilter.value = '';
 }
 const hasActiveFilters = computed(() =>
   accountFilter.value != null || originFilter.value != null || destFilter.value != null ||
-  filterBankId.value != null || !!dateFrom.value || !!dateTo.value
+  filterBankId.value != null || categoryFilter.value != null || !!paymentFilter.value ||
+  !!dateFrom.value || !!dateTo.value
 );
 function clearFilters() {
   resetTableAccountFilters();
@@ -361,6 +376,8 @@ const displayRows = computed(() => {
     const id = accountFilter.value;
     list = list.filter((r) => r.accountId === id || r.toAccountId === id);
   }
+  if (categoryFilter.value != null) list = list.filter((r) => r.categoryId === categoryFilter.value);
+  if (paymentFilter.value) list = list.filter((r) => r.paymentMethod === paymentFilter.value);
   if (dateFrom.value) list = list.filter((r) => ymd(r.movementDate) >= dateFrom.value);
   if (dateTo.value) list = list.filter((r) => ymd(r.movementDate) <= dateTo.value);
   return list;
@@ -1008,6 +1025,23 @@ onMounted(load);
                 <option v-for="a in accounts" :key="a.id" :value="a.id">{{ acctOptLabel(a) }}</option>
               </select>
             </label>
+            <!-- Categoría y método (ingreso/gasto/compra) -->
+            <template v-if="showCatPayFilters">
+              <label class="acc-filter">
+                <span>Categoría:</span>
+                <select v-model.number="categoryFilter">
+                  <option :value="null">Todas</option>
+                  <option v-for="c in filterCategories" :key="c.id" :value="c.id">{{ c.icon ? c.icon + ' ' : '' }}{{ c.name }}</option>
+                </select>
+              </label>
+              <label class="acc-filter">
+                <span>Método:</span>
+                <select v-model="paymentFilter">
+                  <option value="">Todos</option>
+                  <option v-for="(label, key) in PAYMENT_LABEL" :key="key" :value="key">{{ label }}</option>
+                </select>
+              </label>
+            </template>
             <label class="acc-filter"><span>Desde:</span><input type="date" v-model="dateFrom" /></label>
             <label class="acc-filter"><span>Hasta:</span><input type="date" v-model="dateTo" /></label>
             <button v-if="hasActiveFilters" type="button" class="ghost mini clear-filters" @click="clearFilters">
