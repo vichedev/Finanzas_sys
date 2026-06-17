@@ -23,7 +23,9 @@
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat: selector de cuenta con detalle \\(nombre/banco/numero\\) en Facturas-IVA; tambien filtro de Movimientos y pago de tarjeta\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix\\(tarjetas\\): el saldo ahora es editable \\(debito y saldo usado de credito\\); PUT ya no descarta currentBalance\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npm run build 2>&1 | Select-Object -Last 15; \"BUILD $LASTEXITCODE\")",
-      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix\\(update.sh\\): sincronizar schema de tenants SIEMPRE que se reconstruya el backend \\(evita BD desincronizadas que vacian las tablas\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix\\(update.sh\\): sincronizar schema de tenants SIEMPRE que se reconstruya el backend \\(evita BD desincronizadas que vacian las tablas\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -Last 6; \"FE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): la vista abre enfocada en Ingresos \\(tab Ingreso + tabla solo ingresos por defecto\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
     ]
   }
 }

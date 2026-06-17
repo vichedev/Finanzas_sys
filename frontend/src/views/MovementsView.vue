@@ -107,7 +107,7 @@ const editingId = ref<number | null>(null);
 const attachRef = ref<{ flush: (id: number) => Promise<void>; reset: () => void; hasPending: () => boolean } | null>(null);
 
 const buildEmptyForm = () => ({
-  type: 'EXPENSE' as MovementType,
+  type: 'INCOME' as MovementType,
   expenseKind: (filterExpenseKind.value ?? 'VARIABLE') as ExpenseKind,
   amount: 0, movementDate: todayStr,
   description: '', paymentMethod: 'CASH' as PaymentMethod,
@@ -312,7 +312,7 @@ function setTab(key: TabKey) {
 // ---- Filtros de la tabla ----
 // El tipo de la tabla lo dirige el selector "¿Qué quieres registrar?" (form.type) y las
 // pestañas de subtipo de gasto. typeFilter='ALL' solo cuando se elige "Todos".
-const typeFilter = ref<'ALL' | MovementType>('ALL');
+const typeFilter = ref<'ALL' | MovementType>('INCOME'); // arranca enfocado en Ingresos
 const accountFilter = ref<number | null>(null);   // cuenta (ingreso/gasto/compra/retiro)
 const originFilter = ref<number | null>(null);     // cuenta de origen (transferencias)
 const destFilter = ref<number | null>(null);       // cuenta de destino (transferencias)
