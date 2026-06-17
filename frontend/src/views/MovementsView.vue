@@ -291,19 +291,21 @@ const kindStats = computed(() => {
   return stat;
 });
 
+const expenseRowsAll = computed(() => rows.value.filter((r) => r.type === 'EXPENSE'));
 function tabCount(key: TabKey): number {
-  return key === 'ALL' ? rows.value.length : kindStats.value[key].count;
+  return key === 'ALL' ? expenseRowsAll.value.length : kindStats.value[key].count;
 }
 function tabSum(key: TabKey): number {
-  return key === 'ALL' ? 0 : kindStats.value[key].sum;
+  return key === 'ALL'
+    ? expenseRowsAll.value.reduce((a, r) => a + Number(r.amount ?? 0), 0)
+    : kindStats.value[key].sum;
 }
 function setTab(key: TabKey) {
   activeTab.value = key;
   resetTableAccountFilters();
-  if (key === 'ALL') {
-    typeFilter.value = 'ALL';            // "Todos" → ver todos los tipos
-  } else {
-    typeFilter.value = 'EXPENSE';        // subtipos de gasto → tabla de gastos
+  // Estas pestañas SIEMPRE viven dentro de Gastos: "Todos" = todos los gastos.
+  typeFilter.value = 'EXPENSE';
+  if (key !== 'ALL') {
     form.value.type = 'EXPENSE';
     form.value.expenseKind = key;
   }
@@ -415,8 +417,8 @@ const summaryCards = computed<SumCard[]>(() => {
   if (tf === 'EXPENSE') {
     return TABS.map((t) => ({
       key: t.key, label: t.label, badge: tabCount(t.key),
-      value: t.key === 'ALL' ? 'registros' : formatMoney(tabSum(t.key)),
-      clickable: true, active: activeTab.value === t.key, accent: t.key === 'ALL' ? '' : 'neg',
+      value: formatMoney(tabSum(t.key)),
+      clickable: true, active: activeTab.value === t.key, accent: 'neg',
       onClick: () => setTab(t.key)
     }));
   }
@@ -1059,9 +1061,11 @@ onMounted(load);
 
         <div v-if="!displayRows.length" class="empty-state">
           <div class="empty-state-illustration"><ArrowLeftRight :size="36" /></div>
-          <strong>{{ (hasActiveFilters || activeTab !== 'ALL' || typeFilter !== 'ALL') ? 'No hay movimientos con esos filtros' : 'Aún no hay movimientos este mes' }}</strong>
-          <p v-if="hasActiveFilters || activeTab !== 'ALL' || typeFilter !== 'ALL'">Selecciona "Todos" o cambia el tipo/filtros para ver más.</p>
-          <p v-else>Registra tu primer ingreso o gasto desde el formulario de arriba.</p>
+          <strong v-if="hasActiveFilters">No hay movimientos con esos filtros</strong>
+          <strong v-else-if="typeFilter !== 'ALL' || activeTab !== 'ALL'">Aún no tienes {{ tableTitle.toLowerCase() }} este mes</strong>
+          <strong v-else>Aún no hay movimientos este mes</strong>
+          <p v-if="hasActiveFilters">Cambia o limpia los filtros para ver más.</p>
+          <p v-else>Registra el primero desde el formulario de arriba, o usa "Ver todos".</p>
         </div>
 
         <div v-else class="table-scroll">
