@@ -47,7 +47,8 @@ const route = useRoute();
 const toast = useToast();
 const { formatMoney } = useFormat();
 const now = new Date();
-const todayStr = now.toISOString().slice(0, 10);
+// "Hoy" en fecha LOCAL del usuario (no UTC) para que el default del input sea correcto.
+const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
 const VALID_EXPENSE_KINDS: ExpenseKind[] = ['FIXED', 'VARIABLE', 'NON_ACCOUNTABLE'];
 const EXPENSE_KIND_LABEL: Record<ExpenseKind, string> = {
@@ -331,7 +332,9 @@ const totals = computed(() => {
   return { income, expense, balance: income - expense };
 });
 
-function formatDate(v: string) { if (!v) return ''; const d = new Date(v); return Number.isNaN(d.getTime()) ? v : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; }
+// Las fechas se guardan como medianoche UTC (date-only). Se muestran con componentes UTC
+// para no retroceder un día en zonas horarias negativas (ej. America/Guayaquil -05).
+function formatDate(v: string) { if (!v) return ''; const d = new Date(v); return Number.isNaN(d.getTime()) ? v : `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`; }
 function signedAmount(item: Movement) {
   const a = Number(item.amount ?? 0);
   if (item.type === 'INCOME') return { text: `+${formatMoney(a)}`, cls: 'pos' };

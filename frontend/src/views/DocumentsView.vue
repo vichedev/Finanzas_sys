@@ -32,7 +32,7 @@ const isImage = (m: string) => m.startsWith('image/');
 const fmtSize = (b: number) => (b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(0)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 const fmtDate = (v: string) => {
   const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? '—' : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+  return Number.isNaN(d.getTime()) ? '—' : `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
 };
 const ym = (v: string) => String(v).slice(0, 10);
 
@@ -71,7 +71,7 @@ const groups = computed(() => {
   const map = new Map<string, DocAttachment[]>();
   for (const d of filtered.value) {
     const dt = new Date(d.contextDate);
-    const key = Number.isNaN(dt.getTime()) ? 'Sin fecha' : `${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`;
+    const key = Number.isNaN(dt.getTime()) ? 'Sin fecha' : `${MONTHS[dt.getUTCMonth()]} ${dt.getUTCFullYear()}`;
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(d);
   }

@@ -16,7 +16,7 @@ interface RecurringRow {
   category?: { id: number; name: string } | null;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const rows = ref<RecurringRow[]>([]);
 const categories = ref<Category[]>([]);
 const errorMsg = ref(''); const successMsg = ref(''); const saving = ref(false);
@@ -41,7 +41,7 @@ const STATUS_LABEL: Record<RecurringStatus, string> = { ACTIVE: 'Activa', PAUSED
 const TYPE_LABEL: Record<RecurringType, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia' };
 
 const formatMoney = (v: number | null | undefined) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
-const formatDate = (v: string | null | undefined) => { if (!v) return '—'; const d = new Date(v); if (Number.isNaN(d.getTime())) return '—'; return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; };
+const formatDate = (v: string | null | undefined) => { if (!v) return '—'; const d = new Date(v); if (Number.isNaN(d.getTime())) return '—'; return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`; };
 
 function monthlyFactor(f: Frequency) { return f === 'DAILY' ? 30 : f === 'WEEKLY' ? 4.3333 : f === 'MONTHLY' ? 1 : 1 / 12; }
 function monthlyImpact(r: RecurringRow) { return Number(r.amount || 0) * monthlyFactor(r.frequency); }
