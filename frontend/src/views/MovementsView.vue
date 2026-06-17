@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute } from 'vue-router';
 import { http } from '../api/http';
-import { ArrowLeftRight, Pencil, Trash2, Plus, X, Wallet, ShoppingCart, ShoppingBag, Banknote } from 'lucide-vue-next';
+import { ArrowLeftRight, Pencil, Trash2, Plus, X, Wallet, ShoppingCart, ShoppingBag, Banknote, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
 import PanelCard from '../components/PanelCard.vue';
 import AppButton from '../components/AppButton.vue';
@@ -314,7 +314,9 @@ function setTab(key: TabKey) {
 // ---- Filtros de la tabla ----
 // El tipo de la tabla lo dirige el selector "¿Qué quieres registrar?" (form.type) y las
 // pestañas de subtipo de gasto. typeFilter='ALL' solo cuando se elige "Todos".
-const typeFilter = ref<'ALL' | MovementType>('INCOME'); // arranca enfocado en Ingresos
+// Arranca enfocado en Ingresos, salvo que la URL pida un subtipo de gasto (?expenseKind=...),
+// en cuyo caso el tipo en vista debe ser Gasto para que el subtipo tenga sentido.
+const typeFilter = ref<'ALL' | MovementType>(initialTab() === 'ALL' ? 'INCOME' : 'EXPENSE');
 const accountFilter = ref<number | null>(null);   // cuenta (ingreso/gasto/compra/retiro)
 const originFilter = ref<number | null>(null);     // cuenta de origen (transferencias)
 const destFilter = ref<number | null>(null);       // cuenta de destino (transferencias)
@@ -367,7 +369,11 @@ watch(filterBankId, (bankId) => {
 const displayRows = computed(() => {
   let list = rows.value;
   if (typeFilter.value !== 'ALL') list = list.filter((r) => r.type === typeFilter.value);
-  if (activeTab.value !== 'ALL') list = list.filter((r) => r.type === 'EXPENSE' && r.expenseKind === activeTab.value);
+  // El subtipo (Fijos/Variables/No contables) SOLO aplica dentro de Gastos. Si el tipo en vista
+  // no es gasto (p. ej. Ingresos), un activeTab heredado dejaría la tabla vacía: lo ignoramos.
+  if (activeTab.value !== 'ALL' && (typeFilter.value === 'EXPENSE' || typeFilter.value === 'ALL')) {
+    list = list.filter((r) => r.type === 'EXPENSE' && r.expenseKind === activeTab.value);
+  }
   if (typeFilter.value === 'TRANSFER') {
     if (originFilter.value != null) list = list.filter((r) => r.accountId === originFilter.value);
     if (destFilter.value != null) list = list.filter((r) => r.toAccountId === destFilter.value);
@@ -578,6 +584,25 @@ async function load() {
   } catch { toast.error('No se pudieron cargar los movimientos.'); }
 }
 
+// ---- Navegación de período (mes/año) ----
+const periodLabel = computed(() => `${MONTHS.find((m) => m.value === month.value)?.label ?? ''} ${year.value}`);
+const isCurrentMonth = computed(() => month.value === now.getMonth() + 1 && year.value === now.getFullYear());
+function prevMonth() {
+  if (month.value === 1) { month.value = 12; year.value -= 1; }
+  else month.value -= 1;
+  load();
+}
+function nextMonth() {
+  if (month.value === 12) { month.value = 1; year.value += 1; }
+  else month.value += 1;
+  load();
+}
+function goCurrentMonth() {
+  month.value = now.getMonth() + 1;
+  year.value = now.getFullYear();
+  load();
+}
+
 async function save() {
   if (form.value.description.trim().length < 2) { toast.error('El detalle es obligatorio (mínimo 2 caracteres).'); return; }
   if (!(Number(form.value.amount) > 0)) { toast.error('El monto debe ser mayor a 0.'); return; }
@@ -673,12 +698,26 @@ onMounted(load);
   <section class="dashboard">
     <PageHeader title="Movimientos" subtitle="Ingresos, gastos y transferencias del mes.">
       <template #actions>
-        <select v-model.number="month" class="period-select" @change="load">
-          <option v-for="m in MONTHS" :key="m.value" :value="m.value">{{ m.label }}</option>
-        </select>
-        <select v-model.number="year" class="period-select" @change="load">
-          <option v-for="y in yearOptions" :key="y" :value="y">{{ y }}</option>
-        </select>
+        <div class="period-nav" role="group" aria-label="Mes a consultar">
+          <button type="button" class="icon-btn period-arrow" title="Mes anterior" aria-label="Mes anterior" @click="prevMonth">
+            <ChevronLeft :size="18" :stroke-width="2.4" />
+          </button>
+          <div class="period-center">
+            <CalendarDays :size="15" class="period-icon" />
+            <select v-model.number="month" class="period-select" aria-label="Mes" @change="load">
+              <option v-for="m in MONTHS" :key="m.value" :value="m.value">{{ m.label }}</option>
+            </select>
+            <select v-model.number="year" class="period-select period-select-year" aria-label="Año" @change="load">
+              <option v-for="y in yearOptions" :key="y" :value="y">{{ y }}</option>
+            </select>
+          </div>
+          <button type="button" class="icon-btn period-arrow" title="Mes siguiente" aria-label="Mes siguiente" @click="nextMonth">
+            <ChevronRight :size="18" :stroke-width="2.4" />
+          </button>
+        </div>
+        <button v-if="!isCurrentMonth" type="button" class="mini period-today" @click="goCurrentMonth">
+          <CalendarDays :size="14" /> Hoy
+        </button>
       </template>
     </PageHeader>
 
@@ -1044,12 +1083,17 @@ onMounted(load);
                 </select>
               </label>
             </template>
+            <span class="filter-sep" aria-hidden="true"></span>
+            <span class="filter-range-tag">Dentro del mes:</span>
             <label class="acc-filter"><span>Desde:</span><input type="date" v-model="dateFrom" /></label>
             <label class="acc-filter"><span>Hasta:</span><input type="date" v-model="dateTo" /></label>
             <button v-if="hasActiveFilters" type="button" class="ghost mini clear-filters" @click="clearFilters">
               <X :size="13" /> Limpiar
             </button>
           </div>
+          <p class="mov-filter-hint">
+            Mostrando <strong>{{ periodLabel }}</strong>. Para ver otro mes usa el selector de arriba ◀ ▶.
+          </p>
         </div>
 
         <div class="panel-header">
@@ -1062,10 +1106,10 @@ onMounted(load);
         <div v-if="!displayRows.length" class="empty-state">
           <div class="empty-state-illustration"><ArrowLeftRight :size="36" /></div>
           <strong v-if="hasActiveFilters">No hay movimientos con esos filtros</strong>
-          <strong v-else-if="typeFilter !== 'ALL' || activeTab !== 'ALL'">Aún no tienes {{ tableTitle.toLowerCase() }} este mes</strong>
-          <strong v-else>Aún no hay movimientos este mes</strong>
+          <strong v-else-if="typeFilter !== 'ALL' || activeTab !== 'ALL'">Aún no tienes {{ tableTitle.toLowerCase() }} en {{ periodLabel }}</strong>
+          <strong v-else>Aún no hay movimientos en {{ periodLabel }}</strong>
           <p v-if="hasActiveFilters">Cambia o limpia los filtros para ver más.</p>
-          <p v-else>Registra el primero desde el formulario de arriba, o usa "Ver todos".</p>
+          <p v-else>Prueba con otro mes (selector ◀ ▶ arriba), registra el primero desde el formulario, o usa "Ver todos".</p>
         </div>
 
         <div v-else class="table-scroll">
@@ -1296,6 +1340,60 @@ onMounted(load);
 .acc-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #64748b; font-weight: 600; }
 .acc-filter select { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; max-width: 220px; }
 .acc-filter input[type="date"] { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; }
+
+/* Navegador de período (mes/año) en la cabecera */
+.period-nav {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 12px;
+  padding: 4px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+.period-center {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 0 4px;
+}
+.period-icon { color: var(--color-primary, #2563eb); flex: none; }
+/* Selects integrados, sin borde, dentro de la píldora */
+.period-nav .period-select {
+  border: none; box-shadow: none; outline: none;
+  min-width: auto; height: 34px; padding: 0 4px 0 6px;
+  font-weight: 700; color: var(--color-text, #1e293b);
+  border-radius: 8px; background: transparent; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 4px center; padding-right: 18px;
+}
+.period-nav .period-select:hover { background-color: #f1f5f9; }
+.period-nav .period-select:focus-visible { background-color: #eff6ff; box-shadow: var(--shadow-focus); }
+.period-select-year { color: var(--color-text-soft, #475569); font-weight: 600; }
+/* Flechas: limpias dentro de la píldora (anulan el estilo base de .icon-btn) */
+.period-nav .period-arrow {
+  width: 32px; height: 32px; flex: none;
+  border: none; border-radius: 8px; background: transparent;
+  color: var(--color-text-soft, #64748b);
+}
+.period-nav .period-arrow:hover {
+  background: #eff6ff; border-color: transparent; color: var(--color-primary, #2563eb);
+}
+.period-nav .period-arrow:active { background: #dbeafe; }
+/* Botón "Hoy" (escapa del estilo teal global vía .mini) */
+.period-today {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 40px; padding: 0 14px;
+  border: 1px solid var(--color-border, #e2e8f0); border-radius: 12px;
+  background: #fff; color: var(--color-primary, #2563eb); font-weight: 700; font-size: 13px;
+  cursor: pointer; transition: background .12s ease, border-color .12s ease;
+}
+.period-today:hover { background: #eff6ff; border-color: #bfdbfe; }
+
+/* Separación visual entre filtros de atributo y filtros de fecha dentro del mes */
+.filter-sep { width: 1px; align-self: stretch; min-height: 24px; background: var(--color-border, #e2e8f0); margin: 0 2px; }
+.filter-range-tag { font-size: 12px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: .03em; }
+.mov-filter-hint { margin: 2px 0 0; font-size: 12px; color: #94a3b8; }
+.mov-filter-hint strong { color: #475569; }
+@media (max-width: 640px) { .filter-sep { display: none; } }
 
 /* Filtros inteligentes de la tabla */
 .mov-filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }

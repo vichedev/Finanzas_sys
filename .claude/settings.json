@@ -27,7 +27,8 @@
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -Last 6; \"FE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): la vista abre enfocada en Ingresos \\(tab Ingreso + tabla solo ingresos por defecto\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -First 20; \"FE $LASTEXITCODE\")",
-      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): filtros inteligentes para Gastos \\(categoria + metodo de pago\\) ademas de subtipo/cuenta/fechas; categoria y metodo tambien en ingreso/compra\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): filtros inteligentes para Gastos \\(categoria + metodo de pago\\) ademas de subtipo/cuenta/fechas; categoria y metodo tambien en ingreso/compra\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
+      "Bash(python3 -)"
     ]
   }
 }
