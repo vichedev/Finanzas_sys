@@ -50,15 +50,24 @@ cardsRouter.post('/', async (req, res) => {
 cardsRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const userId = req.tenantUserId!;
-  const body = cardSchema.partial().parse(req.body);
-  // currentBalance se deriva de movimientos; no editable post-creación
-  const { currentBalance: _cb, ...editable } = body as Record<string, unknown> & { currentBalance?: number };
-  if (Object.prototype.hasOwnProperty.call(editable, 'bankId')) {
-    editable.bankName = editable.bankId
-      ? await resolveBankName(req.tenantPrisma!, userId, editable.bankId as number)
-      : null;
+  const raw = (req.body ?? {}) as Record<string, unknown>;
+  const body = cardSchema.partial().parse(raw);
+  // Solo actualiza los campos realmente enviados (evita que el default(0) pise el saldo).
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(raw, k);
+  const data: Record<string, unknown> = {};
+  if (has('name')) data.name = body.name;
+  if (has('type')) data.type = body.type;
+  if (has('last4')) data.last4 = body.last4 ?? null;
+  if (has('creditLimit')) data.creditLimit = body.creditLimit ?? null;
+  if (has('cutoffDay')) data.cutoffDay = body.cutoffDay ?? null;
+  if (has('paymentDueDay')) data.paymentDueDay = body.paymentDueDay ?? null;
+  // El saldo SÍ es editable (saldo de débito / saldo usado de crédito).
+  if (has('currentBalance')) data.currentBalance = body.currentBalance ?? 0;
+  if (has('bankId')) {
+    data.bankId = body.bankId ?? null;
+    data.bankName = body.bankId ? await resolveBankName(req.tenantPrisma!, userId, body.bankId) : null;
   }
-  const row = await req.tenantPrisma!.card.update({ where: { id, userId }, data: editable });
+  const row = await req.tenantPrisma!.card.update({ where: { id, userId }, data });
   void auditFromReq(req, 'UPDATE', 'card', id, `Tarjeta "${row.name}"`);
   res.json(row);
 });

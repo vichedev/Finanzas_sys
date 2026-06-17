@@ -251,6 +251,11 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
                 <small class="hint">{{ balanceHint }}</small>
               </template>
             </div>
+            <div v-if="isCredit && editingId !== null" class="field field-narrow">
+              <label for="card-used">Saldo usado actual (USD)</label>
+              <input id="card-used" v-model.number="form.currentBalance" type="number" step="0.01" min="0" placeholder="0.00" />
+              <small class="hint">Lo consumido hoy. Ajústalo si difiere del estado de cuenta.</small>
+            </div>
             <div class="form-actions">
               <button v-if="editingId !== null" type="button" class="ghost" @click="cancelEdit"><X :size="16" /> Cancelar</button>
               <button type="submit" :disabled="saving"><component :is="editingId !== null ? Pencil : Plus" :size="16" /> {{ saving ? 'Guardando…' : (editingId !== null ? 'Guardar cambios' : 'Crear tarjeta') }}</button>

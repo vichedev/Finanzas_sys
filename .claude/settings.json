@@ -20,7 +20,8 @@
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\backend; npx tsc --noEmit 2>&1 | Select-Object -Last 8; \"BE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -Last 10; \"FE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): campo de comision interbancaria debajo del Monto, tambien para pagos por transferencia entre bancos distintos\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
-      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat: selector de cuenta con detalle \\(nombre/banco/numero\\) en Facturas-IVA; tambien filtro de Movimientos y pago de tarjeta\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat: selector de cuenta con detalle \\(nombre/banco/numero\\) en Facturas-IVA; tambien filtro de Movimientos y pago de tarjeta\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
+      "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"fix\\(tarjetas\\): el saldo ahora es editable \\(debito y saldo usado de credito\\); PUT ya no descarta currentBalance\" ; git push -q origin main; \"DONE $LASTEXITCODE\")"
     ]
   }
 }
