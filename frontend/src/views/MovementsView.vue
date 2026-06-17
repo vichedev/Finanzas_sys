@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute } from 'vue-router';
 import { http } from '../api/http';
@@ -300,24 +300,81 @@ function tabSum(key: TabKey): number {
 function setTab(key: TabKey) {
   activeTab.value = key;
   if (key !== 'ALL') {
+    typeFilter.value = 'ALL'; // el subtipo de gasto manda; evita intersección vacía
     form.value.type = 'EXPENSE';
     form.value.expenseKind = key;
   }
 }
 
-// Filtro por cuenta (origen o destino). null = todas.
-const accountFilter = ref<number | null>(null);
+// ---- Filtros inteligentes de la tabla ----
+const typeFilter = ref<'ALL' | MovementType>('ALL');
+const accountFilter = ref<number | null>(null);   // cuenta (origen o destino) para no-transferencias
+const originFilter = ref<number | null>(null);     // cuenta de origen (transferencias)
+const destFilter = ref<number | null>(null);       // cuenta de destino (transferencias)
+const dateFrom = ref('');
+const dateTo = ref('');
+const TYPE_FILTER_CHIPS: { value: 'ALL' | MovementType; label: string }[] = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'INCOME', label: 'Ingresos' },
+  { value: 'EXPENSE', label: 'Gastos' },
+  { value: 'PURCHASE', label: 'Compras' },
+  { value: 'TRANSFER', label: 'Transferencias' },
+  { value: 'WITHDRAWAL', label: 'Retiros' }
+];
+const ymd = (v: unknown) => String(v).slice(0, 10);
+const hasActiveFilters = computed(() =>
+  typeFilter.value !== 'ALL' || accountFilter.value != null || originFilter.value != null ||
+  destFilter.value != null || !!dateFrom.value || !!dateTo.value
+);
+function clearFilters() {
+  typeFilter.value = 'ALL'; accountFilter.value = null;
+  originFilter.value = null; destFilter.value = null;
+  dateFrom.value = ''; dateTo.value = '';
+}
+// Coordina el filtro de tipo con la pestaña de subtipo de gasto (evita resultados vacíos).
+watch(typeFilter, (v) => {
+  if (v !== 'ALL' && v !== 'EXPENSE') activeTab.value = 'ALL';
+  if (v !== 'TRANSFER') { originFilter.value = null; destFilter.value = null; }
+});
 
-// Filas mostradas según la pestaña activa + filtro de cuenta
+// Filas mostradas según pestaña + tipo + cuenta(s) + rango de fechas
 const displayRows = computed(() => {
   let list = activeTab.value === 'ALL'
     ? rows.value
     : rows.value.filter((r) => r.type === 'EXPENSE' && r.expenseKind === activeTab.value);
-  if (accountFilter.value != null) {
+  if (typeFilter.value !== 'ALL') list = list.filter((r) => r.type === typeFilter.value);
+  if (typeFilter.value === 'TRANSFER') {
+    if (originFilter.value != null) list = list.filter((r) => r.accountId === originFilter.value);
+    if (destFilter.value != null) list = list.filter((r) => r.toAccountId === destFilter.value);
+  } else if (accountFilter.value != null) {
     const id = accountFilter.value;
     list = list.filter((r) => r.accountId === id || r.toAccountId === id);
   }
+  if (dateFrom.value) list = list.filter((r) => ymd(r.movementDate) >= dateFrom.value);
+  if (dateTo.value) list = list.filter((r) => ymd(r.movementDate) <= dateTo.value);
   return list;
+});
+
+const tableTitle = computed(() => {
+  if (typeFilter.value !== 'ALL') return TYPE_FILTER_CHIPS.find((c) => c.value === typeFilter.value)?.label || 'Movimientos';
+  if (activeTab.value !== 'ALL') return 'Gastos ' + (TABS.find((t) => t.key === activeTab.value)?.label || '').toLowerCase();
+  return 'Movimientos del mes';
+});
+
+// Cuentas filtradas por el banco del retiro: solo cuentas de ESE banco.
+const withdrawalAccountOptions = computed<PickOpt[]>(() => {
+  const bankId = form.value.fromBankId;
+  const list = bankId ? accounts.value.filter((a) => a.bankId === bankId) : accounts.value;
+  return [
+    { value: null, label: 'Sin cuenta', icon: '∅' },
+    ...list.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }))
+  ];
+});
+// Si cambia el banco del retiro y la cuenta elegida no pertenece a él, se limpia.
+watch(() => form.value.fromBankId, (bankId) => {
+  if (!isWithdrawal.value || bankId == null) return;
+  const acc = form.value.accountId != null ? accountMap.value.get(form.value.accountId) : null;
+  if (acc && acc.bankId !== bankId) form.value.accountId = null;
 });
 
 const totals = computed(() => {
@@ -697,12 +754,12 @@ onMounted(load);
                   <label>Cuenta bancaria <span class="required-mark">*</span></label>
                   <PickerField
                     v-model="form.accountId"
-                    :options="accountOptions"
+                    :options="withdrawalAccountOptions"
                     title="Selecciona una cuenta"
-                    placeholder="Elige una cuenta"
-                    empty-text="No tienes cuentas. Créalas en la sección Cuentas."
+                    :placeholder="form.fromBankId ? 'Elige una cuenta de ese banco' : 'Elige una cuenta'"
+                    empty-text="No tienes cuentas de ese banco. Créalas en la sección Cuentas."
                   />
-                  <small class="hint">Cuenta de la que sale el efectivo.</small>
+                  <small class="hint">{{ form.fromBankId ? 'Solo cuentas del banco elegido arriba.' : 'Elige primero el banco del retiro.' }}</small>
                 </div>
                 <div v-if="isWithdrawal" class="field">
                   <label for="mv-withdrawer">👤 Quién retiró</label>
@@ -804,30 +861,64 @@ onMounted(load);
           </button>
         </div>
 
-        <div class="panel-header">
-          <h2>
-            {{ activeTab === 'ALL' ? 'Movimientos del mes' : 'Gastos ' + (TABS.find(t => t.key === activeTab)?.label || '').toLowerCase() }}
-          </h2>
-          <div class="panel-header-right">
-            <label class="acc-filter">
+        <!-- Filtros inteligentes -->
+        <div class="mov-filters">
+          <div class="mov-type-chips" role="tablist">
+            <button
+              v-for="c in TYPE_FILTER_CHIPS"
+              :key="c.value"
+              type="button"
+              class="mov-type-chip"
+              :class="{ active: typeFilter === c.value }"
+              role="tab"
+              :aria-selected="typeFilter === c.value"
+              @click="typeFilter = c.value"
+            >{{ c.label }}</button>
+          </div>
+          <div class="mov-filter-row">
+            <template v-if="typeFilter === 'TRANSFER'">
+              <label class="acc-filter">
+                <span>Origen:</span>
+                <select v-model.number="originFilter">
+                  <option :value="null">Cualquiera</option>
+                  <option v-for="a in accounts" :key="a.id" :value="a.id">{{ [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ') }}</option>
+                </select>
+              </label>
+              <label class="acc-filter">
+                <span>Destino:</span>
+                <select v-model.number="destFilter">
+                  <option :value="null">Cualquiera</option>
+                  <option v-for="a in accounts" :key="a.id" :value="a.id">{{ [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ') }}</option>
+                </select>
+              </label>
+            </template>
+            <label v-else class="acc-filter">
               <span>Cuenta:</span>
               <select v-model.number="accountFilter">
                 <option :value="null">Todas las cuentas</option>
                 <option v-for="a in accounts" :key="a.id" :value="a.id">{{ [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ') }}</option>
               </select>
             </label>
+            <label class="acc-filter"><span>Desde:</span><input type="date" v-model="dateFrom" /></label>
+            <label class="acc-filter"><span>Hasta:</span><input type="date" v-model="dateTo" /></label>
+            <button v-if="hasActiveFilters" type="button" class="ghost mini clear-filters" @click="clearFilters">
+              <X :size="13" /> Limpiar
+            </button>
+          </div>
+        </div>
+
+        <div class="panel-header">
+          <h2>{{ tableTitle }}</h2>
+          <div class="panel-header-right">
             <span class="panel-hint">{{ MONTHS.find(m => m.value === month)?.label }} {{ year }} · {{ displayRows.length }} registro{{ displayRows.length === 1 ? '' : 's' }}</span>
           </div>
         </div>
 
         <div v-if="!displayRows.length" class="empty-state">
           <div class="empty-state-illustration"><ArrowLeftRight :size="36" /></div>
-          <strong>
-            {{ activeTab === 'ALL'
-              ? 'Aún no hay movimientos este mes'
-              : 'No hay ' + ('Gastos ' + (TABS.find(t => t.key === activeTab)?.label || '')).toLowerCase() + ' este mes' }}
-          </strong>
-          <p>Registra tu primer ingreso o gasto desde el formulario de arriba.</p>
+          <strong>{{ hasActiveFilters || activeTab !== 'ALL' ? 'No hay movimientos con esos filtros' : 'Aún no hay movimientos este mes' }}</strong>
+          <p v-if="hasActiveFilters || activeTab !== 'ALL'">Prueba con otros filtros o límpialos para ver todo el mes.</p>
+          <p v-else>Registra tu primer ingreso o gasto desde el formulario de arriba.</p>
         </div>
 
         <div v-else class="table-scroll">
@@ -1057,6 +1148,16 @@ onMounted(load);
 .panel-header-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .acc-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #64748b; font-weight: 600; }
 .acc-filter select { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; max-width: 220px; }
+.acc-filter input[type="date"] { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; }
+
+/* Filtros inteligentes de la tabla */
+.mov-filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.mov-type-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.mov-type-chip { padding: 6px 14px; border-radius: 999px; border: 1px solid var(--color-border, #e2e8f0); background: #fff; color: #475569; font-weight: 600; font-size: 13px; cursor: pointer; transition: all 0.12s ease; }
+.mov-type-chip:hover { background: #f8fafc; }
+.mov-type-chip.active { background: var(--color-primary, #2563eb); color: #fff; border-color: var(--color-primary, #2563eb); }
+.mov-filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.clear-filters { display: inline-flex; align-items: center; gap: 4px; color: #dc2626; border-color: #fecaca; }
 /* Método de pago: chips visuales */
 .pay-picker { display: flex; flex-wrap: wrap; gap: 8px; }
 .pay-chip {
