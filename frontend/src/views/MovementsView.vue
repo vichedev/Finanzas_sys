@@ -299,53 +299,64 @@ function tabSum(key: TabKey): number {
 }
 function setTab(key: TabKey) {
   activeTab.value = key;
-  if (key !== 'ALL') {
-    typeFilter.value = 'ALL'; // el subtipo de gasto manda; evita intersección vacía
+  resetTableAccountFilters();
+  if (key === 'ALL') {
+    typeFilter.value = 'ALL';            // "Todos" → ver todos los tipos
+  } else {
+    typeFilter.value = 'EXPENSE';        // subtipos de gasto → tabla de gastos
     form.value.type = 'EXPENSE';
     form.value.expenseKind = key;
   }
 }
 
-// ---- Filtros inteligentes de la tabla ----
+// ---- Filtros de la tabla ----
+// El tipo de la tabla lo dirige el selector "¿Qué quieres registrar?" (form.type) y las
+// pestañas de subtipo de gasto. typeFilter='ALL' solo cuando se elige "Todos".
 const typeFilter = ref<'ALL' | MovementType>('ALL');
-const accountFilter = ref<number | null>(null);   // cuenta (origen o destino) para no-transferencias
+const accountFilter = ref<number | null>(null);   // cuenta (ingreso/gasto/compra/retiro)
 const originFilter = ref<number | null>(null);     // cuenta de origen (transferencias)
 const destFilter = ref<number | null>(null);       // cuenta de destino (transferencias)
+const filterBankId = ref<number | null>(null);     // banco del retiro (retiros)
 const dateFrom = ref('');
 const dateTo = ref('');
-const TYPE_FILTER_CHIPS: { value: 'ALL' | MovementType; label: string }[] = [
-  { value: 'ALL', label: 'Todos' },
-  { value: 'INCOME', label: 'Ingresos' },
-  { value: 'EXPENSE', label: 'Gastos' },
-  { value: 'PURCHASE', label: 'Compras' },
-  { value: 'TRANSFER', label: 'Transferencias' },
-  { value: 'WITHDRAWAL', label: 'Retiros' }
-];
 const ymd = (v: unknown) => String(v).slice(0, 10);
+const acctOptLabel = (a: Account) => [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ');
+
+// Cuentas del banco elegido (filtro de retiro).
+const filterAccounts = computed<Account[]>(() =>
+  filterBankId.value ? accounts.value.filter((a) => a.bankId === filterBankId.value) : accounts.value
+);
+
+function resetTableAccountFilters() {
+  accountFilter.value = null; originFilter.value = null; destFilter.value = null; filterBankId.value = null;
+}
 const hasActiveFilters = computed(() =>
-  typeFilter.value !== 'ALL' || accountFilter.value != null || originFilter.value != null ||
-  destFilter.value != null || !!dateFrom.value || !!dateTo.value
+  accountFilter.value != null || originFilter.value != null || destFilter.value != null ||
+  filterBankId.value != null || !!dateFrom.value || !!dateTo.value
 );
 function clearFilters() {
-  typeFilter.value = 'ALL'; accountFilter.value = null;
-  originFilter.value = null; destFilter.value = null;
+  resetTableAccountFilters();
   dateFrom.value = ''; dateTo.value = '';
 }
-// Coordina el filtro de tipo con la pestaña de subtipo de gasto (evita resultados vacíos).
-watch(typeFilter, (v) => {
-  if (v !== 'ALL' && v !== 'EXPENSE') activeTab.value = 'ALL';
-  if (v !== 'TRANSFER') { originFilter.value = null; destFilter.value = null; }
+// Al cambiar el banco del filtro de retiro, limpia la cuenta si ya no pertenece a ese banco.
+watch(filterBankId, (bankId) => {
+  if (bankId != null && accountFilter.value != null) {
+    const acc = accountMap.value.get(accountFilter.value);
+    if (acc && acc.bankId !== bankId) accountFilter.value = null;
+  }
 });
 
-// Filas mostradas según pestaña + tipo + cuenta(s) + rango de fechas
+// Filas mostradas según tipo (selector de arriba) + subtipo de gasto + cuenta(s)/banco + fechas
 const displayRows = computed(() => {
-  let list = activeTab.value === 'ALL'
-    ? rows.value
-    : rows.value.filter((r) => r.type === 'EXPENSE' && r.expenseKind === activeTab.value);
+  let list = rows.value;
   if (typeFilter.value !== 'ALL') list = list.filter((r) => r.type === typeFilter.value);
+  if (activeTab.value !== 'ALL') list = list.filter((r) => r.type === 'EXPENSE' && r.expenseKind === activeTab.value);
   if (typeFilter.value === 'TRANSFER') {
     if (originFilter.value != null) list = list.filter((r) => r.accountId === originFilter.value);
     if (destFilter.value != null) list = list.filter((r) => r.toAccountId === destFilter.value);
+  } else if (typeFilter.value === 'WITHDRAWAL') {
+    if (filterBankId.value != null) list = list.filter((r) => r.fromBankId === filterBankId.value);
+    if (accountFilter.value != null) list = list.filter((r) => r.accountId === accountFilter.value);
   } else if (accountFilter.value != null) {
     const id = accountFilter.value;
     list = list.filter((r) => r.accountId === id || r.toAccountId === id);
@@ -355,9 +366,10 @@ const displayRows = computed(() => {
   return list;
 });
 
+const TYPE_FILTER_LABEL: Record<string, string> = { INCOME: 'Ingresos', EXPENSE: 'Gastos', PURCHASE: 'Compras', TRANSFER: 'Transferencias', WITHDRAWAL: 'Retiros', CARD_PAYMENT: 'Pagos de tarjeta', ADJUSTMENT: 'Ajustes' };
 const tableTitle = computed(() => {
-  if (typeFilter.value !== 'ALL') return TYPE_FILTER_CHIPS.find((c) => c.value === typeFilter.value)?.label || 'Movimientos';
   if (activeTab.value !== 'ALL') return 'Gastos ' + (TABS.find((t) => t.key === activeTab.value)?.label || '').toLowerCase();
+  if (typeFilter.value !== 'ALL') return TYPE_FILTER_LABEL[typeFilter.value] || 'Movimientos';
   return 'Movimientos del mes';
 });
 
@@ -408,7 +420,13 @@ function accountOrCardLabel(item: Movement) {
   if (item.account) return `🏦 ${item.account.name}`;
   return '—';
 }
-function setType(t: MovementType) { form.value.type = t; }
+function setType(t: MovementType) {
+  form.value.type = t;
+  // El selector de arriba también filtra la tabla por ese tipo.
+  typeFilter.value = t;
+  activeTab.value = 'ALL';
+  resetTableAccountFilters();
+}
 
 // ---- Modal de detalle (click en la fila) ----
 const detailOpen = ref(false);
@@ -848,9 +866,9 @@ onMounted(load);
             :key="t.key"
             type="button"
             class="mov-tab"
-            :class="{ active: activeTab === t.key }"
+            :class="{ active: activeTab === t.key && (t.key !== 'ALL' || typeFilter === 'ALL') }"
             role="tab"
-            :aria-selected="activeTab === t.key"
+            :aria-selected="activeTab === t.key && (t.key !== 'ALL' || typeFilter === 'ALL')"
             @click="setTab(t.key)"
           >
             <span class="mov-tab-top">
@@ -861,42 +879,49 @@ onMounted(load);
           </button>
         </div>
 
-        <!-- Filtros inteligentes -->
+        <!-- Filtros de la tabla (la tabla muestra el tipo seleccionado arriba) -->
         <div class="mov-filters">
-          <div class="mov-type-chips" role="tablist">
-            <button
-              v-for="c in TYPE_FILTER_CHIPS"
-              :key="c.value"
-              type="button"
-              class="mov-type-chip"
-              :class="{ active: typeFilter === c.value }"
-              role="tab"
-              :aria-selected="typeFilter === c.value"
-              @click="typeFilter = c.value"
-            >{{ c.label }}</button>
-          </div>
           <div class="mov-filter-row">
+            <!-- Transferencias: origen + destino -->
             <template v-if="typeFilter === 'TRANSFER'">
               <label class="acc-filter">
                 <span>Origen:</span>
                 <select v-model.number="originFilter">
                   <option :value="null">Cualquiera</option>
-                  <option v-for="a in accounts" :key="a.id" :value="a.id">{{ [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ') }}</option>
+                  <option v-for="a in accounts" :key="a.id" :value="a.id">{{ acctOptLabel(a) }}</option>
                 </select>
               </label>
               <label class="acc-filter">
                 <span>Destino:</span>
                 <select v-model.number="destFilter">
                   <option :value="null">Cualquiera</option>
-                  <option v-for="a in accounts" :key="a.id" :value="a.id">{{ [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ') }}</option>
+                  <option v-for="a in accounts" :key="a.id" :value="a.id">{{ acctOptLabel(a) }}</option>
                 </select>
               </label>
             </template>
+            <!-- Retiros: banco del retiro + cuenta de ese banco -->
+            <template v-else-if="typeFilter === 'WITHDRAWAL'">
+              <label class="acc-filter">
+                <span>Banco:</span>
+                <select v-model.number="filterBankId">
+                  <option :value="null">Todos los bancos</option>
+                  <option v-for="b in activeBanks" :key="b.id" :value="b.id">{{ b.name }}</option>
+                </select>
+              </label>
+              <label class="acc-filter">
+                <span>Cuenta:</span>
+                <select v-model.number="accountFilter">
+                  <option :value="null">{{ filterBankId ? 'Todas de ese banco' : 'Todas las cuentas' }}</option>
+                  <option v-for="a in filterAccounts" :key="a.id" :value="a.id">{{ acctOptLabel(a) }}</option>
+                </select>
+              </label>
+            </template>
+            <!-- Resto: una cuenta -->
             <label v-else class="acc-filter">
               <span>Cuenta:</span>
               <select v-model.number="accountFilter">
                 <option :value="null">Todas las cuentas</option>
-                <option v-for="a in accounts" :key="a.id" :value="a.id">{{ [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ') }}</option>
+                <option v-for="a in accounts" :key="a.id" :value="a.id">{{ acctOptLabel(a) }}</option>
               </select>
             </label>
             <label class="acc-filter"><span>Desde:</span><input type="date" v-model="dateFrom" /></label>
@@ -916,8 +941,8 @@ onMounted(load);
 
         <div v-if="!displayRows.length" class="empty-state">
           <div class="empty-state-illustration"><ArrowLeftRight :size="36" /></div>
-          <strong>{{ hasActiveFilters || activeTab !== 'ALL' ? 'No hay movimientos con esos filtros' : 'Aún no hay movimientos este mes' }}</strong>
-          <p v-if="hasActiveFilters || activeTab !== 'ALL'">Prueba con otros filtros o límpialos para ver todo el mes.</p>
+          <strong>{{ (hasActiveFilters || activeTab !== 'ALL' || typeFilter !== 'ALL') ? 'No hay movimientos con esos filtros' : 'Aún no hay movimientos este mes' }}</strong>
+          <p v-if="hasActiveFilters || activeTab !== 'ALL' || typeFilter !== 'ALL'">Selecciona "Todos" o cambia el tipo/filtros para ver más.</p>
           <p v-else>Registra tu primer ingreso o gasto desde el formulario de arriba.</p>
         </div>
 
