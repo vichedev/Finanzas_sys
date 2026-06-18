@@ -177,7 +177,19 @@ const MONTHS = [
   { value: 7, label: 'Julio' }, { value: 8, label: 'Agosto' }, { value: 9, label: 'Septiembre' },
   { value: 10, label: 'Octubre' }, { value: 11, label: 'Noviembre' }, { value: 12, label: 'Diciembre' }
 ];
-const yearOptions = computed<number[]>(() => { const y = now.getFullYear(); return [y - 5, y - 4, y - 3, y - 2, y - 1, y, y + 1]; });
+// El sistema empezó a registrar en mayo 2026: no se permite consultar meses anteriores.
+const START_YEAR = 2026;
+const START_MONTH = 5; // Mayo
+const yearOptions = computed<number[]>(() => {
+  const max = Math.max(now.getFullYear() + 1, START_YEAR);
+  const years: number[] = [];
+  for (let y = START_YEAR; y <= max; y++) years.push(y);
+  return years;
+});
+// Meses disponibles según el año: en el año de inicio, solo desde mayo.
+const monthOptions = computed(() =>
+  year.value <= START_YEAR ? MONTHS.filter((m) => m.value >= START_MONTH) : MONTHS
+);
 
 const isWithdrawal = computed(() => form.value.type === 'WITHDRAWAL');
 const isTransfer = computed(() => form.value.type === 'TRANSFER');
@@ -250,10 +262,31 @@ function cardSubLabel(c: Card): string | undefined {
   if (c.last4) parts.push(`****${c.last4}`);
   return parts.join(' · ') || undefined;
 }
+// Solo las tarjetas del tipo elegido: débito → DEBIT, crédito → CREDIT.
+const wantedCardType = computed<string | null>(() =>
+  form.value.paymentMethod === 'CREDIT_CARD' ? 'CREDIT'
+    : form.value.paymentMethod === 'DEBIT_CARD' ? 'DEBIT' : null
+);
+const cardsOfType = computed<Card[]>(() => {
+  const want = wantedCardType.value;
+  return want ? cards.value.filter((c) => (c.type || '').toUpperCase() === want) : cards.value;
+});
 const cardOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Sin tarjeta', icon: '∅' },
-  ...cards.value.map((c) => ({ value: c.id, label: c.name, sublabel: cardSubLabel(c), icon: '💳' }))
+  ...cardsOfType.value.map((c) => ({ value: c.id, label: c.name, sublabel: cardSubLabel(c), icon: '💳' }))
 ]);
+const cardEmptyText = computed(() =>
+  wantedCardType.value === 'DEBIT' ? 'No tienes tarjetas de débito. Créalas en la sección Tarjetas.'
+    : wantedCardType.value === 'CREDIT' ? 'No tienes tarjetas de crédito. Créalas en la sección Tarjetas.'
+      : 'No tienes tarjetas. Créalas en la sección Tarjetas.'
+);
+// Si cambia el tipo de tarjeta y la elegida ya no corresponde, se limpia.
+watch(() => form.value.paymentMethod, () => {
+  if (!showCard.value) return;
+  if (form.value.cardId != null && !cardsOfType.value.some((c) => c.id === form.value.cardId)) {
+    form.value.cardId = null;
+  }
+});
 const bankOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Ninguno', icon: '∅' },
   ...activeBanks.value.map((b) => ({ value: b.id, label: b.name, sublabel: bankSubLabel(b), icon: '🏦' }))
@@ -604,7 +637,10 @@ async function load() {
 // ---- Navegación de período (mes/año) ----
 const periodLabel = computed(() => `${MONTHS.find((m) => m.value === month.value)?.label ?? ''} ${year.value}`);
 const isCurrentMonth = computed(() => month.value === now.getMonth() + 1 && year.value === now.getFullYear());
+// No se puede retroceder antes del período de inicio (mayo 2026).
+const atStartPeriod = computed(() => year.value <= START_YEAR && month.value <= START_MONTH);
 function prevMonth() {
+  if (atStartPeriod.value) return;
   if (month.value === 1) { month.value = 12; year.value -= 1; }
   else month.value -= 1;
   load();
@@ -619,6 +655,11 @@ function goCurrentMonth() {
   year.value = now.getFullYear();
   load();
 }
+// Si al cambiar de año el mes queda fuera del rango permitido, se ajusta al mínimo.
+watch(year, () => {
+  if (year.value <= START_YEAR && month.value < START_MONTH) { month.value = START_MONTH; }
+  load();
+});
 
 async function save() {
   if (form.value.description.trim().length < 2) { toast.error('El detalle es obligatorio (mínimo 2 caracteres).'); return; }
@@ -716,15 +757,15 @@ onMounted(load);
     <PageHeader title="Movimientos" subtitle="Ingresos, gastos y transferencias del mes.">
       <template #actions>
         <div class="period-nav" role="group" aria-label="Mes a consultar">
-          <button type="button" class="icon-btn period-arrow" title="Mes anterior" aria-label="Mes anterior" @click="prevMonth">
+          <button type="button" class="icon-btn period-arrow" title="Mes anterior" aria-label="Mes anterior" :disabled="atStartPeriod" @click="prevMonth">
             <ChevronLeft :size="18" :stroke-width="2.4" />
           </button>
           <div class="period-center">
             <CalendarDays :size="15" class="period-icon" />
             <select v-model.number="month" class="period-select" aria-label="Mes" @change="load">
-              <option v-for="m in MONTHS" :key="m.value" :value="m.value">{{ m.label }}</option>
+              <option v-for="m in monthOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
             </select>
-            <select v-model.number="year" class="period-select period-select-year" aria-label="Año" @change="load">
+            <select v-model.number="year" class="period-select period-select-year" aria-label="Año">
               <option v-for="y in yearOptions" :key="y" :value="y">{{ y }}</option>
             </select>
           </div>
@@ -975,13 +1016,13 @@ onMounted(load);
                   </small>
                 </div>
                 <div v-if="showCard" class="field">
-                  <label>Tarjeta</label>
+                  <label>{{ wantedCardType === 'DEBIT' ? 'Tarjeta de débito' : wantedCardType === 'CREDIT' ? 'Tarjeta de crédito' : 'Tarjeta' }}</label>
                   <PickerField
                     v-model="form.cardId"
                     :options="cardOptions"
                     title="Selecciona una tarjeta"
                     placeholder="Elige una tarjeta"
-                    empty-text="No tienes tarjetas. Créalas en la sección Tarjetas."
+                    :empty-text="cardEmptyText"
                   />
                 </div>
               </div>
@@ -1411,6 +1452,8 @@ onMounted(load);
   background: #eff6ff; border-color: transparent; color: var(--color-primary, #2563eb);
 }
 .period-nav .period-arrow:active { background: #dbeafe; }
+.period-nav .period-arrow:disabled { opacity: .3; cursor: not-allowed; }
+.period-nav .period-arrow:disabled:hover { background: transparent; color: var(--color-text-soft, #64748b); }
 /* Botón "Hoy" (escapa del estilo teal global vía .mini) */
 .period-today {
   display: inline-flex; align-items: center; gap: 5px;
