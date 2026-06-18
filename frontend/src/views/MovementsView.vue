@@ -450,6 +450,8 @@ const tableTitle = computed(() => {
 
 // Vuelve a la vista "Todos" (no toca el formulario, solo la tabla).
 function viewAll() { typeFilter.value = 'ALL'; activeTab.value = 'ALL'; resetTableAccountFilters(); }
+// Vista dedicada a los pagos de tarjeta (se registran desde Tarjetas; aquí se ven y se eliminan).
+function viewCardPayments() { typeFilter.value = 'CARD_PAYMENT'; activeTab.value = 'ALL'; resetTableAccountFilters(); }
 
 // ---- Resumen adaptativo: cada tipo muestra SOLO sus tarjetas relevantes ----
 const num = (r: Movement) => Number(r.amount || 0);
@@ -1084,9 +1086,14 @@ onMounted(load);
       <PanelCard>
         <div class="mov-section-head">
           <span class="mov-section-title">{{ typeFilter === 'ALL' ? 'Resumen del mes' : TYPE_FILTER_LABEL[typeFilter] || 'Resumen' }}</span>
-          <button v-if="typeFilter !== 'ALL'" type="button" class="ghost mini view-all" @click="viewAll">
-            ← Ver todos
-          </button>
+          <div class="mov-section-actions">
+            <button v-if="typeFilter !== 'CARD_PAYMENT'" type="button" class="ghost mini" @click="viewCardPayments">
+              💳 Pagos de tarjeta
+            </button>
+            <button v-if="typeFilter !== 'ALL'" type="button" class="ghost mini view-all" @click="viewAll">
+              ← Ver todos
+            </button>
+          </div>
         </div>
         <div class="mov-tabs" :class="{ 'is-static': typeFilter !== 'EXPENSE' }" role="tablist">
           <button
@@ -1196,6 +1203,7 @@ onMounted(load);
           <strong v-else-if="typeFilter !== 'ALL' || activeTab !== 'ALL'">Aún no tienes {{ tableTitle.toLowerCase() }} en {{ periodLabel }}</strong>
           <strong v-else>Aún no hay movimientos en {{ periodLabel }}</strong>
           <p v-if="hasActiveFilters">Cambia o limpia los filtros para ver más.</p>
+          <p v-else-if="typeFilter === 'CARD_PAYMENT'">Los pagos de tarjeta se registran desde <strong>Tarjetas → Pagar tarjeta</strong>. Aquí los verás y podrás eliminarlos (se revierte el saldo). Prueba con otro mes con el selector ◀ ▶.</p>
           <p v-else>Prueba con otro mes (selector ◀ ▶ arriba), registra el primero desde el formulario, o usa "Ver todos".</p>
         </div>
 
@@ -1625,7 +1633,8 @@ onMounted(load);
 /* Tarjetas de solo lectura (resúmenes que no filtran) */
 .mov-tab.is-readonly { cursor: default; opacity: 1; }
 .mov-tab.is-readonly:hover { background: #fff; box-shadow: none; }
-.mov-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.mov-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.mov-section-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .mov-section-title { font-size: 13px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.04em; }
 .view-all { display: inline-flex; align-items: center; gap: 4px; color: var(--color-primary, #2563eb); border-color: #bfdbfe; font-weight: 600; }
 @media (max-width: 720px) {
