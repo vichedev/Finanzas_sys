@@ -28,7 +28,18 @@
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): la vista abre enfocada en Ingresos \\(tab Ingreso + tabla solo ingresos por defecto\\)\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas\\\\frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -First 20; \"FE $LASTEXITCODE\")",
       "PowerShell(cd c:\\\\Users\\\\vicen\\\\Desktop\\\\FINAN\\\\finanzas; git add -A; git commit -q -m \"feat\\(movimientos\\): filtros inteligentes para Gastos \\(categoria + metodo de pago\\) ademas de subtipo/cuenta/fechas; categoria y metodo tambien en ingreso/compra\" ; git push -q origin main; \"DONE $LASTEXITCODE\")",
-      "Bash(python3 -)"
+      "Bash(python3 -)",
+      "Bash(grep -c \"WalletAccount\" node_modules/.prisma/tenant/index.js)",
+      "Bash(grep -c \"WalletAccount\" node_modules/.prisma/tenant/schema.prisma)",
+      "PowerShell(Get-CimInstance Win32_Process -Filter \"name='node.exe'\" | Select-Object ProcessId, @{n='cmd';e={$_.CommandLine}} | Format-List; \"---DOCKER---\"; docker ps --format \"{{.Names}} {{.Image}} {{.Ports}}\" 2>$null)",
+      "Bash(npm run *)",
+      "Bash(echo \"Backend lanzado en background \\(PID $!\\). Esperando arranque...\")",
+      "Bash(grep -qiE \"listening|escuchando|server|ready|:4000|:3000|http\" /tmp/finanzas-backend.log)",
+      "Bash(break)",
+      "Bash(tail -25 /tmp/finanzas-backend.log)",
+      "Bash(git check-ignore *)",
+      "Bash(cat update.sh)",
+      "Bash(grep -niE \"respaldo|backup|\\\\.json\" .gitignore)"
     ]
   }
 }

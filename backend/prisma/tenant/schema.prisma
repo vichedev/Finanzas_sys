@@ -193,6 +193,7 @@ model Account {
   movementsTo    Movement[]  @relation("MovementToAccount")
   debts          Debt[]
   invoices       Invoice[]
+  walletLinks    WalletAccount[]
 
   @@index([userId, type])
 }
@@ -325,9 +326,26 @@ model Wallet {
   updatedAt     DateTime @updatedAt
 
   movements     Movement[]
+  accountLinks  WalletAccount[]
 
   @@unique([userId, name])
   @@index([userId])
+}
+
+// Cuentas de banco que respaldan una billetera digital (relación N–N).
+// Una billetera puede estar ligada a varias cuentas; en cada movimiento con billetera
+// el usuario elige cuál de esas cuentas la respalda.
+model WalletAccount {
+  id        Int      @id @default(autoincrement())
+  walletId  Int
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  accountId Int
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([walletId, accountId])
+  @@index([walletId])
+  @@index([accountId])
 }
 
 model Debt {

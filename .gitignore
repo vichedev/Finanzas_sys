@@ -50,6 +50,7 @@ pgadmin_data/
 backups/
 *.sql.gz
 *.dump
+respaldo-finanzas-*.json
 
 # Coverage
 coverage/

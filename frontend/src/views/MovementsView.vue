@@ -21,7 +21,7 @@ type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'DEPOSIT' | 'DEBIT_CARD' | 'CRED
 
 interface Account { id: number; name: string; type?: string; holder?: string | null; accountKind?: string | null; bankId?: number | null; bankName?: string | null; accountNumber?: string | null }
 interface Card { id: number; name: string; type?: string | null; bankName?: string | null; last4?: string | null }
-interface Wallet { id: number; name: string; provider?: string | null; isActive?: boolean }
+interface Wallet { id: number; name: string; provider?: string | null; isActive?: boolean; accountIds?: number[] }
 interface Category { id: number; name: string; color?: string | null; icon?: string | null }
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
 interface Bank { id: number; name: string; accountNumber?: string | null; accountKind?: BankAccountKind | null; isActive?: boolean }
@@ -262,6 +262,23 @@ const walletOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Sin billetera', icon: '∅' },
   ...wallets.value.filter((w) => w.isActive !== false).map((w) => ({ value: w.id, label: w.name, sublabel: w.provider || undefined, icon: '👛' }))
 ]);
+// Billetera seleccionada y sus cuentas de banco de respaldo (configuradas en Ajustes).
+const selectedWallet = computed(() => wallets.value.find((w) => w.id === form.value.walletId) || null);
+const walletBackingAccounts = computed<Account[]>(() => {
+  const ids = selectedWallet.value?.accountIds ?? [];
+  return accounts.value.filter((a) => ids.includes(a.id));
+});
+const showWalletAccount = computed(() => showWallet.value && form.value.walletId != null);
+const walletAccountOptions = computed<PickOpt[]>(() => [
+  { value: null, label: 'Sin cuenta de respaldo', icon: '∅' },
+  ...walletBackingAccounts.value.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }))
+]);
+// Si cambia la billetera, descarta la cuenta de respaldo que ya no pertenezca a ella.
+watch(() => form.value.walletId, () => {
+  if (!showWallet.value) return;
+  const ids = selectedWallet.value?.accountIds ?? [];
+  if (form.value.accountId != null && !ids.includes(form.value.accountId)) form.value.accountId = null;
+});
 
 // Sección "dinero": sólo se muestra si algún campo de pago/cuenta aplica.
 const showMoneySection = computed(() =>
@@ -620,7 +637,7 @@ async function save() {
       expenseKind: form.value.type === 'EXPENSE' ? form.value.expenseKind : null,
       amount: Number(form.value.amount), movementDate: form.value.movementDate,
       description: form.value.description.trim(), paymentMethod: effectivePaymentMethod,
-      accountId: isTransfer.value ? (form.value.accountId || null) : ((showAccount.value || showOptionalAccount.value) ? form.value.accountId || null : null),
+      accountId: isTransfer.value ? (form.value.accountId || null) : ((showAccount.value || showOptionalAccount.value || showWalletAccount.value) ? form.value.accountId || null : null),
       toAccountId: isTransfer.value ? (form.value.toAccountId || null) : null,
       cardId: !isTransfer.value && showCard.value ? form.value.cardId || null : null,
       walletId: !isTransfer.value && showWallet.value ? form.value.walletId || null : null,
@@ -940,6 +957,22 @@ onMounted(load);
                     empty-text="No tienes billeteras. Agrégalas en Configuración → Billeteras digitales."
                   />
                   <small class="hint">Payphone, PayPal, Takenos, etc.</small>
+                </div>
+                <div v-if="showWalletAccount" class="field">
+                  <label>🏦 Cuenta de banco que la respalda</label>
+                  <PickerField
+                    v-model="form.accountId"
+                    :options="walletAccountOptions"
+                    title="Cuenta de respaldo"
+                    placeholder="Sin cuenta de respaldo"
+                    :empty-text="`${selectedWallet?.name || 'Esta billetera'} no tiene cuentas ligadas. Agrégalas en Configuración → Billeteras digitales.`"
+                  />
+                  <small v-if="walletBackingAccounts.length" class="hint">
+                    {{ form.type === 'INCOME' ? 'Suma' : 'Resta' }} el saldo de esta cuenta (la billetera se respalda en ella).
+                  </small>
+                  <small v-else class="hint warn-hint">
+                    Liga cuentas a «{{ selectedWallet?.name }}» en <strong>Configuración → Billeteras digitales</strong> para elegir aquí cuál la respalda.
+                  </small>
                 </div>
                 <div v-if="showCard" class="field">
                   <label>Tarjeta</label>

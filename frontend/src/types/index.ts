@@ -52,6 +52,7 @@ export interface Wallet {
   identifier?: string | null;
   isActive: boolean;
   notes?: string | null;
+  accountIds?: number[];          // cuentas de banco que respaldan la billetera
 }
 
 export interface WalletPayload {
@@ -60,6 +61,7 @@ export interface WalletPayload {
   identifier?: string | null;
   isActive?: boolean;
   notes?: string | null;
+  accountIds?: number[];
 }
 
 export interface Category {

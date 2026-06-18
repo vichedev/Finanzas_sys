@@ -15,7 +15,8 @@ import RolesPanel from './RolesPanel.vue';
 type Category = { id: number; name: string; type: 'INCOME' | 'EXPENSE'; color?: string | null; icon?: string | null };
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
 type Bank = { id: number; name: string; accountNumber?: string | null; accountKind?: BankAccountKind | null; isActive: boolean; notes?: string | null };
-type Wallet = { id: number; name: string; provider?: string | null; identifier?: string | null; isActive: boolean; notes?: string | null };
+type Wallet = { id: number; name: string; provider?: string | null; identifier?: string | null; isActive: boolean; notes?: string | null; accountIds?: number[] };
+type WalletAccountOption = { id: number; name: string; bankName?: string | null; accountNumber?: string | null; isActive?: boolean };
 const BANK_KIND_LABEL: Record<BankAccountKind, string> = { SAVINGS: 'Ahorros', CHECKING: 'Corriente' };
 type FilterType = 'ALL' | 'INCOME' | 'EXPENSE';
 type Profile = { id?: number; name?: string; email?: string; currency?: string; role?: string; createdAt?: string };
@@ -321,10 +322,18 @@ const editingBankId = ref<number | null>(null);
 const bankMsg = ref(''); const bankErr = ref('');
 
 const wallets = ref<Wallet[]>([]);
-const emptyWalletForm = () => ({ name: '', provider: '', identifier: '', isActive: true, notes: '' });
+const walletAccounts = ref<WalletAccountOption[]>([]); // cuentas disponibles para ligar
+const emptyWalletForm = () => ({ name: '', provider: '', identifier: '', isActive: true, notes: '', accountIds: [] as number[] });
 const newWallet = ref(emptyWalletForm());
 const editingWalletId = ref<number | null>(null);
 const walletMsg = ref(''); const walletErr = ref('');
+function toggleWalletAccount(id: number) {
+  const arr = newWallet.value.accountIds;
+  const i = arr.indexOf(id);
+  if (i >= 0) arr.splice(i, 1); else arr.push(id);
+}
+const walletAccountLabel = (a: WalletAccountOption) =>
+  [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ');
 
 // --- Super Admin: tenants ---
 type TenantRow = {
@@ -699,8 +708,12 @@ async function removeBank(b: Bank, force = false) {
 
 // ---- Billeteras digitales ----
 async function loadWallets() {
-  const { data } = await http.get<Wallet[]>('/wallets');
+  const [{ data }, accts] = await Promise.all([
+    http.get<Wallet[]>('/wallets'),
+    entities.ensureAccounts(true)
+  ]);
   wallets.value = data;
+  walletAccounts.value = (accts as WalletAccountOption[]);
 }
 
 async function addWallet() {
@@ -712,7 +725,8 @@ async function addWallet() {
       provider: newWallet.value.provider.trim() || null,
       identifier: newWallet.value.identifier.trim() || null,
       isActive: newWallet.value.isActive,
-      notes: newWallet.value.notes.trim() || null
+      notes: newWallet.value.notes.trim() || null,
+      accountIds: [...newWallet.value.accountIds]
     };
     if (editingWalletId.value !== null) {
       await http.put(`/wallets/${editingWalletId.value}`, payload);
@@ -738,7 +752,8 @@ function startEditWallet(w: Wallet) {
     provider: w.provider || '',
     identifier: w.identifier || '',
     isActive: w.isActive,
-    notes: w.notes || ''
+    notes: w.notes || '',
+    accountIds: [...(w.accountIds ?? [])]
   };
 }
 
@@ -1399,6 +1414,32 @@ onMounted(async () => {
           <textarea id="wallet-notes" v-model="newWallet.notes" rows="2" maxlength="300" placeholder="Detalles adicionales (opcional)"></textarea>
         </div>
 
+        <div class="field">
+          <label>Cuentas de banco que la respaldan</label>
+          <p v-if="!walletAccounts.length" class="hint">
+            No tienes cuentas creadas. Agrégalas en la sección <strong>Cuentas</strong> para poder ligarlas.
+          </p>
+          <div v-else class="wallet-acc-grid">
+            <label
+              v-for="a in walletAccounts"
+              :key="a.id"
+              class="wallet-acc-chip"
+              :class="{ on: newWallet.accountIds.includes(a.id) }"
+            >
+              <input
+                type="checkbox"
+                :checked="newWallet.accountIds.includes(a.id)"
+                @change="toggleWalletAccount(a.id)"
+              />
+              <span>{{ walletAccountLabel(a) }}</span>
+            </label>
+          </div>
+          <small class="hint">
+            Marca una o varias cuentas. Al registrar un movimiento con esta billetera podrás elegir cuál la respalda
+            y su saldo se ajustará.
+          </small>
+        </div>
+
         <div class="form-footer">
           <div class="field field-narrow">
             <label>Estado</label>
@@ -1442,7 +1483,15 @@ onMounted(async () => {
         </thead>
         <tbody>
           <tr v-for="w in wallets" :key="w.id">
-            <td>👛 <strong>{{ w.name }}</strong></td>
+            <td>
+              👛 <strong>{{ w.name }}</strong>
+              <div v-if="(w.accountIds?.length ?? 0)" class="wallet-acc-tags">
+                <span v-for="id in w.accountIds" :key="id" class="cat-pill" style="background:#eef2ff;color:#4338ca">
+                  🏦 {{ walletAccounts.find((a) => a.id === id)?.name || 'Cuenta' }}
+                </span>
+              </div>
+              <small v-else class="hint">Sin cuenta de respaldo</small>
+            </td>
             <td class="center">
               <span v-if="w.provider" class="cat-pill">{{ w.provider }}</span>
               <small v-else class="hint">—</small>
@@ -2614,4 +2663,17 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .financia-empty { text-align: center; color: #9ca3af; padding: 28px 16px; border: 1px dashed #e2e8f0; border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .financia-empty p { margin: 0; font-size: 13px; max-width: 320px; }
 @media (max-width: 880px) { .financia-grid { grid-template-columns: 1fr; } }
+
+/* Cuentas de respaldo de una billetera (multi-selección por chips) */
+.wallet-acc-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 4px; }
+.wallet-acc-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 12px; border: 1.5px solid #e2e8f0; border-radius: 999px;
+  background: #fff; color: #475569; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, color .12s ease;
+}
+.wallet-acc-chip:hover { border-color: #c7d2fe; background: #f8fafc; }
+.wallet-acc-chip.on { border-color: var(--color-primary, #4338ca); background: #eef2ff; color: #3730a3; }
+.wallet-acc-chip input { accent-color: var(--color-primary, #4338ca); width: 15px; height: 15px; cursor: pointer; }
+.wallet-acc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 </style>

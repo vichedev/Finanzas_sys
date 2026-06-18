@@ -14,7 +14,7 @@ backupRouter.get('/export', async (req, res) => {
   const userId = req.tenantUserId!;
   const p = req.tenantPrisma!;
 
-  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig] =
+  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts] =
     await Promise.all([
       p.bank.findMany({ where: { userId } }),
       p.account.findMany({ where: { userId } }),
@@ -28,7 +28,9 @@ backupRouter.get('/export', async (req, res) => {
       p.attachment.findMany({ where: { userId } }),
       p.budget.findMany({ where: { userId } }),
       p.branding.findUnique({ where: { id: 1 } }).catch(() => null),
-      p.aiConfig.findUnique({ where: { id: 1 } }).catch(() => null)
+      p.aiConfig.findUnique({ where: { id: 1 } }).catch(() => null),
+      // Enlaces billetera–cuenta (solo de billeteras del usuario).
+      p.walletAccount.findMany({ where: { wallet: { userId } }, select: { walletId: true, accountId: true } })
     ]);
 
   const data = {
@@ -41,7 +43,7 @@ backupRouter.get('/export', async (req, res) => {
       movements: movements.length, invoices: invoices.length, attachments: attachments.length,
       budgets: budgets.length
     },
-    banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, budgets,
+    banks, accounts, cards, wallets, walletAccounts, categories, debts, recurrings, movements, invoices, budgets,
     attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') })),
     // Identidad de la empresa (logo en base64) — singleton por empresa.
     branding: branding ? {
@@ -103,6 +105,14 @@ backupRouter.post('/import', async (req, res) => {
           accountNumber: a.accountNumber ?? null, initialBalance: a.initialBalance ?? 0, currentBalance: a.currentBalance ?? 0, isActive: a.isActive ?? true
         } });
         mAccount[a.id] = created.id; bump('accounts');
+      }
+      // Enlaces billetera–cuenta (requieren billeteras y cuentas ya remapeadas).
+      for (const link of data.walletAccounts || []) {
+        const walletId = remap(mWallet, link.walletId);
+        const accountId = remap(mAccount, link.accountId);
+        if (walletId == null || accountId == null) continue;
+        const ex = await tx.walletAccount.findFirst({ where: { walletId, accountId }, select: { id: true } });
+        if (!ex) { await tx.walletAccount.create({ data: { walletId, accountId } }); bump('walletAccounts'); }
       }
       // Tarjetas
       for (const c of data.cards || []) {
