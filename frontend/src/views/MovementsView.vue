@@ -708,7 +708,17 @@ async function save() {
   finally { saving.value = false; }
 }
 
+// Tipos que el formulario de "Nuevo movimiento" sabe editar. Los pagos de tarjeta
+// (y ajustes) se generan desde otra pantalla y NO deben editarse aquí: el formulario
+// perdería el vínculo con la tarjeta y descuadraría los saldos. Se corrigen borrándolos.
+const FORM_TYPES: MovementType[] = ['INCOME', 'EXPENSE', 'TRANSFER', 'WITHDRAWAL', 'PURCHASE'];
+const canEditInForm = (item: Movement) => FORM_TYPES.includes(item.type);
+
 function startEdit(item: Movement) {
+  if (!canEditInForm(item)) {
+    toast.error('Un pago de tarjeta no se edita aquí. Para corregirlo, elimínalo (se revierte el saldo) y vuelve a registrarlo desde Tarjetas.');
+    return;
+  }
   editingId.value = item.id;
   form.value = {
     type: item.type,
@@ -740,7 +750,10 @@ function cancelEdit() {
 }
 
 async function removeRow(item: Movement) {
-  if (!confirm(`Eliminar el movimiento "${item.description}" (${formatMoney(item.amount)})? Se revertirá el saldo en la cuenta/tarjeta afectada.`)) return;
+  const msg = item.type === 'CARD_PAYMENT'
+    ? `¿Eliminar este pago de tarjeta (${formatMoney(item.amount)})? Se devolverá el dinero a la cuenta de origen y se restaurará el saldo usado de la tarjeta.`
+    : `Eliminar el movimiento "${item.description}" (${formatMoney(item.amount)})? Se revertirá el saldo en la cuenta/tarjeta afectada.`;
+  if (!confirm(msg)) return;
   try {
     await http.delete(`/movements/${item.id}`);
     toast.success('Movimiento eliminado y saldo revertido.');
@@ -1229,10 +1242,16 @@ onMounted(load);
                 <td class="col-notes"><span v-if="item.notes" :title="item.notes" class="notes-cell">{{ item.notes }}</span><small v-else class="hint">—</small></td>
                 <td class="center col-acts">
                   <div class="row-actions" style="justify-content: center">
-                    <button type="button" class="ghost mini" :disabled="editingId === item.id" @click.stop="startEdit(item)">
+                    <button
+                      type="button"
+                      class="ghost mini"
+                      :disabled="editingId === item.id || !canEditInForm(item)"
+                      :title="canEditInForm(item) ? 'Editar' : 'Para corregir un pago de tarjeta, elimínalo y vuelve a registrarlo'"
+                      @click.stop="startEdit(item)"
+                    >
                       <Pencil :size="14" />
                     </button>
-                    <button type="button" class="ghost mini danger" @click.stop="removeRow(item)">
+                    <button type="button" class="ghost mini danger" title="Eliminar (revierte el saldo)" @click.stop="removeRow(item)">
                       <Trash2 :size="14" />
                     </button>
                   </div>
@@ -1304,7 +1323,10 @@ onMounted(load);
       </div>
       <template #footer>
         <AppButton variant="ghost" @click="detailOpen = false"><template #icon><X :size="16" /></template>Cerrar</AppButton>
-        <AppButton @click="editFromDetail"><template #icon><Pencil :size="16" /></template>Editar</AppButton>
+        <small v-if="detailItem && !canEditInForm(detailItem)" class="hint" style="align-self:center">
+          Para corregir un pago de tarjeta, ciérralo y elimínalo desde la tabla (se revierte el saldo).
+        </small>
+        <AppButton v-if="detailItem && canEditInForm(detailItem)" @click="editFromDetail"><template #icon><Pencil :size="16" /></template>Editar</AppButton>
       </template>
     </AppModal>
 

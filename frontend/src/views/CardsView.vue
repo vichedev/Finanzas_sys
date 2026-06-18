@@ -140,13 +140,14 @@ async function removeRow(item: Card, force = false) {
 // ---- Pago de tarjeta de crédito ----
 const payOpen = ref(false);
 const payCardRef = ref<Card | null>(null);
-const payForm = ref<{ accountId: number | null; amount: number | null; notes: string }>({ accountId: null, amount: null, notes: '' });
+const payForm = ref<{ accountId: number | null; amount: number | null; payDate: string; notes: string }>({ accountId: null, amount: null, payDate: '', notes: '' });
+const todayYmd = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const payErr = ref('');
 const paying = ref(false);
 
 function openPay(card: Card) {
   payCardRef.value = card;
-  payForm.value = { accountId: activeAccounts.value[0]?.id ?? null, amount: toNumber(card.currentBalance) || null, notes: '' };
+  payForm.value = { accountId: activeAccounts.value[0]?.id ?? null, amount: toNumber(card.currentBalance) || null, payDate: todayYmd(), notes: '' };
   payErr.value = '';
   payOpen.value = true;
 }
@@ -156,11 +157,13 @@ async function submitPay() {
   if (!payCardRef.value) return;
   if (!payForm.value.accountId) { payErr.value = 'Selecciona la cuenta de origen.'; return; }
   if (!payForm.value.amount || payForm.value.amount <= 0) { payErr.value = 'Ingresa un monto válido.'; return; }
+  if (!payForm.value.payDate) { payErr.value = 'Selecciona la fecha del pago.'; return; }
   paying.value = true;
   try {
     await http.post(`/cards/${payCardRef.value.id}/pay`, {
       accountId: payForm.value.accountId,
       amount: payForm.value.amount,
+      movementDate: payForm.value.payDate,
       notes: payForm.value.notes.trim() || null
     });
     payOpen.value = false;
@@ -363,9 +366,15 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
           <input id="pay-amt" v-model.number="payForm.amount" type="number" step="0.01" min="0" placeholder="0.00" />
         </div>
         <div class="field">
+          <label for="pay-date">Fecha del pago <span class="required-mark">*</span></label>
+          <input id="pay-date" v-model="payForm.payDate" type="date" min="2026-05-01" :max="todayYmd()" />
+          <small class="hint">Con esta fecha aparecerá el pago en Movimientos.</small>
+        </div>
+        <div class="field">
           <label for="pay-notes">Notas</label>
           <input id="pay-notes" v-model="payForm.notes" type="text" maxlength="500" placeholder="Opcional" />
         </div>
+        <p class="hint" style="margin:0">¿Te equivocaste? Puedes eliminar este pago luego en <strong>Movimientos</strong> y el saldo se revertirá automáticamente.</p>
         <p v-if="payErr" class="error">{{ payErr }}</p>
       </div>
       <template #footer>

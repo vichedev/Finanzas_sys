@@ -100,17 +100,16 @@ const error = ref('');
 
 const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 
+// El sistema empezó en mayo 2026: el resumen lista desde ese mes hasta el actual
+// (más reciente primero). Al avanzar el calendario, el mes nuevo aparece solo.
+const START_YEAR = 2026, START_MONTH = 5;
 const periodOptions = computed(() => {
   const opts: Array<{ value: string; label: string; year: number; month: number }> = [];
   const today = new Date();
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(Date.UTC(today.getFullYear(), today.getMonth() - i, 1));
-    opts.push({
-      value: `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}`,
-      label: `${MONTH_NAMES[d.getUTCMonth()]} ${d.getUTCFullYear()}`,
-      year: d.getUTCFullYear(),
-      month: d.getUTCMonth() + 1
-    });
+  let y = today.getFullYear(), m = today.getMonth() + 1;
+  while (y > START_YEAR || (y === START_YEAR && m >= START_MONTH)) {
+    opts.push({ value: `${y}-${m}`, label: `${MONTH_NAMES[m - 1]} ${y}`, year: y, month: m });
+    m--; if (m < 1) { m = 12; y--; }
   }
   return opts;
 });

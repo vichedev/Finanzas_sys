@@ -39,7 +39,8 @@
       "Bash(tail -25 /tmp/finanzas-backend.log)",
       "Bash(git check-ignore *)",
       "Bash(cat update.sh)",
-      "Bash(grep -niE \"respaldo|backup|\\\\.json\" .gitignore)"
+      "Bash(grep -niE \"respaldo|backup|\\\\.json\" .gitignore)",
+      "Bash(grep -rn \"{ label:.*year\\\\|periodLabel\\\\|monthYear\\\\|value:.*ym\\\\|YYYY-MM\\\\|slice\\(0, 7\\)\\\\|months.push\\\\|period\" frontend/src/views/DashboardView.vue)"
     ]
   }
 }
