@@ -18,8 +18,8 @@ interface Card {
   id: number | string;
   name: string;
   type: 'CREDIT' | 'DEBIT';
-  entityName?: string | null;
-  entityKind?: 'PERSONAL' | 'BUSINESS';
+  entityId?: number | null;
+  entity?: { id: number; name: string; kind: 'PERSONAL' | 'BUSINESS' } | null;
   bankId?: number | null;
   bankName?: string | null;
   last4?: string | null;
@@ -32,8 +32,7 @@ interface Card {
 interface CardForm {
   name: string;
   type: 'CREDIT' | 'DEBIT';
-  entityName: string;
-  entityKind: 'PERSONAL' | 'BUSINESS';
+  entityId: number | null;
   bankId: number | null;
   last4: string;
   creditLimit: number | null;
@@ -43,10 +42,11 @@ interface CardForm {
 }
 
 const emptyForm = (): CardForm => ({
-  name: '', type: 'CREDIT', entityName: '', entityKind: 'PERSONAL', bankId: null, last4: '',
+  name: '', type: 'CREDIT', entityId: null, bankId: null, last4: '',
   creditLimit: null, cutoffDay: null, paymentDueDay: null, currentBalance: 0
 });
-const entityNameOptions = computed(() => [...new Set(rows.value.map((c) => c.entityName?.trim()).filter(Boolean) as string[])]);
+const entityList = ref<{ id: number; name: string; kind: 'PERSONAL' | 'BUSINESS' }[]>([]);
+async function loadEntities() { entityList.value = (await http.get<typeof entityList.value>('/entities')).data; }
 
 const rows = ref<Card[]>([]);
 const form = ref<CardForm>(emptyForm());
@@ -74,8 +74,7 @@ async function save() {
   if (form.value.last4 && !/^\d{1,4}$/.test(form.value.last4)) { toast.error('Los últimos 4 dígitos deben ser numéricos.'); return; }
   const payload: Record<string, unknown> = {
     name: form.value.name.trim(), type: form.value.type,
-    entityName: form.value.entityName.trim() || null,
-    entityKind: form.value.entityKind,
+    entityId: form.value.entityId || null,
     bankId: form.value.bankId ?? null,
     last4: form.value.last4 || null,
     currentBalance: toNumber(form.value.currentBalance)
@@ -111,8 +110,7 @@ function startEdit(item: Card) {
   form.value = {
     name: item.name,
     type: item.type,
-    entityName: item.entityName ?? '',
-    entityKind: item.entityKind ?? 'PERSONAL',
+    entityId: item.entityId ?? null,
     bankId: item.bankId ?? null,
     last4: item.last4 || '',
     creditLimit: item.creditLimit !== null && item.creditLimit !== undefined ? toNumber(item.creditLimit) : null,
@@ -189,7 +187,7 @@ async function submitPay() {
 }
 
 // Fuerza catálogos frescos al entrar (sin recargar la página).
-onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensureAccounts(true)]));
+onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true), entities.ensureAccounts(true)]));
 </script>
 
 <template>
@@ -229,19 +227,11 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
 
             <div class="field">
               <label for="card-entity">Razón social / Entidad</label>
-              <input id="card-entity" v-model="form.entityName" maxlength="120" list="card-entity-names" placeholder="ej. Personal, GROUPMAAT S.A.S" />
-              <datalist id="card-entity-names">
-                <option v-for="n in entityNameOptions" :key="n" :value="n" />
-              </datalist>
-              <small class="hint">Para el consolidado en "Razones sociales".</small>
-            </div>
-
-            <div class="field">
-              <label for="card-entkind">Naturaleza</label>
-              <select id="card-entkind" v-model="form.entityKind">
-                <option value="PERSONAL">Personal</option>
-                <option value="BUSINESS">Empresarial</option>
+              <select id="card-entity" v-model.number="form.entityId">
+                <option :value="null">— Sin asignar —</option>
+                <option v-for="e in entityList" :key="e.id" :value="e.id">{{ e.name }} ({{ e.kind === 'BUSINESS' ? 'Empresa' : 'Personal' }})</option>
               </select>
+              <small v-if="!entityList.length" class="hint warn-hint">No hay razones sociales. Créalas en <strong>Razones sociales</strong>.</small>
             </div>
 
             <div class="field">
@@ -315,9 +305,9 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
             <div class="rcard-row2">
               <div class="rcard-holder">
                 <small>Titular / Razón social</small>
-                <strong>{{ item.entityName || item.name }}</strong>
+                <strong>{{ item.entity?.name || item.name }}</strong>
               </div>
-              <span v-if="item.entityKind" class="rcard-tag">{{ item.entityKind === 'BUSINESS' ? 'Empresarial' : 'Personal' }}</span>
+              <span v-if="item.entity" class="rcard-tag">{{ item.entity.kind === 'BUSINESS' ? 'Empresarial' : 'Personal' }}</span>
             </div>
 
             <div class="rcard-foot">

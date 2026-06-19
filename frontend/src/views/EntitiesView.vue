@@ -1,17 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { http } from '../api/http';
-import { Scale, Landmark, CreditCard, TrendingUp, TrendingDown, Building2, User } from 'lucide-vue-next';
+import { Scale, Landmark, CreditCard, TrendingUp, TrendingDown, Building2, User, Plus, Pencil, Trash2, X } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
 import PanelCard from '../components/PanelCard.vue';
+import AppModal from '../components/AppModal.vue';
 import { useFormat } from '../composables/useFormat';
+import { useToast } from '../composables/useToast';
 import type { EntityKind } from '../types';
 
 const { formatMoney } = useFormat();
+const toast = useToast();
 
-interface Account { id: number; name: string; type: string; currentBalance: number | string; entityName?: string | null; entityKind?: EntityKind; bankName?: string | null; isActive?: boolean }
-interface Card { id: number; name: string; type: 'CREDIT' | 'DEBIT'; currentBalance: number | string; creditLimit?: number | string | null; entityName?: string | null; entityKind?: EntityKind; bankName?: string | null; isActive?: boolean }
+interface Entity { id: number; name: string; kind: EntityKind; taxId?: string | null; notes?: string | null; _count?: { accounts: number; cards: number } }
+interface Account { id: number; name: string; type: string; currentBalance: number | string; entityId?: number | null; bankName?: string | null }
+interface Card { id: number; name: string; type: 'CREDIT' | 'DEBIT'; currentBalance: number | string; creditLimit?: number | string | null; entityId?: number | null; bankName?: string | null }
 
+const entities = ref<Entity[]>([]);
 const accounts = ref<Account[]>([]);
 const cards = ref<Card[]>([]);
 const loading = ref(true);
@@ -19,75 +24,132 @@ const loading = ref(true);
 async function load() {
   loading.value = true;
   try {
-    const [a, c] = await Promise.all([http.get<Account[]>('/accounts'), http.get<Card[]>('/cards')]);
-    accounts.value = a.data; cards.value = c.data;
+    const [e, a, c] = await Promise.all([
+      http.get<Entity[]>('/entities'),
+      http.get<Account[]>('/accounts'),
+      http.get<Card[]>('/cards')
+    ]);
+    entities.value = e.data; accounts.value = a.data; cards.value = c.data;
   } finally { loading.value = false; }
 }
 onMounted(load);
 
 const num = (v: unknown) => Number(v ?? 0);
-const UNASSIGNED = 'Sin razón social';
 
 interface Group {
-  name: string;
-  kind: EntityKind;
+  entity: Entity;
   accounts: Account[];
   cards: Card[];
-  liquid: number;      // dinero disponible (cuentas + tarjetas de débito)
-  cardDebt: number;    // deuda en tarjetas de crédito (saldo usado)
-  net: number;         // patrimonio neto = liquid - cardDebt
+  liquid: number;
+  cardDebt: number;
+  net: number;
 }
 
-// Agrupa cuentas y tarjetas por razón social.
+// Análisis: solo entidades que tienen cuentas/tarjetas asignadas.
 const groups = computed<Group[]>(() => {
-  const map = new Map<string, Group>();
-  const ensure = (name: string, kind: EntityKind): Group => {
-    const key = name || UNASSIGNED;
-    let g = map.get(key);
-    if (!g) { g = { name: key, kind, accounts: [], cards: [], liquid: 0, cardDebt: 0, net: 0 }; map.set(key, g); }
-    return g;
-  };
-  for (const a of accounts.value) {
-    const g = ensure(a.entityName?.trim() || UNASSIGNED, a.entityKind || 'PERSONAL');
-    g.accounts.push(a);
-    g.liquid += num(a.currentBalance);
-  }
-  for (const c of cards.value) {
-    const g = ensure(c.entityName?.trim() || UNASSIGNED, c.entityKind || 'PERSONAL');
-    g.cards.push(c);
-    if (c.type === 'CREDIT') g.cardDebt += Math.max(0, num(c.currentBalance));
-    else g.liquid += num(c.currentBalance);
-  }
-  const list = [...map.values()];
-  for (const g of list) g.net = g.liquid - g.cardDebt;
-  // Orden: por patrimonio neto desc, dejando "Sin razón social" al final.
-  return list.sort((x, y) => (x.name === UNASSIGNED ? 1 : y.name === UNASSIGNED ? -1 : y.net - x.net));
+  const list: Group[] = entities.value.map((entity) => {
+    const accs = accounts.value.filter((a) => a.entityId === entity.id);
+    const crds = cards.value.filter((c) => c.entityId === entity.id);
+    let liquid = 0, cardDebt = 0;
+    for (const a of accs) liquid += num(a.currentBalance);
+    for (const c of crds) {
+      if (c.type === 'CREDIT') cardDebt += Math.max(0, num(c.currentBalance));
+      else liquid += num(c.currentBalance);
+    }
+    return { entity, accounts: accs, cards: crds, liquid, cardDebt, net: liquid - cardDebt };
+  }).filter((g) => g.accounts.length || g.cards.length);
+  return list.sort((a, b) => b.net - a.net);
 });
 
-const personalGroups = computed(() => groups.value.filter((g) => g.kind === 'PERSONAL'));
-const businessGroups = computed(() => groups.value.filter((g) => g.kind === 'BUSINESS'));
+const personalGroups = computed(() => groups.value.filter((g) => g.entity.kind === 'PERSONAL'));
+const businessGroups = computed(() => groups.value.filter((g) => g.entity.kind === 'BUSINESS'));
 
 const totals = computed(() => {
   const sum = (arr: Group[]) => arr.reduce((a, g) => ({ liquid: a.liquid + g.liquid, cardDebt: a.cardDebt + g.cardDebt, net: a.net + g.net }), { liquid: 0, cardDebt: 0, net: 0 });
   return { all: sum(groups.value), personal: sum(personalGroups.value), business: sum(businessGroups.value) };
 });
-
-// Análisis: entidad con más patrimonio y su participación.
-const topEntity = computed(() => groups.value.filter((g) => g.name !== UNASSIGNED).slice().sort((a, b) => b.net - a.net)[0] || null);
+const topEntity = computed(() => groups.value[0] || null);
 const netTotalAbs = computed(() => groups.value.reduce((a, g) => a + Math.abs(g.net), 0) || 1);
 const sharePct = (g: Group) => Math.round((Math.abs(g.net) / netTotalAbs.value) * 100);
-const hasUnassigned = computed(() => groups.value.some((g) => g.name === UNASSIGNED));
+// Cuentas/tarjetas sin razón social (para avisar).
+const unassignedCount = computed(() =>
+  accounts.value.filter((a) => !a.entityId).length + cards.value.filter((c) => !c.entityId).length
+);
+
+// ---- Gestión del catálogo (tabla + modal) ----
+const modalOpen = ref(false);
+const editingId = ref<number | null>(null);
+const form = ref<{ name: string; kind: EntityKind; taxId: string; notes: string }>({ name: '', kind: 'PERSONAL', taxId: '', notes: '' });
+const saving = ref(false);
+
+function openNew() { editingId.value = null; form.value = { name: '', kind: 'PERSONAL', taxId: '', notes: '' }; modalOpen.value = true; }
+function openEdit(e: Entity) { editingId.value = e.id; form.value = { name: e.name, kind: e.kind, taxId: e.taxId || '', notes: e.notes || '' }; modalOpen.value = true; }
+
+async function save() {
+  if (form.value.name.trim().length < 2) { toast.error('El nombre es obligatorio (mínimo 2 caracteres).'); return; }
+  saving.value = true;
+  try {
+    const payload = { name: form.value.name.trim(), kind: form.value.kind, taxId: form.value.taxId.trim() || null, notes: form.value.notes.trim() || null };
+    if (editingId.value !== null) { await http.put(`/entities/${editingId.value}`, payload); toast.success('Razón social actualizada.'); }
+    else { await http.post('/entities', payload); toast.success('Razón social creada.'); }
+    modalOpen.value = false;
+    await load();
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    toast.error(err?.response?.data?.message ?? 'No se pudo guardar.');
+  } finally { saving.value = false; }
+}
+
+async function remove(e: Entity) {
+  const used = (e._count?.accounts ?? 0) + (e._count?.cards ?? 0);
+  if (!confirm(`¿Eliminar la razón social "${e.name}"?${used ? ` ${used} cuenta(s)/tarjeta(s) quedarán sin asignar.` : ''}`)) return;
+  try { await http.delete(`/entities/${e.id}`); toast.success('Razón social eliminada.'); await load(); }
+  catch { toast.error('No se pudo eliminar.'); }
+}
 </script>
 
 <template>
   <section class="dashboard">
-    <PageHeader title="Razones sociales" subtitle="Consolidado de saldos por entidad: personal y empresarial." />
+    <PageHeader title="Razones sociales" subtitle="Define tus entidades y consolida los saldos de cada una.">
+      <template #actions>
+        <button type="button" class="ent-new" @click="openNew"><Plus :size="16" /> Nueva razón social</button>
+      </template>
+    </PageHeader>
 
     <p v-if="loading" class="dash-loading">Cargando…</p>
 
     <template v-else>
-      <!-- Resumen global -->
-      <div class="ent-kpis">
+      <!-- Catálogo gestionable -->
+      <PanelCard title="Catálogo de razones sociales" :hint="`${entities.length} definida${entities.length === 1 ? '' : 's'}`">
+        <div v-if="!entities.length" class="empty-state">
+          <div class="empty-state-illustration"><Scale :size="36" /></div>
+          <strong>Aún no defines razones sociales</strong>
+          <p>Crea una (Personal o Empresarial) y luego asígnala a tus cuentas y tarjetas.</p>
+        </div>
+        <table v-else class="recent-table">
+          <thead>
+            <tr><th>Razón social</th><th class="center">Naturaleza</th><th>RUC / Cédula</th><th class="center">Cuentas</th><th class="center">Tarjetas</th><th class="center">Acciones</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in entities" :key="e.id">
+              <td><strong>{{ e.name }}</strong><div v-if="e.notes"><small class="hint">{{ e.notes }}</small></div></td>
+              <td class="center"><span class="ent-pill" :class="e.kind === 'BUSINESS' ? 'is-biz' : 'is-per'">{{ e.kind === 'BUSINESS' ? 'Empresarial' : 'Personal' }}</span></td>
+              <td><small class="hint">{{ e.taxId || '—' }}</small></td>
+              <td class="center">{{ e._count?.accounts ?? 0 }}</td>
+              <td class="center">{{ e._count?.cards ?? 0 }}</td>
+              <td class="center">
+                <div class="row-actions" style="justify-content:center">
+                  <button type="button" class="ghost mini" @click="openEdit(e)"><Pencil :size="14" /></button>
+                  <button type="button" class="ghost mini danger" @click="remove(e)"><Trash2 :size="14" /></button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </PanelCard>
+
+      <!-- Resumen global (solo entidades con cuentas/tarjetas) -->
+      <div v-if="groups.length" class="ent-kpis">
         <div class="ent-kpi">
           <span class="ent-kpi-label"><Scale :size="15" /> Patrimonio neto total</span>
           <strong class="ent-kpi-value" :class="totals.all.net >= 0 ? 'pos' : 'neg'">{{ formatMoney(totals.all.net) }}</strong>
@@ -104,42 +166,28 @@ const hasUnassigned = computed(() => groups.value.some((g) => g.name === UNASSIG
           <small>Saldo usado en crédito</small>
         </div>
         <div class="ent-kpi">
-          <span class="ent-kpi-label"><User :size="15" /> Personal vs <Building2 :size="15" /> Empresa</span>
+          <span class="ent-kpi-label"><User :size="15" /> Personal · <Building2 :size="15" /> Empresa</span>
           <strong class="ent-kpi-value">{{ formatMoney(totals.personal.net) }} · {{ formatMoney(totals.business.net) }}</strong>
           <small>Patrimonio neto por naturaleza</small>
         </div>
       </div>
 
-      <!-- Análisis inteligente -->
-      <PanelCard v-if="topEntity || hasUnassigned" title="Análisis">
+      <PanelCard v-if="groups.length" title="Análisis">
         <ul class="ent-insights">
-          <li v-if="topEntity">
-            <strong>{{ topEntity.name }}</strong> concentra el mayor patrimonio neto
-            (<strong :class="topEntity.net >= 0 ? 'pos' : 'neg'">{{ formatMoney(topEntity.net) }}</strong>, ~{{ sharePct(topEntity) }}% del total).
-          </li>
-          <li v-if="totals.all.cardDebt > 0">
-            La deuda de tarjetas representa
-            <strong class="neg">{{ Math.round((totals.all.cardDebt / (totals.all.liquid || 1)) * 100) }}%</strong>
-            de tu liquidez disponible.
-          </li>
-          <li v-if="businessGroups.length && personalGroups.length">
-            Tienes <strong>{{ personalGroups.length }}</strong> entidad(es) personal(es) y
-            <strong>{{ businessGroups.length }}</strong> empresarial(es).
-          </li>
-          <li v-if="hasUnassigned" class="warn">
-            Hay cuentas/tarjetas <strong>sin razón social asignada</strong>. Edítalas en Cuentas o Tarjetas para incluirlas en el análisis por entidad.
-          </li>
+          <li v-if="topEntity"><strong>{{ topEntity.entity.name }}</strong> concentra el mayor patrimonio neto (<strong :class="topEntity.net >= 0 ? 'pos' : 'neg'">{{ formatMoney(topEntity.net) }}</strong>, ~{{ sharePct(topEntity) }}% del total).</li>
+          <li v-if="totals.all.cardDebt > 0">La deuda de tarjetas es <strong class="neg">{{ Math.round((totals.all.cardDebt / (totals.all.liquid || 1)) * 100) }}%</strong> de tu liquidez.</li>
+          <li v-if="businessGroups.length && personalGroups.length">{{ personalGroups.length }} entidad(es) personal(es) y {{ businessGroups.length }} empresarial(es) con saldos.</li>
+          <li v-if="unassignedCount" class="warn">Hay <strong>{{ unassignedCount }}</strong> cuenta(s)/tarjeta(s) sin razón social. Asígnalas en Cuentas o Tarjetas para incluirlas.</li>
         </ul>
       </PanelCard>
 
-      <!-- Grupos por naturaleza -->
-      <template v-for="(section, idx) in [{ title: 'Personal', icon: User, items: personalGroups }, { title: 'Empresarial', icon: Building2, items: businessGroups }]" :key="idx">
+      <template v-for="section in [{ title: 'Personal', icon: User, items: personalGroups }, { title: 'Empresarial', icon: Building2, items: businessGroups }]" :key="section.title">
         <div v-if="section.items.length" class="ent-section">
           <h2 class="ent-section-title"><component :is="section.icon" :size="18" /> {{ section.title }}</h2>
           <div class="ent-grid">
-            <div v-for="g in section.items" :key="g.name" class="ent-card">
+            <div v-for="g in section.items" :key="g.entity.id" class="ent-card">
               <div class="ent-card-head">
-                <span class="ent-card-name">{{ g.name }}</span>
+                <span class="ent-card-name">{{ g.entity.name }}</span>
                 <span class="ent-card-net" :class="g.net >= 0 ? 'pos' : 'neg'">{{ formatMoney(g.net) }}</span>
               </div>
               <div class="ent-card-bars">
@@ -155,24 +203,61 @@ const hasUnassigned = computed(() => groups.value.some((g) => g.name === UNASSIG
                   <span><CreditCard :size="13" /> {{ c.name }}<small> · {{ c.type === 'CREDIT' ? 'Crédito' : 'Débito' }}</small></span>
                   <span :class="c.type === 'CREDIT' ? 'neg' : 'pos'">{{ formatMoney(c.currentBalance) }}</span>
                 </div>
-                <p v-if="!g.accounts.length && !g.cards.length" class="hint">Sin cuentas ni tarjetas.</p>
               </div>
             </div>
           </div>
         </div>
       </template>
 
-      <div v-if="!groups.length" class="empty-state">
-        <div class="empty-state-illustration"><Scale :size="36" /></div>
-        <strong>Aún no hay cuentas ni tarjetas</strong>
-        <p>Crea cuentas y tarjetas, y asígnales una razón social para verlas consolidadas aquí.</p>
-      </div>
+      <p v-if="entities.length && !groups.length" class="hint" style="margin-top:12px">
+        Tienes razones sociales definidas pero ninguna tiene cuentas o tarjetas asignadas todavía. Asígnalas en <strong>Cuentas</strong> y <strong>Tarjetas</strong> para ver el análisis.
+      </p>
     </template>
+
+    <!-- Modal crear/editar razón social -->
+    <AppModal :open="modalOpen" :title="editingId !== null ? 'Editar razón social' : 'Nueva razón social'" @close="modalOpen = false">
+      <div class="ent-form">
+        <div class="field">
+          <label for="ent-name">Nombre <span class="required-mark">*</span></label>
+          <input id="ent-name" v-model="form.name" maxlength="120" placeholder="ej. GROUPMAAT S.A.S, Personal" />
+        </div>
+        <div class="field">
+          <label for="ent-kind">Naturaleza <span class="required-mark">*</span></label>
+          <select id="ent-kind" v-model="form.kind">
+            <option value="PERSONAL">Personal</option>
+            <option value="BUSINESS">Empresarial</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="ent-tax">RUC / Cédula</label>
+          <input id="ent-tax" v-model="form.taxId" maxlength="40" placeholder="Opcional" />
+        </div>
+        <div class="field">
+          <label for="ent-notes">Notas</label>
+          <input id="ent-notes" v-model="form.notes" maxlength="300" placeholder="Opcional" />
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="ghost" @click="modalOpen = false"><X :size="16" /> Cancelar</button>
+        <button type="button" :disabled="saving" @click="save"><Plus :size="16" /> {{ saving ? 'Guardando…' : (editingId !== null ? 'Guardar' : 'Crear') }}</button>
+      </template>
+    </AppModal>
   </section>
 </template>
 
 <style scoped>
-.ent-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.ent-new { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; border-radius: 10px; background: var(--color-primary, #2563eb); color: #fff; font-weight: 600; cursor: pointer; }
+.ent-pill { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+.ent-pill.is-per { background: #eef2ff; color: #4338ca; }
+.ent-pill.is-biz { background: #ecfeff; color: #0e7490; }
+.row-actions { display: flex; gap: 6px; }
+.row-actions button.mini { background: #fff; border: 1px solid #e2e8f0; color: #475569; cursor: pointer; border-radius: 6px; padding: 5px 8px; }
+.row-actions button.mini.danger { color: #dc2626; border-color: #fecaca; }
+.ent-form { display: flex; flex-direction: column; gap: 12px; }
+.ent-form .field { display: flex; flex-direction: column; gap: 4px; }
+.ent-form label { font-size: 13px; font-weight: 600; color: #334155; }
+.ent-form input, .ent-form select { padding: 8px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; font: inherit; color: #334155; }
+.ent-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin: 16px 0; }
 .ent-kpi { background: var(--color-surface, #fff); border: 1px solid var(--color-border, #e2e8f0); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
 .ent-kpi-label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: .03em; }
 .ent-kpi-value { font-size: 22px; font-weight: 800; color: #0f172a; }

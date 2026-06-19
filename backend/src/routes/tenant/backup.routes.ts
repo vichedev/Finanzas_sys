@@ -14,7 +14,7 @@ backupRouter.get('/export', async (req, res) => {
   const userId = req.tenantUserId!;
   const p = req.tenantPrisma!;
 
-  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts, notifications, auditLogs] =
+  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts, notifications, auditLogs, entities] =
     await Promise.all([
       p.bank.findMany({ where: { userId } }),
       p.account.findMany({ where: { userId } }),
@@ -32,7 +32,8 @@ backupRouter.get('/export', async (req, res) => {
       // Enlaces billetera–cuenta (solo de billeteras del usuario).
       p.walletAccount.findMany({ where: { wallet: { userId } }, select: { walletId: true, accountId: true } }),
       p.notification.findMany({ where: { userId } }),
-      p.auditLog.findMany({})
+      p.auditLog.findMany({}),
+      p.entity.findMany({ where: { userId } })
     ]);
 
   const data = {
@@ -45,7 +46,7 @@ backupRouter.get('/export', async (req, res) => {
       movements: movements.length, invoices: invoices.length, attachments: attachments.length,
       budgets: budgets.length, notifications: notifications.length, auditLogs: auditLogs.length
     },
-    banks, accounts, cards, wallets, walletAccounts, categories, debts, recurrings, movements, invoices, budgets,
+    banks, accounts, cards, wallets, walletAccounts, entities, categories, debts, recurrings, movements, invoices, budgets,
     notifications, auditLogs,
     attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') })),
     // Identidad de la empresa (logo en base64) — singleton por empresa.
@@ -76,7 +77,7 @@ backupRouter.post('/import', async (req, res) => {
     const imported = await p.$transaction(async (tx) => {
       const mBank: IdMap = {}, mAccount: IdMap = {}, mCard: IdMap = {}, mWallet: IdMap = {};
       const mCategory: IdMap = {}, mDebt: IdMap = {}, mRecurring: IdMap = {};
-      const mMovement: IdMap = {}, mInvoice: IdMap = {};
+      const mMovement: IdMap = {}, mInvoice: IdMap = {}, mEntity: IdMap = {};
       const counts: Record<string, number> = {};
       const bump = (k: string) => { counts[k] = (counts[k] || 0) + 1; };
 
@@ -99,12 +100,19 @@ backupRouter.post('/import', async (req, res) => {
         if (!ex) bump('categories');
         mCategory[c.id] = id;
       }
+      // Razones sociales (nombre único): reutiliza si existe.
+      for (const e of data.entities || []) {
+        const ex = await tx.entity.findFirst({ where: { userId, name: e.name }, select: { id: true } });
+        const id = ex?.id ?? (await tx.entity.create({ data: { userId, name: e.name, kind: e.kind ?? 'PERSONAL', taxId: e.taxId ?? null, notes: e.notes ?? null } })).id;
+        if (!ex) bump('entities');
+        mEntity[e.id] = id;
+      }
 
       // Cuentas
       for (const a of data.accounts || []) {
         const created = await tx.account.create({ data: {
           userId, name: a.name, type: a.type, holder: a.holder ?? null, accountKind: a.accountKind ?? null,
-          entityName: a.entityName ?? null, entityKind: a.entityKind ?? 'PERSONAL',
+          entityId: remap(mEntity, a.entityId),
           bankId: remap(mBank, a.bankId), bankName: a.bankName ?? null,
           accountNumber: a.accountNumber ?? null, initialBalance: a.initialBalance ?? 0, currentBalance: a.currentBalance ?? 0, isActive: a.isActive ?? true
         } });
@@ -122,7 +130,7 @@ backupRouter.post('/import', async (req, res) => {
       for (const c of data.cards || []) {
         const created = await tx.card.create({ data: {
           userId, name: c.name, type: c.type, bankId: remap(mBank, c.bankId), bankName: c.bankName ?? null, last4: c.last4 ?? null,
-          entityName: c.entityName ?? null, entityKind: c.entityKind ?? 'PERSONAL',
+          entityId: remap(mEntity, c.entityId),
           creditLimit: c.creditLimit ?? null, cutoffDay: c.cutoffDay ?? null, paymentDueDay: c.paymentDueDay ?? null,
           currentBalance: c.currentBalance ?? 0, isActive: c.isActive ?? true
         } });

@@ -18,7 +18,7 @@ import {
   ACCOUNT_TYPE_OPTIONS,
   BANK_KIND_LABEL
 } from '../constants/domain';
-import type { Account, AccountPayload } from '../types';
+import type { Account, AccountPayload, Entity } from '../types';
 
 const { formatMoney } = useFormat();
 const entities = useEntitiesStore();
@@ -26,13 +26,12 @@ const activeBanks = computed(() => entities.activeBanks);
 
 const crud = useCrud<Account, AccountPayload>({
   service: accountsApi,
-  emptyForm: () => ({ name: '', type: 'CASH', holder: '', entityName: '', entityKind: 'PERSONAL' as const, accountKind: null, accountNumber: '', bankId: null, initialBalance: 0 }),
+  emptyForm: () => ({ name: '', type: 'CASH', holder: '', entityId: null as number | null, accountKind: null, accountNumber: '', bankId: null, initialBalance: 0 }),
   toForm: (a) => ({
     name: a.name,
     type: a.type,
     holder: a.holder ?? '',
-    entityName: a.entityName ?? '',
-    entityKind: a.entityKind ?? 'PERSONAL',
+    entityId: a.entityId ?? null,
     accountKind: a.accountKind ?? null,
     accountNumber: a.accountNumber ?? '',
     bankId: a.bankId,
@@ -44,8 +43,7 @@ const crud = useCrud<Account, AccountPayload>({
       name: f.name.trim(),
       type: f.type,
       holder: (f.holder || '').trim() || null,
-      entityName: (f.entityName || '').trim() || null,
-      entityKind: f.entityKind || 'PERSONAL',
+      entityId: f.entityId || null,
       accountKind: isBank ? (f.accountKind || null) : null,
       accountNumber: isBank ? ((f.accountNumber || '').trim() || null) : null,
       bankId: isBank ? (f.bankId || null) : null,
@@ -63,8 +61,10 @@ const crud = useCrud<Account, AccountPayload>({
   }
 });
 const { rows, form, editingId, saving, save, startEdit, cancelEdit, load } = crud;
-// Sugerencias de razón social ya usadas (para autocompletar y mantener consistencia).
-const entityNameOptions = computed(() => [...new Set(rows.value.map((a) => a.entityName?.trim()).filter(Boolean) as string[])]);
+// Catálogo de razones sociales (solo estas pueden asignarse a una cuenta).
+const entityList = ref<Entity[]>([]);
+async function loadEntities() { entityList.value = (await http.get<Entity[]>('/entities')).data; }
+onMounted(loadEntities);
 
 const showBankFields = computed(() => form.value.type === 'BANK' || form.value.type === 'DEBIT');
 
@@ -162,18 +162,12 @@ onMounted(() => Promise.all([load(), entities.ensureBanks()]));
               <input id="acc-holder" v-model="form.holder" maxlength="120" placeholder="ej. Juan Pérez" />
             </FormField>
 
-            <FormField label="Razón social / Entidad" html-for="acc-entity" hint="Para agrupar en 'Razones sociales'.">
-              <input id="acc-entity" v-model="form.entityName" maxlength="120" list="entity-names" placeholder="ej. Personal, GROUPMAAT S.A.S" />
-              <datalist id="entity-names">
-                <option v-for="n in entityNameOptions" :key="n" :value="n" />
-              </datalist>
-            </FormField>
-
-            <FormField label="Naturaleza" html-for="acc-entkind" hint="¿Personal o de empresa?">
-              <select id="acc-entkind" v-model="form.entityKind">
-                <option value="PERSONAL">Personal</option>
-                <option value="BUSINESS">Empresarial</option>
+            <FormField label="Razón social / Entidad" html-for="acc-entity" hint="Gestiónalas en 'Razones sociales'.">
+              <select id="acc-entity" v-model.number="form.entityId">
+                <option :value="null">— Sin asignar —</option>
+                <option v-for="e in entityList" :key="e.id" :value="e.id">{{ e.name }} ({{ e.kind === 'BUSINESS' ? 'Empresa' : 'Personal' }})</option>
               </select>
+              <small v-if="!entityList.length" class="hint warn-hint">No hay razones sociales. Créalas en <strong>Razones sociales</strong>.</small>
             </FormField>
 
             <FormField label="Tipo / Naturaleza" required html-for="acc-type" hint="Efectivo, banco, billetera…">

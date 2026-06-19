@@ -16,13 +16,29 @@ export interface Bank {
 
 export type EntityKind = 'PERSONAL' | 'BUSINESS';
 
+export interface Entity {
+  id: number;
+  name: string;
+  kind: EntityKind;
+  taxId?: string | null;
+  notes?: string | null;
+  _count?: { accounts: number; cards: number };
+}
+
+export interface EntityPayload {
+  name: string;
+  kind: EntityKind;
+  taxId?: string | null;
+  notes?: string | null;
+}
+
 export interface Account {
   id: number;
   name: string;
   type: AccountType;
   holder?: string | null;
-  entityName?: string | null;
-  entityKind?: EntityKind;
+  entityId?: number | null;
+  entity?: { id: number; name: string; kind: EntityKind } | null;
   accountKind?: BankAccountKind | null;
   bankId: number | null;
   bankName: string | null;
@@ -37,8 +53,7 @@ export interface AccountPayload {
   name: string;
   type: AccountType;
   holder?: string | null;
-  entityName?: string | null;
-  entityKind?: EntityKind;
+  entityId?: number | null;
   accountKind?: BankAccountKind | null;
   accountNumber?: string | null;
   bankId: number | null;

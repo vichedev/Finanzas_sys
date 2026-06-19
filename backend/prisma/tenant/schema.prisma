@@ -129,6 +129,7 @@ model User {
   banks      Bank[]
   invoices   Invoice[]
   wallets    Wallet[]
+  entities   Entity[]
   notifications Notification[]
   attachments Attachment[]
   budgets    Budget[]
@@ -184,8 +185,8 @@ model Account {
   name           String
   type           AccountType
   holder         String?                          // titular de la cuenta
-  entityName     String?                          // razón social / entidad (para consolidado)
-  entityKind     EntityKind  @default(PERSONAL)    // Personal o Empresarial
+  entityId       Int?                             // razón social / entidad (catálogo)
+  entity         Entity?     @relation(fields: [entityId], references: [id], onDelete: SetNull)
   accountKind    BankAccountKind?                 // tipo bancario: Ahorros / Corriente
   bankId         Int?
   bank           Bank?       @relation(fields: [bankId], references: [id], onDelete: SetNull)
@@ -213,8 +214,8 @@ model Card {
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
   type           CardType
-  entityName     String?                        // razón social / entidad (para consolidado)
-  entityKind     EntityKind @default(PERSONAL)   // Personal o Empresarial
+  entityId       Int?                           // razón social / entidad (catálogo)
+  entity         Entity?    @relation(fields: [entityId], references: [id], onDelete: SetNull)
   bankId         Int?
   bank           Bank?     @relation(fields: [bankId], references: [id], onDelete: SetNull)
   bankName       String?
@@ -230,6 +231,26 @@ model Card {
   movements      Movement[]
 
   @@index([userId, type])
+}
+
+// Razón social / entidad (catálogo). Las cuentas y tarjetas se asignan a una de estas
+// para consolidar saldos por entidad (personal o empresarial).
+model Entity {
+  id        Int        @id @default(autoincrement())
+  userId    Int
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  kind      EntityKind @default(PERSONAL)
+  taxId     String?    // RUC / cédula (opcional)
+  notes     String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  accounts  Account[]
+  cards     Card[]
+
+  @@unique([userId, name])
+  @@index([userId])
 }
 
 model Category {

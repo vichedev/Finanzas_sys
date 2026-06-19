@@ -13,8 +13,7 @@ const accountSchema = z.object({
   name: z.string().trim().min(2).max(80),
   type: z.enum(['CASH', 'BANK', 'WALLET', 'DEBIT', 'RECEIVABLE']),
   holder: z.string().trim().max(120).optional().nullable(),
-  entityName: z.string().trim().max(120).optional().nullable(),
-  entityKind: z.enum(['PERSONAL', 'BUSINESS']).optional(),
+  entityId: z.coerce.number().int().positive().optional().nullable(),
   accountKind: z.enum(['SAVINGS', 'CHECKING']).optional().nullable(),
   accountNumber: z.string().trim().max(40).optional().nullable(),
   bankId: z.coerce.number().int().positive().optional().nullable(),
@@ -34,7 +33,7 @@ async function resolveBankName(req: any, userId: number, bankId: number | null |
 accountsRouter.get('/', async (req, res) => {
   const rows = await req.tenantPrisma!.account.findMany({
     where: { userId: req.tenantUserId!, isActive: true },
-    include: { bank: true },
+    include: { bank: true, entity: true },
     orderBy: { createdAt: 'asc' }
   });
   res.json(rows);
@@ -49,8 +48,7 @@ accountsRouter.post('/', async (req, res) => {
       name: body.name,
       type: body.type,
       holder: body.holder?.trim() || null,
-      entityName: body.entityName?.trim() || null,
-      entityKind: body.entityKind ?? 'PERSONAL',
+      entityId: body.entityId ?? null,
       accountKind: body.accountKind ?? null,
       accountNumber: body.accountNumber?.trim() || null,
       bankId: body.bankId ?? null,
@@ -76,8 +74,7 @@ accountsRouter.put('/:id', async (req, res) => {
   if (body.name !== undefined) data.name = body.name;
   if (body.type !== undefined) data.type = body.type;
   if (body.holder !== undefined) data.holder = body.holder?.trim() || null;
-  if (body.entityName !== undefined) data.entityName = body.entityName?.trim() || null;
-  if (body.entityKind !== undefined) data.entityKind = body.entityKind;
+  if (body.entityId !== undefined) data.entityId = body.entityId ?? null;
   if (body.accountKind !== undefined) data.accountKind = body.accountKind ?? null;
   if (body.accountNumber !== undefined) data.accountNumber = body.accountNumber?.trim() || null;
   if (Object.prototype.hasOwnProperty.call(body, 'bankId')) {
