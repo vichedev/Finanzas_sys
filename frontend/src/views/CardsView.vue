@@ -145,9 +145,12 @@ const todayYmd = () => { const d = new Date(); return `${d.getFullYear()}-${Stri
 const payErr = ref('');
 const paying = ref(false);
 
+// Saldo adeudado de la tarjeta (nunca negativo).
+const payOwed = computed(() => Math.max(0, toNumber(payCardRef.value?.currentBalance)));
 function openPay(card: Card) {
   payCardRef.value = card;
-  payForm.value = { accountId: activeAccounts.value[0]?.id ?? null, amount: toNumber(card.currentBalance) || null, payDate: todayYmd(), notes: '' };
+  const owed = Math.max(0, toNumber(card.currentBalance));
+  payForm.value = { accountId: activeAccounts.value[0]?.id ?? null, amount: owed || null, payDate: todayYmd(), notes: '' };
   payErr.value = '';
   payOpen.value = true;
 }
@@ -157,6 +160,8 @@ async function submitPay() {
   if (!payCardRef.value) return;
   if (!payForm.value.accountId) { payErr.value = 'Selecciona la cuenta de origen.'; return; }
   if (!payForm.value.amount || payForm.value.amount <= 0) { payErr.value = 'Ingresa un monto válido.'; return; }
+  if (payOwed.value <= 0) { payErr.value = 'Esta tarjeta no tiene saldo por pagar.'; return; }
+  if (payForm.value.amount > payOwed.value) { payErr.value = `No puedes pagar más de lo adeudado (${formatMoney(payOwed.value)}).`; return; }
   if (!payForm.value.payDate) { payErr.value = 'Selecciona la fecha del pago.'; return; }
   paying.value = true;
   try {
@@ -351,8 +356,9 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
       <div class="pay-body">
         <p class="pay-hint">
           El pago sale de la cuenta seleccionada y reduce el saldo usado de la tarjeta.
-          <template v-if="payCardRef"><br />Saldo usado actual: <strong>{{ formatMoney(payCardRef.currentBalance) }}</strong>.</template>
+          <template v-if="payCardRef"><br />Saldo por pagar: <strong>{{ formatMoney(payOwed) }}</strong>.</template>
         </p>
+        <p v-if="payOwed <= 0" class="hint warn-hint" style="margin-top:0">Esta tarjeta no tiene saldo por pagar.</p>
         <div class="field">
           <label for="pay-acc">Cuenta de origen <span class="required-mark">*</span></label>
           <select id="pay-acc" v-model.number="payForm.accountId">
@@ -363,7 +369,8 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
         </div>
         <div class="field">
           <label for="pay-amt">Monto a pagar (USD) <span class="required-mark">*</span></label>
-          <input id="pay-amt" v-model.number="payForm.amount" type="number" step="0.01" min="0" placeholder="0.00" />
+          <input id="pay-amt" v-model.number="payForm.amount" type="number" step="0.01" min="0" :max="payOwed" placeholder="0.00" />
+          <small class="hint">Máximo {{ formatMoney(payOwed) }} (lo adeudado).</small>
         </div>
         <div class="field">
           <label for="pay-date">Fecha del pago <span class="required-mark">*</span></label>
@@ -379,7 +386,7 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
       </div>
       <template #footer>
         <button type="button" class="ghost" @click="payOpen = false"><X :size="16" /> Cancelar</button>
-        <button type="button" @click="submitPay" :disabled="paying"><Wallet :size="16" /> {{ paying ? 'Procesando…' : 'Registrar pago' }}</button>
+        <button type="button" @click="submitPay" :disabled="paying || payOwed <= 0"><Wallet :size="16" /> {{ paying ? 'Procesando…' : 'Registrar pago' }}</button>
       </template>
     </AppModal>
   </section>

@@ -50,6 +50,25 @@ const movementSchema = z.object({
   if (d.type !== 'EXPENSE' && d.expenseKind) {
     ctx.addIssue({ code: 'custom', path: ['expenseKind'], message: 'Solo aplica cuando type=EXPENSE' });
   }
+  // Coherencia tipo↔campos: evita movimientos que descuadran los saldos
+  // (p. ej. una transferencia sin destino haría "desaparecer" el dinero del origen).
+  if (d.type === 'TRANSFER') {
+    if (!d.accountId) ctx.addIssue({ code: 'custom', path: ['accountId'], message: 'La transferencia requiere cuenta de origen' });
+    if (!d.toAccountId) ctx.addIssue({ code: 'custom', path: ['toAccountId'], message: 'La transferencia requiere cuenta de destino' });
+    if (d.accountId && d.toAccountId && d.accountId === d.toAccountId) {
+      ctx.addIssue({ code: 'custom', path: ['toAccountId'], message: 'El origen y el destino deben ser distintos' });
+    }
+  }
+  if (d.type === 'CARD_PAYMENT') {
+    if (!d.accountId) ctx.addIssue({ code: 'custom', path: ['accountId'], message: 'El pago de tarjeta requiere cuenta de origen' });
+    if (!d.cardId) ctx.addIssue({ code: 'custom', path: ['cardId'], message: 'El pago de tarjeta requiere la tarjeta' });
+  }
+  if (d.type === 'WITHDRAWAL' && !d.accountId) {
+    ctx.addIssue({ code: 'custom', path: ['accountId'], message: 'El retiro requiere la cuenta de la que sale el efectivo' });
+  }
+  if (d.type === 'ADJUSTMENT' && !d.accountId) {
+    ctx.addIssue({ code: 'custom', path: ['accountId'], message: 'El ajuste requiere una cuenta' });
+  }
 });
 
 function monthRange(year: number, month: number) {

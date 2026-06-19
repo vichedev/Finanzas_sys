@@ -48,10 +48,18 @@ export async function runDueRecurringRules(prisma: TenantPrisma, userId: number)
               description: rule.name,
               paymentMethod: rule.paymentMethod,
               categoryId: rule.categoryId,
+              accountId: rule.accountId,
               recurringRuleId: rule.id,
               notes: 'Generado automáticamente (recurrente)'
             }
           });
+          // Si la regla tiene cuenta, el movimiento afecta su saldo (igual que uno manual):
+          // INCOME suma, EXPENSE resta. Sin cuenta = efectivo (no toca saldos).
+          if (rule.accountId) {
+            const amt = Number(rule.amount);
+            const delta = rule.type === 'INCOME' ? amt : rule.type === 'EXPENSE' ? -amt : 0;
+            if (delta) await tx.account.update({ where: { id: rule.accountId }, data: { currentBalance: { increment: delta } } });
+          }
           created++;
           runDate = addInterval(runDate, rule.frequency);
           iterations++;

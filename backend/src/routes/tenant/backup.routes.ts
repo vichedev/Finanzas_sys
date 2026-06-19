@@ -14,7 +14,7 @@ backupRouter.get('/export', async (req, res) => {
   const userId = req.tenantUserId!;
   const p = req.tenantPrisma!;
 
-  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts] =
+  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts, notifications, auditLogs] =
     await Promise.all([
       p.bank.findMany({ where: { userId } }),
       p.account.findMany({ where: { userId } }),
@@ -30,20 +30,23 @@ backupRouter.get('/export', async (req, res) => {
       p.branding.findUnique({ where: { id: 1 } }).catch(() => null),
       p.aiConfig.findUnique({ where: { id: 1 } }).catch(() => null),
       // Enlaces billetera–cuenta (solo de billeteras del usuario).
-      p.walletAccount.findMany({ where: { wallet: { userId } }, select: { walletId: true, accountId: true } })
+      p.walletAccount.findMany({ where: { wallet: { userId } }, select: { walletId: true, accountId: true } }),
+      p.notification.findMany({ where: { userId } }),
+      p.auditLog.findMany({})
     ]);
 
   const data = {
     format: 'finanzas-backup',
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     counts: {
       banks: banks.length, accounts: accounts.length, cards: cards.length, wallets: wallets.length,
       categories: categories.length, debts: debts.length, recurrings: recurrings.length,
       movements: movements.length, invoices: invoices.length, attachments: attachments.length,
-      budgets: budgets.length
+      budgets: budgets.length, notifications: notifications.length, auditLogs: auditLogs.length
     },
     banks, accounts, cards, wallets, walletAccounts, categories, debts, recurrings, movements, invoices, budgets,
+    notifications, auditLogs,
     attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') })),
     // Identidad de la empresa (logo en base64) — singleton por empresa.
     branding: branding ? {
@@ -129,6 +132,7 @@ backupRouter.post('/import', async (req, res) => {
           userId, kind: d.kind, status: d.status, name: d.name, counterparty: d.counterparty ?? null,
           principal: d.principal ?? 0, balance: d.balance ?? 0, interestRate: d.interestRate ?? null,
           dueDate: toDate(d.dueDate), accountId: remap(mAccount, d.accountId), notes: d.notes ?? null,
+          cutoffDay: d.cutoffDay ?? null, paymentDay: d.paymentDay ?? null,
           installmentAmount: d.installmentAmount ?? null, installmentDueDay: d.installmentDueDay ?? null,
           termMonths: d.termMonths ?? null, totalToPay: d.totalToPay ?? null
         } });
@@ -139,7 +143,7 @@ backupRouter.post('/import', async (req, res) => {
         const created = await tx.recurringRule.create({ data: {
           userId, name: r.name, type: r.type, amount: r.amount ?? 0, frequency: r.frequency, status: r.status,
           nextRunDate: toDate(r.nextRunDate) ?? new Date(), endDate: toDate(r.endDate), paymentMethod: r.paymentMethod,
-          categoryId: remap(mCategory, r.categoryId), notes: r.notes ?? null
+          categoryId: remap(mCategory, r.categoryId), accountId: remap(mAccount, r.accountId), notes: r.notes ?? null
         } });
         mRecurring[r.id] = created.id; bump('recurrings');
       }
@@ -153,7 +157,8 @@ backupRouter.post('/import', async (req, res) => {
           categoryId: remap(mCategory, m.categoryId), debtId: remap(mDebt, m.debtId), recurringRuleId: remap(mRecurring, m.recurringRuleId),
           fromBankId: remap(mBank, m.fromBankId), toBankId: remap(mBank, m.toBankId),
           vendor: m.vendor ?? null, isCredit: m.isCredit ?? false, dueDate: toDate(m.dueDate), commission: m.commission ?? null,
-          installmentNumber: m.installmentNumber ?? null, installmentTotal: m.installmentTotal ?? null
+          installmentNumber: m.installmentNumber ?? null, installmentTotal: m.installmentTotal ?? null,
+          ...(m.attachmentMeta ? { attachmentMeta: m.attachmentMeta } : {})
         } });
         mMovement[m.id] = created.id; bump('movements');
       }
@@ -173,7 +178,7 @@ backupRouter.post('/import', async (req, res) => {
         if (at.entityType === 'MOVEMENT') entityId = remap(mMovement, at.entityId);
         else if (at.entityType === 'INVOICE') entityId = remap(mInvoice, at.entityId);
         else if (at.entityType === 'DEBT') entityId = remap(mDebt, at.entityId);
-        if (!entityId) continue;
+        if (!entityId) { bump('comprobantesOmitidos'); continue; }
         await tx.attachment.create({ data: {
           userId, entityType: at.entityType, entityId, filename: at.filename, mimeType: at.mimeType,
           size: at.size ?? 0, data: Buffer.from(at.data || '', 'base64')
@@ -192,6 +197,24 @@ backupRouter.post('/import', async (req, res) => {
           update: { amount: bud.amount ?? 0, isActive: bud.isActive ?? true }
         });
         bump('budgets');
+      }
+
+      // Notificaciones (solo remapeo de userId; conserva isRead/emailSent para no re-notificar).
+      for (const n of data.notifications || []) {
+        await tx.notification.create({ data: {
+          userId, type: n.type, title: n.title, body: n.body, link: n.link ?? null,
+          dedupeKey: n.dedupeKey ?? null, isRead: n.isRead ?? false, emailSent: n.emailSent ?? true,
+          createdAt: toDate(n.createdAt) ?? new Date()
+        } });
+        bump('notifications');
+      }
+      // Historial de auditoría (sin FK; entityId queda como referencia histórica).
+      for (const al of data.auditLogs || []) {
+        await tx.auditLog.create({ data: {
+          userId, userEmail: al.userEmail ?? null, action: al.action, entity: al.entity,
+          entityId: al.entityId ?? null, summary: al.summary ?? null, createdAt: toDate(al.createdAt) ?? new Date()
+        } });
+        bump('auditLogs');
       }
 
       // Identidad / Branding (singleton id=1): restaura logo, colores y título.

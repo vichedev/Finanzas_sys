@@ -114,13 +114,19 @@ cardsRouter.post('/:id/pay', async (req, res) => {
     const account = await tx.account.findFirst({ where: { id: body.accountId, userId } });
     if (!account) throw Object.assign(new Error('Cuenta no encontrada'), { status: 404 });
 
-    await tx.account.update({ where: { id: account.id }, data: { currentBalance: { decrement: amt } } });
-    await tx.card.update({ where: { id: card.id }, data: { currentBalance: { decrement: amt } } });
+    // El saldo usado de la tarjeta representa la deuda: no se puede pagar si no hay deuda,
+    // ni pagar más de lo adeudado (el saldo usado nunca debe quedar negativo).
+    const owed = Number(card.currentBalance);
+    if (owed <= 0) throw Object.assign(new Error('Esta tarjeta no tiene saldo por pagar.'), { status: 400 });
+    const pay = Math.min(amt, owed); // se topa a lo adeudado
+
+    await tx.account.update({ where: { id: account.id }, data: { currentBalance: { decrement: pay } } });
+    await tx.card.update({ where: { id: card.id }, data: { currentBalance: { decrement: pay } } });
     const movement = await tx.movement.create({
       data: {
         userId,
         type: 'CARD_PAYMENT',
-        amount: amt,
+        amount: pay,
         movementDate: body.movementDate ?? new Date(),
         description: `Pago de tarjeta "${card.name}"`,
         paymentMethod: 'BANK_TRANSFER',
@@ -129,14 +135,14 @@ cardsRouter.post('/:id/pay', async (req, res) => {
         notes: body.notes ?? null
       }
     });
-    return { movement, cardName: card.name, accountName: account.name };
+    return { movement, cardName: card.name, accountName: account.name, pay };
   });
 
-  void auditFromReq(req, 'CREATE', 'movement', result.movement.id, `Pago de tarjeta "${result.cardName}" desde "${result.accountName}" · ${fmtMoney(amt)}`);
+  void auditFromReq(req, 'CREATE', 'movement', result.movement.id, `Pago de tarjeta "${result.cardName}" desde "${result.accountName}" · ${fmtMoney(result.pay)}`);
   void createNotification(req.tenantPrisma!, {
     userId, type: 'MOVEMENT_CREATED',
     title: 'Pago de tarjeta',
-    body: `Pagaste ${fmtMoney(amt)} de "${result.cardName}" desde "${result.accountName}"`,
+    body: `Pagaste ${fmtMoney(result.pay)} de "${result.cardName}" desde "${result.accountName}"`,
     link: '/cards', email: true
   }).catch(() => { /* logueado dentro */ });
 

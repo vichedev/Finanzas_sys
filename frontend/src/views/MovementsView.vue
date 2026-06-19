@@ -670,6 +670,7 @@ async function save() {
     if (!form.value.accountId || !form.value.toAccountId) { toast.error('Elige la cuenta de origen y la de destino.'); return; }
     if (form.value.accountId === form.value.toAccountId) { toast.error('La cuenta de origen y la de destino deben ser distintas.'); return; }
   }
+  if (isWithdrawal.value && !form.value.accountId) { toast.error('Elige la cuenta de la que sale el efectivo.'); return; }
   saving.value = true;
   try {
     let effectivePaymentMethod: PaymentMethod = form.value.paymentMethod;

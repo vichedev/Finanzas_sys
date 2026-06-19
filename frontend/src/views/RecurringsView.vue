@@ -9,23 +9,26 @@ type Frequency = 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY';
 type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'WALLET' | 'OTHER';
 
 interface Category { id: number; name: string }
+interface Account { id: number; name: string; bankName?: string | null; accountNumber?: string | null }
 interface RecurringRow {
   id: number; name: string; type: RecurringType; amount: number;
   frequency: Frequency; status: RecurringStatus; nextRunDate: string; endDate?: string | null;
-  paymentMethod: PaymentMethod; categoryId?: number | null; notes?: string | null;
+  paymentMethod: PaymentMethod; categoryId?: number | null; accountId?: number | null; notes?: string | null;
   category?: { id: number; name: string } | null;
 }
 
 const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const rows = ref<RecurringRow[]>([]);
 const categories = ref<Category[]>([]);
+const accounts = ref<Account[]>([]);
+const acctLabel = (a: Account) => [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ');
 const errorMsg = ref(''); const successMsg = ref(''); const saving = ref(false);
 const editingId = ref<number | null>(null);
 
 const emptyForm = () => ({
   name: '', type: 'EXPENSE' as RecurringType, amount: 0,
   frequency: 'MONTHLY' as Frequency, nextRunDate: today(), endDate: '',
-  paymentMethod: 'CASH' as PaymentMethod, categoryId: null as number | null, notes: ''
+  paymentMethod: 'CASH' as PaymentMethod, categoryId: null as number | null, accountId: null as number | null, notes: ''
 });
 const form = ref(emptyForm());
 
@@ -56,8 +59,8 @@ function amountSign(r: RecurringRow) { if (r.type === 'INCOME') return `+${forma
 async function load() {
   errorMsg.value = '';
   try {
-    const [r, c] = await Promise.all([http.get('/recurrings'), http.get('/categories')]);
-    rows.value = r.data; categories.value = c.data;
+    const [r, c, a] = await Promise.all([http.get('/recurrings'), http.get('/categories'), http.get('/accounts')]);
+    rows.value = r.data; categories.value = c.data; accounts.value = a.data;
   } catch { errorMsg.value = 'No se pudieron cargar las reglas recurrentes.'; }
 }
 
@@ -65,7 +68,7 @@ async function save() {
   if (!form.value.name.trim() || !form.value.amount) { errorMsg.value = 'Nombre y monto son obligatorios.'; return; }
   saving.value = true; errorMsg.value = '';
   try {
-    const payload = { ...form.value, categoryId: form.value.categoryId || null, endDate: form.value.endDate || null, notes: form.value.notes || null };
+    const payload = { ...form.value, categoryId: form.value.categoryId || null, accountId: form.value.accountId || null, endDate: form.value.endDate || null, notes: form.value.notes || null };
     if (editingId.value !== null) {
       await http.put(`/recurrings/${editingId.value}`, payload);
       successMsg.value = 'Regla actualizada.';
@@ -92,6 +95,7 @@ function startEdit(r: RecurringRow) {
     endDate: r.endDate ? String(r.endDate).slice(0, 10) : '',
     paymentMethod: r.paymentMethod,
     categoryId: r.categoryId ?? null,
+    accountId: r.accountId ?? null,
     notes: r.notes || ''
   };
   if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -185,6 +189,15 @@ onMounted(load);
                 <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name }}</option>
               </select>
               <small class="hint">Opcional, agrupa reportes.</small>
+            </div>
+
+            <div class="field">
+              <label for="rec-acct">Cuenta afectada</label>
+              <select id="rec-acct" v-model="form.accountId">
+                <option :value="null">Sin cuenta (efectivo)</option>
+                <option v-for="a in accounts" :key="a.id" :value="a.id">{{ acctLabel(a) }}</option>
+              </select>
+              <small class="hint">Si la eliges, cada cobro/pago generado {{ form.type === 'INCOME' ? 'sumará' : 'restará' }} su saldo automáticamente.</small>
             </div>
           </div>
 
