@@ -14,11 +14,15 @@ export interface Bank {
   isActive?: boolean;
 }
 
+export type EntityKind = 'PERSONAL' | 'BUSINESS';
+
 export interface Account {
   id: number;
   name: string;
   type: AccountType;
   holder?: string | null;
+  entityName?: string | null;
+  entityKind?: EntityKind;
   accountKind?: BankAccountKind | null;
   bankId: number | null;
   bankName: string | null;
@@ -33,6 +37,8 @@ export interface AccountPayload {
   name: string;
   type: AccountType;
   holder?: string | null;
+  entityName?: string | null;
+  entityKind?: EntityKind;
   accountKind?: BankAccountKind | null;
   accountNumber?: string | null;
   bankId: number | null;

@@ -104,6 +104,7 @@ backupRouter.post('/import', async (req, res) => {
       for (const a of data.accounts || []) {
         const created = await tx.account.create({ data: {
           userId, name: a.name, type: a.type, holder: a.holder ?? null, accountKind: a.accountKind ?? null,
+          entityName: a.entityName ?? null, entityKind: a.entityKind ?? 'PERSONAL',
           bankId: remap(mBank, a.bankId), bankName: a.bankName ?? null,
           accountNumber: a.accountNumber ?? null, initialBalance: a.initialBalance ?? 0, currentBalance: a.currentBalance ?? 0, isActive: a.isActive ?? true
         } });
@@ -121,6 +122,7 @@ backupRouter.post('/import', async (req, res) => {
       for (const c of data.cards || []) {
         const created = await tx.card.create({ data: {
           userId, name: c.name, type: c.type, bankId: remap(mBank, c.bankId), bankName: c.bankName ?? null, last4: c.last4 ?? null,
+          entityName: c.entityName ?? null, entityKind: c.entityKind ?? 'PERSONAL',
           creditLimit: c.creditLimit ?? null, cutoffDay: c.cutoffDay ?? null, paymentDueDay: c.paymentDueDay ?? null,
           currentBalance: c.currentBalance ?? 0, isActive: c.isActive ?? true
         } });

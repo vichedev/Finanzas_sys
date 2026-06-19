@@ -40,7 +40,10 @@
       "Bash(git check-ignore *)",
       "Bash(cat update.sh)",
       "Bash(grep -niE \"respaldo|backup|\\\\.json\" .gitignore)",
-      "Bash(grep -rn \"{ label:.*year\\\\|periodLabel\\\\|monthYear\\\\|value:.*ym\\\\|YYYY-MM\\\\|slice\\(0, 7\\)\\\\|months.push\\\\|period\" frontend/src/views/DashboardView.vue)"
+      "Bash(grep -rn \"{ label:.*year\\\\|periodLabel\\\\|monthYear\\\\|value:.*ym\\\\|YYYY-MM\\\\|slice\\(0, 7\\)\\\\|months.push\\\\|period\" frontend/src/views/DashboardView.vue)",
+      "Bash(powershell.exe -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\\\"name='node.exe'\\\\\" | Select-Object ProcessId,CommandLine | Format-List\")",
+      "Bash(taskkill //PID 20284 //F)",
+      "Bash(taskkill //PID 4680 //F)"
     ]
   }
 }

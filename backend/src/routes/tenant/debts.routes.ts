@@ -8,6 +8,8 @@ import type { TenantPrisma } from '../../lib/tenantPrisma';
 export const debtsRouter = Router();
 debtsRouter.use(requireAuth, (req, res, next) => requirePermission('debts', req.method === 'GET' ? 'read' : 'write')(req, res, next));
 
+const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
+
 // Verifica que la cuenta (si se envía) pertenezca al usuario.
 async function assertAccount(prisma: Pick<TenantPrisma, 'account'>, userId: number, accountId?: number | null) {
   if (accountId == null) return;
@@ -85,6 +87,60 @@ debtsRouter.put('/:id', async (req, res) => {
   });
   void auditFromReq(req, 'UPDATE', 'debt', id, `Deuda "${row.name}"`);
   res.json(row);
+});
+
+// Registra un abono/pago a la deuda: descuenta el saldo, mueve la cuenta de origen
+// y genera un movimiento de GASTO (salida de dinero) ligado a la deuda.
+const paySchema = z.object({
+  amount: z.coerce.number().finite().gt(0).lte(99_999_999_999.99),
+  accountId: z.coerce.number().int().positive().optional().nullable(),
+  movementDate: z.coerce.date().optional(),
+  notes: z.string().trim().max(500).optional().nullable()
+}).strict();
+
+debtsRouter.post('/:id/pay', async (req, res) => {
+  const id = Number(req.params.id);
+  const userId = req.tenantUserId!;
+  const body = paySchema.parse(req.body);
+
+  const result = await req.tenantPrisma!.$transaction(async (tx) => {
+    const debt = await tx.debt.findFirst({ where: { id, userId } });
+    if (!debt) throw Object.assign(new Error('Deuda no encontrada'), { status: 404 });
+    const balance = Number(debt.balance);
+    if (balance <= 0) throw Object.assign(new Error('Esta deuda no tiene saldo pendiente.'), { status: 400 });
+    const pay = Math.min(Number(body.amount), balance); // no se paga más de lo que se debe
+
+    let account = null as { id: number; name: string } | null;
+    if (body.accountId) {
+      account = await tx.account.findFirst({ where: { id: body.accountId, userId }, select: { id: true, name: true } });
+      if (!account) throw Object.assign(new Error('Cuenta no encontrada'), { status: 400 });
+      await tx.account.update({ where: { id: account.id }, data: { currentBalance: { decrement: pay } } });
+    }
+
+    const newBalance = balance - pay;
+    await tx.debt.update({
+      where: { id, userId },
+      data: { balance: newBalance, status: newBalance <= 0 ? 'PAID' : 'PARTIAL' }
+    });
+
+    const movement = await tx.movement.create({
+      data: {
+        userId,
+        type: 'EXPENSE',
+        amount: pay,
+        movementDate: body.movementDate ?? new Date(),
+        description: `Pago de deuda "${debt.name}"`,
+        paymentMethod: 'BANK_TRANSFER',
+        accountId: account?.id ?? null,
+        debtId: debt.id,
+        notes: body.notes ?? null
+      }
+    });
+    return { debt, movement, pay, accountName: account?.name ?? null };
+  });
+
+  void auditFromReq(req, 'UPDATE', 'debt', id, `Abono a deuda "${result.debt.name}" · ${fmtMoney(result.pay)}`);
+  res.status(201).json({ debtId: id, movementId: result.movement.id, paid: result.pay });
 });
 
 debtsRouter.put('/:id/status', async (req, res) => {

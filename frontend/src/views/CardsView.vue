@@ -18,6 +18,8 @@ interface Card {
   id: number | string;
   name: string;
   type: 'CREDIT' | 'DEBIT';
+  entityName?: string | null;
+  entityKind?: 'PERSONAL' | 'BUSINESS';
   bankId?: number | null;
   bankName?: string | null;
   last4?: string | null;
@@ -30,6 +32,8 @@ interface Card {
 interface CardForm {
   name: string;
   type: 'CREDIT' | 'DEBIT';
+  entityName: string;
+  entityKind: 'PERSONAL' | 'BUSINESS';
   bankId: number | null;
   last4: string;
   creditLimit: number | null;
@@ -39,9 +43,10 @@ interface CardForm {
 }
 
 const emptyForm = (): CardForm => ({
-  name: '', type: 'CREDIT', bankId: null, last4: '',
+  name: '', type: 'CREDIT', entityName: '', entityKind: 'PERSONAL', bankId: null, last4: '',
   creditLimit: null, cutoffDay: null, paymentDueDay: null, currentBalance: 0
 });
+const entityNameOptions = computed(() => [...new Set(rows.value.map((c) => c.entityName?.trim()).filter(Boolean) as string[])]);
 
 const rows = ref<Card[]>([]);
 const form = ref<CardForm>(emptyForm());
@@ -69,6 +74,8 @@ async function save() {
   if (form.value.last4 && !/^\d{1,4}$/.test(form.value.last4)) { toast.error('Los últimos 4 dígitos deben ser numéricos.'); return; }
   const payload: Record<string, unknown> = {
     name: form.value.name.trim(), type: form.value.type,
+    entityName: form.value.entityName.trim() || null,
+    entityKind: form.value.entityKind,
     bankId: form.value.bankId ?? null,
     last4: form.value.last4 || null,
     currentBalance: toNumber(form.value.currentBalance)
@@ -104,6 +111,8 @@ function startEdit(item: Card) {
   form.value = {
     name: item.name,
     type: item.type,
+    entityName: item.entityName ?? '',
+    entityKind: item.entityKind ?? 'PERSONAL',
     bankId: item.bankId ?? null,
     last4: item.last4 || '',
     creditLimit: item.creditLimit !== null && item.creditLimit !== undefined ? toNumber(item.creditLimit) : null,
@@ -219,6 +228,23 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
             </div>
 
             <div class="field">
+              <label for="card-entity">Razón social / Entidad</label>
+              <input id="card-entity" v-model="form.entityName" maxlength="120" list="card-entity-names" placeholder="ej. Personal, GROUPMAAT S.A.S" />
+              <datalist id="card-entity-names">
+                <option v-for="n in entityNameOptions" :key="n" :value="n" />
+              </datalist>
+              <small class="hint">Para el consolidado en "Razones sociales".</small>
+            </div>
+
+            <div class="field">
+              <label for="card-entkind">Naturaleza</label>
+              <select id="card-entkind" v-model="form.entityKind">
+                <option value="PERSONAL">Personal</option>
+                <option value="BUSINESS">Empresarial</option>
+              </select>
+            </div>
+
+            <div class="field">
               <label for="card-last4">Últimos 4 dígitos</label>
               <input id="card-last4" v-model="form.last4" type="text" inputmode="numeric" pattern="\d{0,4}" maxlength="4" placeholder="1234" autocomplete="off" @input="sanitizeLast4" />
               <small class="hint">Para identificarla a simple vista.</small>
@@ -268,77 +294,52 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
 
       <div class="panel">
         <div class="panel-header">
-          <h2>Listado</h2>
+          <h2>Mis tarjetas</h2>
           <span class="panel-hint">{{ rows.length }} tarjeta{{ rows.length === 1 ? '' : 's' }}</span>
         </div>
 
-        <div class="table-scroll">
-          <table class="recent-table cards-table">
-            <thead>
-              <tr>
-                <th class="col-name">Tarjeta</th>
-                <th class="center col-money">Cupo / Límite</th>
-                <th class="center col-money">Saldo usado</th>
-                <th class="center col-money">Disponible</th>
-                <th class="center col-dates">Corte / Pago</th>
-                <th class="center col-status">Estado</th>
-                <th class="center col-acts">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-if="rows.length === 0">
-                <td colspan="7">
-                  <div class="empty-state">
-                    <div class="empty-state-illustration"><CreditCard :size="36" /></div>
-                    <strong>Sin tarjetas registradas</strong>
-                    <p>Agrega tus tarjetas de crédito o débito para verlas aquí.</p>
-                  </div>
-                </td>
-              </tr>
-              <tr v-for="item in rows" :key="item.id">
-                <td class="col-name">
-                  <strong>{{ item.name }}</strong>
-                  <div class="card-meta">
-                    <span class="cat-pill" :class="item.type === 'CREDIT' ? 'pill-credit' : 'pill-debit'">{{ item.type === 'CREDIT' ? 'CRÉDITO' : 'DÉBITO' }}</span>
-                    <span v-if="item.bankName" class="hint">{{ item.bankName }}</span>
-                  </div>
-                  <div v-if="item.last4" class="card-last4">**** {{ item.last4 }}</div>
-                </td>
-                <td class="center col-money">
-                  <template v-if="item.type === 'CREDIT'">{{ formatMoney(item.creditLimit) }}</template>
-                  <template v-else>—</template>
-                </td>
-                <td class="center col-money">
-                  <template v-if="item.type === 'CREDIT'"><span class="neg">{{ formatMoney(item.currentBalance) }}</span></template>
-                  <template v-else>—</template>
-                </td>
-                <td class="center col-money">
-                  <template v-if="item.type === 'CREDIT' && toNumber(item.creditLimit) > 0">
-                    <span class="pos">{{ formatMoney(availableCredit(item)) }}</span>
-                    <div class="progress-bar"><div class="progress-fill" :class="`sev-${pctSeverity(usedPct(item))}`" :style="{ width: usedPct(item) + '%' }"></div></div>
-                    <small class="hint">{{ usedPct(item) }}% consumido</small>
-                  </template>
-                  <template v-else-if="item.type === 'DEBIT'"><span class="pos">{{ formatMoney(item.currentBalance) }}</span></template>
-                  <template v-else>—</template>
-                </td>
-                <td class="center col-dates">
-                  <template v-if="item.type === 'CREDIT'">
-                    <div><strong>Día {{ item.cutoffDay ?? '—' }}</strong> <small class="hint">corte</small></div>
-                    <div><strong>Día {{ item.paymentDueDay ?? '—' }}</strong> <small class="hint">pago</small></div>
-                  </template>
-                  <template v-else>—</template>
-                </td>
-                <td class="center col-status"><span class="cat-pill pill-active">Activa</span></td>
-                <td class="center col-acts">
-                  <div class="row-actions" style="justify-content: center">
-                    <button v-if="item.type === 'CREDIT'" type="button" class="ghost mini pay" title="Pagar tarjeta" @click="openPay(item)"><Wallet :size="14" /></button>
-                    <button type="button" class="ghost mini" @click="startEdit(item)" :disabled="editingId === Number(item.id)"><Pencil :size="14" /></button>
-                    <button type="button" class="ghost mini danger" @click="removeRow(item)"><Trash2 :size="14" /></button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+        <div v-if="rows.length === 0" class="empty-state">
+          <div class="empty-state-illustration"><CreditCard :size="36" /></div>
+          <strong>Sin tarjetas registradas</strong>
+          <p>Agrega tus tarjetas de crédito o débito para verlas aquí.</p>
+        </div>
+
+        <div v-else class="real-cards">
+          <div v-for="item in rows" :key="item.id" class="rcard" :class="item.type === 'CREDIT' ? 'rcard-credit' : 'rcard-debit'">
+            <div class="rcard-row1">
+              <span class="rcard-kind">{{ item.type === 'CREDIT' ? 'CRÉDITO' : 'DÉBITO' }}</span>
+              <span class="rcard-bank">{{ item.bankName || 'Sin banco' }}</span>
+            </div>
+            <div class="rcard-chip"></div>
+            <div class="rcard-number">**** **** **** {{ item.last4 || '••••' }}</div>
+            <div class="rcard-row2">
+              <div class="rcard-holder">
+                <small>Titular / Razón social</small>
+                <strong>{{ item.entityName || item.name }}</strong>
+              </div>
+              <span v-if="item.entityKind" class="rcard-tag">{{ item.entityKind === 'BUSINESS' ? 'Empresarial' : 'Personal' }}</span>
+            </div>
+
+            <div class="rcard-foot">
+              <template v-if="item.type === 'CREDIT'">
+                <div class="rcard-stat"><small>Disponible</small><strong>{{ formatMoney(availableCredit(item)) }}</strong></div>
+                <div class="rcard-stat"><small>Usado</small><strong>{{ formatMoney(item.currentBalance) }}</strong></div>
+                <div class="rcard-stat"><small>Corte / Pago</small><strong>{{ item.cutoffDay ?? '—' }} / {{ item.paymentDueDay ?? '—' }}</strong></div>
+              </template>
+              <template v-else>
+                <div class="rcard-stat"><small>Saldo</small><strong>{{ formatMoney(item.currentBalance) }}</strong></div>
+              </template>
+            </div>
+            <div v-if="item.type === 'CREDIT' && toNumber(item.creditLimit) > 0" class="rcard-progress">
+              <div class="rcard-progress-fill" :style="{ width: usedPct(item) + '%' }"></div>
+            </div>
+
+            <div class="rcard-actions">
+              <button v-if="item.type === 'CREDIT'" type="button" title="Pagar tarjeta" @click="openPay(item)"><Wallet :size="15" /></button>
+              <button type="button" title="Editar" :disabled="editingId === Number(item.id)" @click="startEdit(item)"><Pencil :size="15" /></button>
+              <button type="button" title="Eliminar" @click="removeRow(item)"><Trash2 :size="15" /></button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -423,4 +424,35 @@ button[disabled] { opacity: 0.6; cursor: not-allowed; }
 .row-actions button.mini:disabled { opacity: 0.4; cursor: not-allowed; }
 .row-actions button.mini.danger { color: #dc2626; border-color: #fecaca; }
 .row-actions button.mini.danger:hover { background: #fef2f2; }
+
+/* Tarjetas realistas */
+.real-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.rcard {
+  position: relative; border-radius: 16px; padding: 18px; color: #fff; min-height: 200px;
+  display: flex; flex-direction: column; box-shadow: 0 8px 24px rgba(15, 23, 42, .18);
+  background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 60%, #3b82f6 100%);
+  overflow: hidden;
+}
+.rcard-credit { background: linear-gradient(135deg, #4338ca 0%, #6d28d9 55%, #9333ea 100%); }
+.rcard-debit { background: linear-gradient(135deg, #0f766e 0%, #0891b2 55%, #0ea5e9 100%); }
+.rcard::after { content: ''; position: absolute; right: -40px; top: -40px; width: 160px; height: 160px; background: rgba(255,255,255,.08); border-radius: 50%; }
+.rcard-row1 { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: .08em; font-weight: 700; opacity: .92; }
+.rcard-bank { opacity: .85; font-weight: 600; }
+.rcard-chip { width: 38px; height: 28px; border-radius: 6px; margin: 14px 0 10px; background: linear-gradient(135deg, #fde68a, #d4af37); box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
+.rcard-number { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 18px; letter-spacing: 2px; font-weight: 600; }
+.rcard-row2 { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 10px; gap: 8px; }
+.rcard-holder small { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; opacity: .7; }
+.rcard-holder strong { font-size: 13px; font-weight: 700; }
+.rcard-tag { font-size: 10px; font-weight: 700; background: rgba(255,255,255,.2); padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.rcard-foot { display: flex; gap: 14px; margin-top: auto; padding-top: 14px; flex-wrap: wrap; }
+.rcard-stat small { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; }
+.rcard-stat strong { font-size: 14px; font-weight: 700; }
+.rcard-progress { height: 5px; border-radius: 999px; background: rgba(255,255,255,.25); margin-top: 10px; overflow: hidden; }
+.rcard-progress-fill { height: 100%; background: #fff; border-radius: 999px; }
+.rcard-actions { position: absolute; top: 12px; right: 14px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s ease; }
+.rcard:hover .rcard-actions { opacity: 1; }
+.rcard-actions button { width: 30px; height: 30px; border: none; border-radius: 8px; background: rgba(255,255,255,.22); color: #fff; cursor: pointer; display: inline-grid; place-items: center; }
+.rcard-actions button:hover:not(:disabled) { background: rgba(255,255,255,.4); }
+.rcard-actions button:disabled { opacity: .4; cursor: not-allowed; }
+@media (hover: none) { .rcard-actions { opacity: 1; } }
 </style>

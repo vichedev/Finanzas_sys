@@ -21,6 +21,12 @@ enum CardType {
   DEBIT
 }
 
+// Naturaleza de la cuenta/tarjeta según a quién pertenece (para el consolidado por razón social).
+enum EntityKind {
+  PERSONAL
+  BUSINESS
+}
+
 enum MovementType {
   INCOME
   EXPENSE
@@ -178,6 +184,8 @@ model Account {
   name           String
   type           AccountType
   holder         String?                          // titular de la cuenta
+  entityName     String?                          // razón social / entidad (para consolidado)
+  entityKind     EntityKind  @default(PERSONAL)    // Personal o Empresarial
   accountKind    BankAccountKind?                 // tipo bancario: Ahorros / Corriente
   bankId         Int?
   bank           Bank?       @relation(fields: [bankId], references: [id], onDelete: SetNull)
@@ -205,6 +213,8 @@ model Card {
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
   type           CardType
+  entityName     String?                        // razón social / entidad (para consolidado)
+  entityKind     EntityKind @default(PERSONAL)   // Personal o Empresarial
   bankId         Int?
   bank           Bank?     @relation(fields: [bankId], references: [id], onDelete: SetNull)
   bankName       String?

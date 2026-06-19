@@ -13,6 +13,8 @@ cardsRouter.use(requireAuth, (req, res, next) => requirePermission('cards', req.
 const cardSchema = z.object({
   name: z.string().trim().min(2).max(80),
   type: z.enum(['CREDIT', 'DEBIT']),
+  entityName: z.string().trim().max(120).optional().nullable(),
+  entityKind: z.enum(['PERSONAL', 'BUSINESS']).optional(),
   bankId: z.coerce.number().int().positive().optional().nullable(),
   bankName: z.string().trim().max(80).optional().nullable(),
   last4: z.string().trim().max(4).optional().nullable(),
@@ -57,6 +59,8 @@ cardsRouter.put('/:id', async (req, res) => {
   const data: Record<string, unknown> = {};
   if (has('name')) data.name = body.name;
   if (has('type')) data.type = body.type;
+  if (has('entityName')) data.entityName = body.entityName?.trim() || null;
+  if (has('entityKind')) data.entityKind = body.entityKind;
   if (has('last4')) data.last4 = body.last4 ?? null;
   if (has('creditLimit')) data.creditLimit = body.creditLimit ?? null;
   if (has('cutoffDay')) data.cutoffDay = body.cutoffDay ?? null;

@@ -2,9 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { http } from '../api/http';
-import { HandCoins, FileText, UserCheck, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
+import { HandCoins, FileText, UserCheck, Pencil, Trash2, Plus, X, Wallet } from 'lucide-vue-next';
 import TabBar from '../components/TabBar.vue';
 import PageHeader from '../components/PageHeader.vue';
+import AppModal from '../components/AppModal.vue';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
 
@@ -240,6 +241,40 @@ async function removeRow(item: DebtRow) {
     if (editingId.value === item.id) cancelEdit();
     await load();
   } catch { toast.error('No se pudo eliminar el registro.'); }
+}
+
+// ---- Registrar pago/abono a una deuda ----
+const todayYmd = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const payOpen = ref(false);
+const payDebt = ref<DebtRow | null>(null);
+const payForm = ref<{ accountId: number | null; amount: number | null; payDate: string; notes: string }>({ accountId: null, amount: null, payDate: '', notes: '' });
+const paying = ref(false);
+const payBalance = computed(() => Math.max(0, Number(payDebt.value?.balance ?? 0)));
+function openPay(item: DebtRow) {
+  payDebt.value = item;
+  payForm.value = { accountId: accounts.value[0]?.id ?? null, amount: payBalance.value || null, payDate: todayYmd(), notes: '' };
+  payOpen.value = true;
+}
+async function submitPay() {
+  if (!payDebt.value) return;
+  if (!payForm.value.amount || payForm.value.amount <= 0) { toast.error('Ingresa un monto válido.'); return; }
+  if (payForm.value.amount > payBalance.value) { toast.error(`No puedes abonar más de lo pendiente (${formatMoney(payBalance.value)}).`); return; }
+  if (!payForm.value.payDate) { toast.error('Selecciona la fecha del pago.'); return; }
+  paying.value = true;
+  try {
+    await http.post(`/debts/${payDebt.value.id}/pay`, {
+      amount: payForm.value.amount,
+      accountId: payForm.value.accountId || null,
+      movementDate: payForm.value.payDate,
+      notes: payForm.value.notes.trim() || null
+    });
+    payOpen.value = false;
+    toast.success('Pago registrado. Se generó un gasto y se actualizó el saldo.');
+    await load();
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    toast.error(err?.response?.data?.message ?? 'No se pudo registrar el pago.');
+  } finally { paying.value = false; }
 }
 
 const saveLabel = computed(() => {
@@ -511,6 +546,9 @@ onMounted(load);
                 <td class="center col-status"><span :class="statusBadgeClass(item.status)">{{ STATUS_LABEL[item.status] }}</span></td>
                 <td class="center col-acts">
                   <div class="row-actions" style="justify-content: center">
+                    <button v-if="Number(item.balance) > 0" type="button" class="ghost mini pay" @click="openPay(item)" aria-label="Registrar pago" title="Registrar pago / abono">
+                      <Wallet :size="14" />
+                    </button>
                     <button type="button" class="ghost mini" @click="startEdit(item)" :disabled="editingId === item.id" aria-label="Editar">
                       <Pencil :size="14" />
                     </button>
@@ -548,6 +586,41 @@ onMounted(load);
         </div>
       </div>
     </div>
+
+    <AppModal :open="payOpen" :title="`Registrar pago${payDebt ? ' · ' + payDebt.name : ''}`" @close="payOpen = false">
+      <div class="pay-body">
+        <p class="pay-hint">
+          Se descuenta del saldo de la deuda y se registra un <strong>gasto</strong> (salida de dinero).
+          <template v-if="payDebt"><br />Saldo pendiente: <strong>{{ formatMoney(payBalance) }}</strong>.</template>
+        </p>
+        <div class="field">
+          <label for="dpay-amt">Monto del pago (USD) <span class="required-mark">*</span></label>
+          <input id="dpay-amt" v-model.number="payForm.amount" type="number" step="0.01" min="0" :max="payBalance" placeholder="0.00" />
+          <small class="hint">Máximo {{ formatMoney(payBalance) }} (lo pendiente).</small>
+        </div>
+        <div class="field">
+          <label for="dpay-acc">Cuenta de origen</label>
+          <select id="dpay-acc" v-model.number="payForm.accountId">
+            <option :value="null">Sin cuenta (no afecta saldos)</option>
+            <option v-for="a in accounts" :key="a.id" :value="a.id">{{ accountLabel(a) }}</option>
+          </select>
+          <small class="hint">Si la eliges, se descuenta de esa cuenta.</small>
+        </div>
+        <div class="field">
+          <label for="dpay-date">Fecha del pago <span class="required-mark">*</span></label>
+          <input id="dpay-date" v-model="payForm.payDate" type="date" min="2026-05-01" :max="todayYmd()" />
+          <small class="hint">Con esta fecha aparece el gasto en Movimientos.</small>
+        </div>
+        <div class="field">
+          <label for="dpay-notes">Notas</label>
+          <input id="dpay-notes" v-model="payForm.notes" type="text" maxlength="500" placeholder="Opcional" />
+        </div>
+      </div>
+      <template #footer>
+        <button type="button" class="ghost" @click="payOpen = false"><X :size="16" /> Cancelar</button>
+        <button type="button" @click="submitPay" :disabled="paying || payBalance <= 0"><Wallet :size="16" /> {{ paying ? 'Procesando…' : 'Registrar pago' }}</button>
+      </template>
+    </AppModal>
   </section>
 </template>
 
@@ -556,6 +629,14 @@ onMounted(load);
 .mini-kpi { display: flex; flex-direction: column; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 10px; padding: 8px 12px; min-width: 140px; }
 .mini-kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; }
 .mini-kpi-value { font-size: 14px; margin-top: 2px; color: #0f172a; }
+.row-actions button.mini.pay { color: #047857; border-color: #a7f3d0; }
+.row-actions button.mini.pay:hover { background: #ecfdf5; }
+.pay-body { display: flex; flex-direction: column; gap: 12px; }
+.pay-hint { margin: 0; font-size: 13px; color: #64748b; }
+.pay-body .field { display: flex; flex-direction: column; gap: 4px; }
+.pay-body label { font-size: 13px; font-weight: 600; color: #334155; }
+.pay-body input, .pay-body select { padding: 8px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; font: inherit; color: #334155; }
+.pay-body .hint { font-size: 12px; color: #94a3b8; }
 
 .required-mark { color: #ef4444; font-weight: 700; }
 

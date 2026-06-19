@@ -132,13 +132,52 @@ const prevLabel = computed(() => {
 
 const totalExpenseCategoryAmount = computed(() => (data.value?.expenseByCategory || []).reduce((acc, c) => acc + c.amount, 0));
 
-const barChartData = computed(() => ({
-  labels: (data.value?.monthlySeries || []).map((p) => p.label),
-  datasets: [
-    { label: 'Ingresos', data: (data.value?.monthlySeries || []).map((p) => p.income), backgroundColor: '#16a34a', borderRadius: 6 },
-    { label: 'Gastos', data: (data.value?.monthlySeries || []).map((p) => p.expense), backgroundColor: '#ef4444', borderRadius: 6 }
-  ]
-}));
+// --- Vista del gráfico: mensual (últimos meses) o semanal (mes en curso) ---
+const chartMode = ref<'monthly' | 'weekly'>('monthly');
+const monthMovements = ref<{ date: string; type: string; amount: number; isCredit?: boolean }[]>([]);
+
+// Desglose semanal del mes seleccionado (semanas por día: 1-7, 8-14, 15-21, 22-28, 29+).
+const weeklySeries = computed(() => {
+  const weeks = [
+    { label: 'Sem 1', sub: '1–7', income: 0, expense: 0 },
+    { label: 'Sem 2', sub: '8–14', income: 0, expense: 0 },
+    { label: 'Sem 3', sub: '15–21', income: 0, expense: 0 },
+    { label: 'Sem 4', sub: '22–28', income: 0, expense: 0 },
+    { label: 'Sem 5', sub: '29–31', income: 0, expense: 0 }
+  ];
+  for (const m of monthMovements.value) {
+    const day = new Date(m.date).getUTCDate();
+    const idx = Math.min(4, Math.floor((day - 1) / 7));
+    const amt = Number(m.amount || 0);
+    if (m.type === 'INCOME') weeks[idx].income += amt;
+    else if (m.type === 'EXPENSE' || m.type === 'WITHDRAWAL') weeks[idx].expense += amt;
+    else if (m.type === 'PURCHASE' && !m.isCredit) weeks[idx].expense += amt;
+  }
+  return weeks;
+});
+const topExpenseWeek = computed(() => weeklySeries.value.slice().sort((a, b) => b.expense - a.expense)[0] || null);
+const hasWeeklyData = computed(() => weeklySeries.value.some((w) => w.income > 0 || w.expense > 0));
+
+const barChartData = computed(() => {
+  if (chartMode.value === 'weekly') {
+    const w = weeklySeries.value;
+    return {
+      labels: w.map((x) => `${x.label} (${x.sub})`),
+      datasets: [
+        { label: 'Ingresos', data: w.map((x) => x.income), backgroundColor: '#16a34a', borderRadius: 6 },
+        { label: 'Gastos', data: w.map((x) => x.expense), backgroundColor: '#ef4444', borderRadius: 6 }
+      ]
+    };
+  }
+  return {
+    labels: (data.value?.monthlySeries || []).map((p) => p.label),
+    datasets: [
+      { label: 'Ingresos', data: (data.value?.monthlySeries || []).map((p) => p.income), backgroundColor: '#16a34a', borderRadius: 6 },
+      { label: 'Gastos', data: (data.value?.monthlySeries || []).map((p) => p.expense), backgroundColor: '#ef4444', borderRadius: 6 }
+    ]
+  };
+});
+const chartHasData = computed(() => chartMode.value === 'weekly' ? hasWeeklyData.value : hasMonthlyData.value);
 
 const barChartOptions = {
   responsive: true,
@@ -215,8 +254,12 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const { data: payload } = await http.get<DashboardPayload>('/dashboard', { params: { year: year.value, month: month.value } });
+    const [{ data: payload }, mv] = await Promise.all([
+      http.get<DashboardPayload>('/dashboard', { params: { year: year.value, month: month.value } }),
+      http.get<{ movementDate: string; type: string; amount: number | string; isCredit?: boolean }[]>('/movements', { params: { year: year.value, month: month.value } })
+    ]);
     data.value = payload;
+    monthMovements.value = (mv.data || []).map((m) => ({ date: m.movementDate, type: m.type, amount: Number(m.amount || 0), isCredit: m.isCredit }));
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error cargando el dashboard';
   } finally {
@@ -322,6 +365,48 @@ function accountIcon(type: string) {
     <p v-else-if="error" class="error">{{ error }}</p>
 
     <template v-else-if="data">
+      <div class="quick-grid">
+        <RouterLink to="/debts?kind=RECEIVABLE" class="quick-card quick-receivable">
+          <div class="quick-icon"><Banknote /></div>
+          <div class="quick-body">
+            <small>Por cobrar</small>
+            <strong>{{ formatMoney(data.debts.receivable.total) }}</strong>
+            <span>{{ data.debts.receivable.count }} pendiente{{ data.debts.receivable.count === 1 ? '' : 's' }}</span>
+          </div>
+          <span class="quick-arrow"><ChevronRight :size="18" /></span>
+        </RouterLink>
+
+        <RouterLink to="/debts?kind=PAYABLE" class="quick-card quick-payable">
+          <div class="quick-icon"><ReceiptText /></div>
+          <div class="quick-body">
+            <small>Por pagar</small>
+            <strong>{{ formatMoney(data.debts.payable.total) }}</strong>
+            <span>{{ data.debts.payable.count }} pendiente{{ data.debts.payable.count === 1 ? '' : 's' }}</span>
+          </div>
+          <span class="quick-arrow"><ChevronRight :size="18" /></span>
+        </RouterLink>
+
+        <RouterLink to="/debts?kind=LOAN" class="quick-card quick-loan">
+          <div class="quick-icon"><Landmark /></div>
+          <div class="quick-body">
+            <small>Préstamos activos</small>
+            <strong>{{ formatMoney(data.debts.loan.total) }}</strong>
+            <span>{{ data.debts.loan.count }} préstamo{{ data.debts.loan.count === 1 ? '' : 's' }}</span>
+          </div>
+          <span class="quick-arrow"><ChevronRight :size="18" /></span>
+        </RouterLink>
+
+        <RouterLink to="/recurrings" class="quick-card quick-recurring">
+          <div class="quick-icon"><Repeat /></div>
+          <div class="quick-body">
+            <small>Pagos automáticos</small>
+            <strong>{{ formatMoney(data.recurring.monthlyEstimated) }} / mes</strong>
+            <span>{{ data.recurring.activeCount }} programado{{ data.recurring.activeCount === 1 ? '' : 's' }}</span>
+          </div>
+          <span class="quick-arrow"><ChevronRight :size="18" /></span>
+        </RouterLink>
+      </div>
+
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-card-top">
@@ -399,29 +484,6 @@ function accountIcon(type: string) {
         </div>
 
         <template v-else>
-          <div class="compare-kpis">
-            <div class="compare-kpi income">
-              <small>Total ingresos</small>
-              <strong>{{ formatMoney(comparisonTotals.income) }}</strong>
-              <span>Prom. {{ formatMoney(comparisonTotals.avgIncome) }}/mes</span>
-            </div>
-            <div class="compare-kpi expense">
-              <small>Total gastos</small>
-              <strong>{{ formatMoney(comparisonTotals.expense) }}</strong>
-              <span>Prom. {{ formatMoney(comparisonTotals.avgExpense) }}/mes</span>
-            </div>
-            <div class="compare-kpi" :class="comparisonTotals.balance >= 0 ? 'is-pos' : 'is-neg'">
-              <small>Balance acumulado</small>
-              <strong>{{ formatMoney(comparisonTotals.balance) }}</strong>
-              <span>{{ comparisonTotals.balance >= 0 ? 'Ahorro neto' : 'Déficit' }}</span>
-            </div>
-            <div class="compare-kpi" :class="comparisonTotals.savings >= 0 ? 'is-pos' : 'is-neg'">
-              <small>Tasa de ahorro</small>
-              <strong>{{ comparisonTotals.savings.toFixed(1) }}%</strong>
-              <span>del ingreso total</span>
-            </div>
-          </div>
-
           <div class="table-scroll">
             <table class="recent-table compare-table">
               <thead>
@@ -469,18 +531,24 @@ function accountIcon(type: string) {
       <div class="row-2">
         <div class="panel">
           <div class="panel-header">
-            <h2>Resumen mensual</h2>
+            <h2>{{ chartMode === 'weekly' ? 'Resumen semanal' : 'Resumen mensual' }}</h2>
             <div class="panel-header-actions">
-              <span class="panel-hint">Últimos 6 meses</span>
+              <div class="chart-toggle" role="tablist">
+                <button type="button" :class="{ on: chartMode === 'monthly' }" @click="chartMode = 'monthly'">Mensual</button>
+                <button type="button" :class="{ on: chartMode === 'weekly' }" @click="chartMode = 'weekly'">Semanal</button>
+              </div>
               <RouterLink to="/reports" class="link">Ver reportes <ChevronRight :size="14" /></RouterLink>
             </div>
           </div>
+          <p v-if="chartMode === 'weekly' && topExpenseWeek && topExpenseWeek.expense > 0" class="chart-note">
+            Mayor gasto: <strong>{{ topExpenseWeek.label }}</strong> ({{ topExpenseWeek.sub }}) con <strong class="neg">{{ formatMoney(topExpenseWeek.expense) }}</strong>.
+          </p>
           <div class="chart-bar">
-            <Bar v-if="hasMonthlyData" :data="barChartData" :options="barChartOptions" />
+            <Bar v-if="chartHasData" :data="barChartData" :options="barChartOptions" />
             <div v-else class="empty-state">
               <div class="empty-state-illustration"><BarChart3 :size="36" /></div>
-              <strong>Sin datos en los últimos meses</strong>
-              <p>Registra ingresos y gastos para ver tu evolución mensual.</p>
+              <strong>{{ chartMode === 'weekly' ? 'Sin datos este mes' : 'Sin datos en los últimos meses' }}</strong>
+              <p>Registra ingresos y gastos para ver tu evolución.</p>
             </div>
           </div>
         </div>
@@ -514,8 +582,8 @@ function accountIcon(type: string) {
         </div>
       </div>
 
-      <div class="row-3">
-        <div class="panel panel-wide">
+      <div class="row-full">
+        <div class="panel">
           <div class="panel-header">
             <h2>Movimientos recientes</h2>
             <RouterLink to="/movements" class="link">Ver todos los movimientos <ChevronRight :size="14" /></RouterLink>
@@ -544,106 +612,17 @@ function accountIcon(type: string) {
             </tbody>
           </table>
         </div>
-
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Tarjetas</h2>
-            <RouterLink to="/cards" class="link">Ver todas <ChevronRight :size="14" /></RouterLink>
-          </div>
-          <div v-if="data.cards.length === 0" class="empty-state">
-            <div class="empty-state-illustration"><CreditCard :size="36" /></div>
-            <strong>Sin tarjetas</strong>
-            <p>Agrega una tarjeta para verla aquí.</p>
-          </div>
-          <div v-else class="cards-list">
-            <div v-for="card in data.cards.slice(0, 3)" :key="card.id" class="mini-card" :class="card.type === 'CREDIT' ? 'credit' : 'debit'">
-              <div class="mini-card-top">
-                <span class="brand-tag">{{ card.type === 'CREDIT' ? 'CRÉDITO' : 'DÉBITO' }}</span>
-                <strong>{{ card.name }}</strong>
-              </div>
-              <div v-if="card.type === 'CREDIT'" class="mini-card-grid">
-                <div><small>Disponible</small><span class="hl">{{ formatMoney(card.available ?? 0) }}</span></div>
-                <div><small>Corte</small><span>{{ card.cutoffDay ? String(card.cutoffDay).padStart(2, '0') : '--' }}</span></div>
-                <div><small>Pago</small><span>{{ card.paymentDueDay ? String(card.paymentDueDay).padStart(2, '0') : '--' }}</span></div>
-              </div>
-              <div v-else class="mini-card-grid">
-                <div><small>Saldo</small><span class="hl">{{ formatMoney(card.currentBalance) }}</span></div>
-                <div><small>Banco</small><span>{{ card.bankName || '--' }}</span></div>
-                <div><small>Final</small><span>**{{ card.last4 || '----' }}</span></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header">
-            <h2>Cuentas</h2>
-            <RouterLink to="/accounts" class="link">Ver todas <ChevronRight :size="14" /></RouterLink>
-          </div>
-          <div v-if="data.accounts.length === 0" class="empty-state">
-            <div class="empty-state-illustration"><Wallet :size="36" /></div>
-            <strong>Sin cuentas</strong>
-            <p>Agrega una cuenta para empezar.</p>
-          </div>
-          <ul v-else class="accounts-list">
-            <li v-for="acc in data.accounts.slice(0, 5)" :key="acc.id">
-              <span class="acc-icon">{{ accountIcon(acc.type) }}</span>
-              <div class="acc-body">
-                <strong>{{ acc.name }}</strong>
-                <small>{{ accountTypeLabel(acc.type) }}{{ acc.bankName ? ' · ' + acc.bankName : '' }}</small>
-              </div>
-              <span class="acc-amount">{{ formatMoney(acc.currentBalance) }}</span>
-            </li>
-          </ul>
-        </div>
-      </div>
-
-      <div class="quick-grid">
-        <RouterLink to="/debts?kind=RECEIVABLE" class="quick-card quick-receivable">
-          <div class="quick-icon"><Banknote /></div>
-          <div class="quick-body">
-            <small>Por cobrar</small>
-            <strong>{{ formatMoney(data.debts.receivable.total) }}</strong>
-            <span>{{ data.debts.receivable.count }} pendiente{{ data.debts.receivable.count === 1 ? '' : 's' }}</span>
-          </div>
-          <span class="quick-arrow"><ChevronRight :size="18" /></span>
-        </RouterLink>
-
-        <RouterLink to="/debts?kind=PAYABLE" class="quick-card quick-payable">
-          <div class="quick-icon"><ReceiptText /></div>
-          <div class="quick-body">
-            <small>Por pagar</small>
-            <strong>{{ formatMoney(data.debts.payable.total) }}</strong>
-            <span>{{ data.debts.payable.count }} pendiente{{ data.debts.payable.count === 1 ? '' : 's' }}</span>
-          </div>
-          <span class="quick-arrow"><ChevronRight :size="18" /></span>
-        </RouterLink>
-
-        <RouterLink to="/debts?kind=LOAN" class="quick-card quick-loan">
-          <div class="quick-icon"><Landmark /></div>
-          <div class="quick-body">
-            <small>Préstamos activos</small>
-            <strong>{{ formatMoney(data.debts.loan.total) }}</strong>
-            <span>{{ data.debts.loan.count }} préstamo{{ data.debts.loan.count === 1 ? '' : 's' }}</span>
-          </div>
-          <span class="quick-arrow"><ChevronRight :size="18" /></span>
-        </RouterLink>
-
-        <RouterLink to="/recurrings" class="quick-card quick-recurring">
-          <div class="quick-icon"><Repeat /></div>
-          <div class="quick-body">
-            <small>Pagos automáticos</small>
-            <strong>{{ formatMoney(data.recurring.monthlyEstimated) }} / mes</strong>
-            <span>{{ data.recurring.activeCount }} programado{{ data.recurring.activeCount === 1 ? '' : 's' }}</span>
-          </div>
-          <span class="quick-arrow"><ChevronRight :size="18" /></span>
-        </RouterLink>
       </div>
     </template>
   </section>
 </template>
 
 <style scoped>
+.row-full { margin-bottom: var(--space-5); }
+.chart-toggle { display: inline-flex; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; overflow: hidden; }
+.chart-toggle button { border: none; background: #fff; color: #64748b; font-weight: 600; font-size: 12px; padding: 5px 12px; cursor: pointer; }
+.chart-toggle button.on { background: var(--color-primary, #2563eb); color: #fff; }
+.chart-note { margin: 0 0 8px; font-size: 12.5px; color: #64748b; }
 .compare-panel { margin-bottom: 1rem; }
 
 .compare-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
