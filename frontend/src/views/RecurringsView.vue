@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import { http } from '../api/http';
 import { Repeat, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
 import { useFormat } from '../composables/useFormat';
+import { useToast } from '../composables/useToast';
 
 type RecurringType = 'INCOME' | 'EXPENSE' | 'TRANSFER';
 type RecurringStatus = 'ACTIVE' | 'PAUSED' | 'FINISHED';
@@ -23,7 +24,8 @@ const rows = ref<RecurringRow[]>([]);
 const categories = ref<Category[]>([]);
 const accounts = ref<Account[]>([]);
 const acctLabel = (a: Account) => [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ');
-const errorMsg = ref(''); const successMsg = ref(''); const saving = ref(false);
+const saving = ref(false);
+const toast = useToast();
 const editingId = ref<number | null>(null);
 
 const emptyForm = () => ({
@@ -57,30 +59,28 @@ const monthlyNet = computed(() => totalMonthlyIncome.value - totalMonthlyExpense
 function amountSign(r: RecurringRow) { if (r.type === 'INCOME') return `+${formatMoney(r.amount)}`; if (r.type === 'EXPENSE') return `-${formatMoney(r.amount)}`; return formatMoney(r.amount); }
 
 async function load() {
-  errorMsg.value = '';
   try {
     const [r, c, a] = await Promise.all([http.get('/recurrings'), http.get('/categories'), http.get('/accounts')]);
     rows.value = r.data; categories.value = c.data; accounts.value = a.data;
-  } catch { errorMsg.value = 'No se pudieron cargar las reglas recurrentes.'; }
+  } catch { toast.error('No se pudieron cargar las reglas recurrentes.'); }
 }
 
 async function save() {
-  if (!form.value.name.trim() || !form.value.amount) { errorMsg.value = 'Nombre y monto son obligatorios.'; return; }
-  saving.value = true; errorMsg.value = '';
+  if (!form.value.name.trim() || !form.value.amount) { toast.error('Nombre y monto son obligatorios.'); return; }
+  saving.value = true;
   try {
     const payload = { ...form.value, categoryId: form.value.categoryId || null, accountId: form.value.accountId || null, endDate: form.value.endDate || null, notes: form.value.notes || null };
     if (editingId.value !== null) {
       await http.put(`/recurrings/${editingId.value}`, payload);
-      successMsg.value = 'Regla actualizada.';
+      toast.success('Regla actualizada.');
     } else {
       await http.post('/recurrings', payload);
-      successMsg.value = 'Regla guardada.';
+      toast.success('Regla guardada.');
     }
     form.value = emptyForm();
     editingId.value = null;
     await load();
-    setTimeout(() => (successMsg.value = ''), 2500);
-  } catch { errorMsg.value = 'No se pudo guardar la regla recurrente.'; }
+  } catch { toast.error('No se pudo guardar la regla recurrente.'); }
   finally { saving.value = false; }
 }
 
@@ -110,11 +110,10 @@ async function removeRow(r: RecurringRow) {
   if (!confirm(`Eliminar la regla "${r.name}"? Esta acción no se puede deshacer.`)) return;
   try {
     await http.delete(`/recurrings/${r.id}`);
-    successMsg.value = 'Regla eliminada.';
+    toast.success('Regla eliminada.');
     if (editingId.value === r.id) cancelEdit();
     await load();
-    setTimeout(() => (successMsg.value = ''), 2500);
-  } catch { errorMsg.value = 'No se pudo eliminar la regla.'; }
+  } catch { toast.error('No se pudo eliminar la regla.'); }
 }
 
 onMounted(load);
@@ -133,9 +132,6 @@ onMounted(load);
         <div class="mini-kpi"><span class="mini-kpi-label">Balance neto</span><strong class="mini-kpi-value" :class="monthlyNet >= 0 ? 'pos' : 'neg'">{{ formatMoney(monthlyNet) }}</strong></div>
       </div>
     </header>
-
-    <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-    <p v-if="successMsg" class="hint-msg">{{ successMsg }}</p>
 
     <div class="stack">
       <div class="panel">

@@ -7,6 +7,7 @@ import FormField from '../components/FormField.vue';
 import AppButton from '../components/AppButton.vue';
 import DataTable, { type Column } from '../components/DataTable.vue';
 import { useFormat } from '../composables/useFormat';
+import { useToast } from '../composables/useToast';
 import { useEntitiesStore } from '../stores/entities';
 import { budgetsApi } from '../api/budgets';
 import type { Budget } from '../types';
@@ -27,8 +28,7 @@ const budgets = ref<Budget[]>([]);
 const period = ref<{ year: number; month: number }>({ year: 0, month: 0 });
 const form = ref<{ id: number | null; categoryId: number | null; amount: number | null }>({ id: null, categoryId: null, amount: null });
 const saving = ref(false);
-const errorMsg = ref('');
-const successMsg = ref('');
+const toast = useToast();
 
 const monthLabel = computed(() => {
   if (!period.value.year) return '';
@@ -53,19 +53,18 @@ async function load() {
 }
 
 async function save() {
-  errorMsg.value = ''; successMsg.value = '';
-  if (!form.value.categoryId) { errorMsg.value = 'Selecciona una categoría.'; return; }
-  if (!form.value.amount || form.value.amount <= 0) { errorMsg.value = 'Ingresa un límite mayor a 0.'; return; }
+  if (!form.value.categoryId) { toast.error('Selecciona una categoría.'); return; }
+  if (!form.value.amount || form.value.amount <= 0) { toast.error('Ingresa un límite mayor a 0.'); return; }
   saving.value = true;
   try {
+    const wasEdit = form.value.id !== null;
     await budgetsApi.save({ categoryId: form.value.categoryId, amount: form.value.amount });
-    successMsg.value = form.value.id !== null ? 'Presupuesto actualizado.' : 'Presupuesto creado.';
+    toast.success(wasEdit ? 'Presupuesto actualizado.' : 'Presupuesto creado.');
     form.value = { id: null, categoryId: null, amount: null };
     await load();
-    setTimeout(() => (successMsg.value = ''), 2500);
   } catch (err: unknown) {
     const e = err as { response?: { data?: { message?: string } } };
-    errorMsg.value = e?.response?.data?.message ?? 'No se pudo guardar el presupuesto.';
+    toast.error(e?.response?.data?.message ?? 'No se pudo guardar el presupuesto.');
   } finally { saving.value = false; }
 }
 
@@ -77,8 +76,8 @@ function cancelEdit() { form.value = { id: null, categoryId: null, amount: null 
 
 async function remove(row: Budget) {
   if (!confirm(`Eliminar el presupuesto de "${row.categoryName}"?`)) return;
-  try { await budgetsApi.remove(row.id); await load(); }
-  catch { errorMsg.value = 'No se pudo eliminar el presupuesto.'; }
+  try { await budgetsApi.remove(row.id); toast.success('Presupuesto eliminado.'); await load(); }
+  catch { toast.error('No se pudo eliminar el presupuesto.'); }
 }
 
 onMounted(() => Promise.all([load(), entities.ensureCategories(true)]));
@@ -110,8 +109,6 @@ onMounted(() => Promise.all([load(), entities.ensureCategories(true)]));
               {{ form.id !== null ? 'Guardar cambios' : 'Crear presupuesto' }}
             </AppButton>
           </div>
-          <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-          <p v-if="successMsg" class="hint-msg">{{ successMsg }}</p>
         </form>
       </PanelCard>
 

@@ -5,6 +5,7 @@ import { http } from '../api/http';
 import { HandCoins, FileText, UserCheck, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
 import TabBar from '../components/TabBar.vue';
 import { useFormat } from '../composables/useFormat';
+import { useToast } from '../composables/useToast';
 
 type DebtKind = 'PAYABLE' | 'RECEIVABLE' | 'LOAN';
 type DebtStatus = 'OPEN' | 'PARTIAL' | 'PAID' | 'CANCELED';
@@ -64,8 +65,7 @@ const activeTab = computed<DebtTab>({
 
 const rows = ref<DebtRow[]>([]);
 const accounts = ref<AccountRef[]>([]);
-const errorMsg = ref('');
-const successMsg = ref('');
+const toast = useToast();
 const saving = ref(false);
 const editingId = ref<number | null>(null);
 
@@ -156,22 +156,19 @@ function resetForm() {
 }
 
 async function load() {
-  errorMsg.value = '';
   try {
     const [debtsRes, accountsRes] = await Promise.all([http.get('/debts'), http.get('/accounts')]);
     rows.value = debtsRes.data;
     accounts.value = accountsRes.data;
     if (!form.value.name && form.value.principal === 0) form.value.kind = meta.value.defaultKind;
   } catch {
-    errorMsg.value = 'No se pudieron cargar los registros. Intenta nuevamente.';
+    toast.error('No se pudieron cargar los registros. Intenta nuevamente.');
   }
 }
 
 async function save() {
-  errorMsg.value = '';
-  successMsg.value = '';
   if (!form.value.name.trim() || !form.value.principal) {
-    errorMsg.value = 'El concepto y el monto principal son obligatorios.';
+    toast.error('El concepto y el monto principal son obligatorios.');
     return;
   }
   saving.value = true;
@@ -195,17 +192,16 @@ async function save() {
     };
     if (editingId.value !== null) {
       await http.put(`/debts/${editingId.value}`, payload);
-      successMsg.value = 'Registro actualizado.';
+      toast.success('Registro actualizado.');
     } else {
       await http.post('/debts', payload);
-      successMsg.value = 'Registro guardado correctamente.';
+      toast.success('Registro guardado correctamente.');
     }
     resetForm();
     editingId.value = null;
     await load();
-    setTimeout(() => (successMsg.value = ''), 2500);
-  } catch (e: unknown) {
-    errorMsg.value = 'No se pudo guardar el registro.';
+  } catch {
+    toast.error('No se pudo guardar el registro.');
   } finally {
     saving.value = false;
   }
@@ -239,11 +235,10 @@ async function removeRow(item: DebtRow) {
   if (!confirm(`Eliminar el registro "${item.name}"? Esta acción no se puede deshacer.`)) return;
   try {
     await http.delete(`/debts/${item.id}`);
-    successMsg.value = 'Registro eliminado.';
+    toast.success('Registro eliminado.');
     if (editingId.value === item.id) cancelEdit();
     await load();
-    setTimeout(() => (successMsg.value = ''), 2500);
-  } catch { errorMsg.value = 'No se pudo eliminar el registro.'; }
+  } catch { toast.error('No se pudo eliminar el registro.'); }
 }
 
 const saveLabel = computed(() => {
@@ -316,8 +311,6 @@ onMounted(load);
 
     <TabBar :tabs="DEBT_TABS" v-model="activeTab" />
 
-    <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-    <p v-if="successMsg" class="hint-msg">{{ successMsg }}</p>
 
     <div class="stack">
       <div class="panel">

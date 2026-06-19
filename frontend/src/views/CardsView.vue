@@ -4,9 +4,11 @@ import { CreditCard, Pencil, Trash2, Plus, X, Wallet } from 'lucide-vue-next';
 import { http } from '../api/http';
 import { useEntitiesStore } from '../stores/entities';
 import { useFormat } from '../composables/useFormat';
+import { useToast } from '../composables/useToast';
 import AppModal from '../components/AppModal.vue';
 
 const { formatMoney } = useFormat();
+const toast = useToast();
 const entities = useEntitiesStore();
 const activeBanks = computed(() => entities.activeBanks);
 const activeAccounts = computed(() => entities.accounts.filter((a) => a.isActive !== false));
@@ -43,8 +45,6 @@ const emptyForm = (): CardForm => ({
 const rows = ref<Card[]>([]);
 const form = ref<CardForm>(emptyForm());
 const saving = ref(false);
-const errorMsg = ref('');
-const successMsg = ref('');
 const editingId = ref<number | null>(null);
 
 const isCredit = computed(() => form.value.type === 'CREDIT');
@@ -60,13 +60,12 @@ function sanitizeLast4() { form.value.last4 = form.value.last4.replace(/\D+/g, '
 
 async function load() {
   try { const r = await http.get<Card[]>('/cards'); rows.value = Array.isArray(r.data) ? r.data : []; }
-  catch { errorMsg.value = 'No se pudieron cargar las tarjetas.'; }
+  catch { toast.error('No se pudieron cargar las tarjetas.'); }
 }
 
 async function save() {
-  errorMsg.value = ''; successMsg.value = '';
-  if (!form.value.name.trim()) { errorMsg.value = 'El nombre de la tarjeta es obligatorio.'; return; }
-  if (form.value.last4 && !/^\d{1,4}$/.test(form.value.last4)) { errorMsg.value = 'Los últimos 4 dígitos deben ser numéricos.'; return; }
+  if (!form.value.name.trim()) { toast.error('El nombre de la tarjeta es obligatorio.'); return; }
+  if (form.value.last4 && !/^\d{1,4}$/.test(form.value.last4)) { toast.error('Los últimos 4 dígitos deben ser numéricos.'); return; }
   const payload: Record<string, unknown> = {
     name: form.value.name.trim(), type: form.value.type,
     bankId: form.value.bankId ?? null,
@@ -84,10 +83,10 @@ async function save() {
   try {
     if (editingId.value !== null) {
       await http.put(`/cards/${editingId.value}`, payload);
-      successMsg.value = 'Tarjeta actualizada.';
+      toast.success('Tarjeta actualizada.');
     } else {
       await http.post('/cards', payload);
-      successMsg.value = 'Tarjeta guardada correctamente.';
+      toast.success('Tarjeta guardada correctamente.');
     }
     form.value = emptyForm();
     editingId.value = null;
@@ -95,7 +94,7 @@ async function save() {
   }
   catch (err: unknown) {
     const e = err as { response?: { data?: { message?: string } } };
-    errorMsg.value = e?.response?.data?.message ?? 'No se pudo guardar la tarjeta.';
+    toast.error(e?.response?.data?.message ?? 'No se pudo guardar la tarjeta.');
   } finally { saving.value = false; }
 }
 
@@ -123,17 +122,16 @@ async function removeRow(item: Card, force = false) {
   if (!force && !confirm(`Eliminar la tarjeta "${item.name}"? Se marcará inactiva. Sus movimientos NO se eliminan.`)) return;
   try {
     await http.delete(`/cards/${item.id}`, { params: force ? { force: 1 } : undefined });
-    successMsg.value = 'Tarjeta eliminada.';
+    toast.success('Tarjeta eliminada.');
     if (editingId.value === Number(item.id)) cancelEdit();
     await load();
-    setTimeout(() => (successMsg.value = ''), 2500);
   } catch (err: unknown) {
     const e = err as { response?: { status?: number; data?: { message?: string; code?: string } } };
     if (e?.response?.status === 409 && e.response.data?.code === 'NONZERO_BALANCE') {
       if (confirm(e.response.data.message || 'La tarjeta tiene saldo. ¿Marcar inactiva igual?')) await removeRow(item, true);
       return;
     }
-    errorMsg.value = 'No se pudo eliminar la tarjeta.';
+    toast.error('No se pudo eliminar la tarjeta.');
   }
 }
 
@@ -172,9 +170,8 @@ async function submitPay() {
       notes: payForm.value.notes.trim() || null
     });
     payOpen.value = false;
-    successMsg.value = 'Pago registrado. Saldos de tarjeta y cuenta actualizados.';
+    toast.success('Pago registrado. Saldos de tarjeta y cuenta actualizados.');
     await Promise.all([load(), entities.ensureAccounts(true)]);
-    setTimeout(() => (successMsg.value = ''), 3000);
   } catch (err: unknown) {
     const e = err as { response?: { data?: { message?: string } } };
     payErr.value = e?.response?.data?.message ?? 'No se pudo registrar el pago.';
@@ -270,8 +267,6 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
             </div>
           </div>
 
-          <p v-if="errorMsg" class="error">{{ errorMsg }}</p>
-          <p v-if="successMsg" class="hint-msg">{{ successMsg }}</p>
         </form>
       </div>
 
