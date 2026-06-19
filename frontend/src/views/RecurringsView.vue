@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { http } from '../api/http';
 import { Repeat, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
+import { useFormat } from '../composables/useFormat';
 
 type RecurringType = 'INCOME' | 'EXPENSE' | 'TRANSFER';
 type RecurringStatus = 'ACTIVE' | 'PAUSED' | 'FINISHED';
@@ -43,8 +44,7 @@ const PAYMENT_LABEL: Record<PaymentMethod, string> = { CASH: 'Efectivo', BANK_TR
 const STATUS_LABEL: Record<RecurringStatus, string> = { ACTIVE: 'Activa', PAUSED: 'Pausada', FINISHED: 'Finalizada' };
 const TYPE_LABEL: Record<RecurringType, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia' };
 
-const formatMoney = (v: number | null | undefined) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
-const formatDate = (v: string | null | undefined) => { if (!v) return '—'; const d = new Date(v); if (Number.isNaN(d.getTime())) return '—'; return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`; };
+const { formatMoney, formatDate } = useFormat();
 
 function monthlyFactor(f: Frequency) { return f === 'DAILY' ? 30 : f === 'WEEKLY' ? 4.3333 : f === 'MONTHLY' ? 1 : 1 / 12; }
 function monthlyImpact(r: RecurringRow) { return Number(r.amount || 0) * monthlyFactor(r.frequency); }

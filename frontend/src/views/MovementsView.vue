@@ -11,6 +11,7 @@ import PickerField from '../components/PickerField.vue';
 import AttachmentUploader from '../components/AttachmentUploader.vue';
 import AppModal from '../components/AppModal.vue';
 import AttachmentViewer from '../components/AttachmentViewer.vue';
+import { START_YEAR, START_MONTH, yearOptions as periodYears } from '../composables/usePeriod';
 import { attachmentsApi, type AttachmentMeta } from '../api/attachments';
 import { useToast } from '../composables/useToast';
 import { useFormat } from '../composables/useFormat';
@@ -177,15 +178,8 @@ const MONTHS = [
   { value: 7, label: 'Julio' }, { value: 8, label: 'Agosto' }, { value: 9, label: 'Septiembre' },
   { value: 10, label: 'Octubre' }, { value: 11, label: 'Noviembre' }, { value: 12, label: 'Diciembre' }
 ];
-// El sistema empezó a registrar en mayo 2026: no se permite consultar meses anteriores.
-const START_YEAR = 2026;
-const START_MONTH = 5; // Mayo
-const yearOptions = computed<number[]>(() => {
-  const max = Math.max(now.getFullYear() + 1, START_YEAR);
-  const years: number[] = [];
-  for (let y = START_YEAR; y <= max; y++) years.push(y);
-  return years;
-});
+// Tope de período (mayo 2026) compartido con el resto de vistas (composables/usePeriod).
+const yearOptions = computed<number[]>(() => periodYears());
 // Meses disponibles según el año: en el año de inicio, solo desde mayo.
 const monthOptions = computed(() =>
   year.value <= START_YEAR ? MONTHS.filter((m) => m.value >= START_MONTH) : MONTHS

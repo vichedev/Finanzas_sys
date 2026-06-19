@@ -14,7 +14,11 @@ function moneyFmt(currency: string): Intl.NumberFormat {
   return fmt;
 }
 
-const dateFmt = new Intl.DateTimeFormat('es-EC', { day: '2-digit', month: 'short', year: 'numeric' });
+// Las fechas "date-only" se guardan como medianoche UTC. Se formatean con componentes
+// UTC para no retroceder un día en zonas horarias negativas (ej. America/Guayaquil −05).
+function utcDmy(d: Date): string {
+  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+}
 
 export function useFormat() {
   const auth = useAuthStore();
@@ -27,7 +31,7 @@ export function useFormat() {
   function formatDate(v: string | number | Date | null | undefined): string {
     if (!v) return '—';
     const d = v instanceof Date ? v : new Date(v);
-    return Number.isNaN(d.getTime()) ? '—' : dateFmt.format(d);
+    return Number.isNaN(d.getTime()) ? '—' : utcDmy(d);
   }
 
   return { formatMoney, formatDate, currency };

@@ -3,8 +3,10 @@ import { computed, onMounted, ref } from 'vue';
 import { CreditCard, Pencil, Trash2, Plus, X, Wallet } from 'lucide-vue-next';
 import { http } from '../api/http';
 import { useEntitiesStore } from '../stores/entities';
+import { useFormat } from '../composables/useFormat';
 import AppModal from '../components/AppModal.vue';
 
+const { formatMoney } = useFormat();
 const entities = useEntitiesStore();
 const activeBanks = computed(() => entities.activeBanks);
 const activeAccounts = computed(() => entities.accounts.filter((a) => a.isActive !== false));
@@ -45,8 +47,6 @@ const errorMsg = ref('');
 const successMsg = ref('');
 const editingId = ref<number | null>(null);
 
-const moneyFmt = new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' });
-const formatMoney = (value: number | string | null | undefined) => moneyFmt.format(Number(value ?? 0));
 const isCredit = computed(() => form.value.type === 'CREDIT');
 const balanceHint = computed(() => isCredit.value
   ? 'Lo ya consumido hoy.'

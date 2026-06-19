@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { http } from '../api/http';
 import { HandCoins, FileText, UserCheck, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
 import TabBar from '../components/TabBar.vue';
+import { useFormat } from '../composables/useFormat';
 
 type DebtKind = 'PAYABLE' | 'RECEIVABLE' | 'LOAN';
 type DebtStatus = 'OPEN' | 'PARTIAL' | 'PAID' | 'CANCELED';
@@ -92,8 +93,7 @@ function accountLabel(a: AccountRef): string {
   return parts.join(' · ');
 }
 
-const formatMoney = (value: number | null | undefined) =>
-  new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
+const { formatMoney } = useFormat();
 
 const visibleRows = computed(() =>
   kindFilter.value === 'ALL' ? rows.value : rows.value.filter((row) => row.kind === kindFilter.value)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { Bar } from 'vue-chartjs';
 import {
   Chart as ChartJS,
@@ -20,6 +20,7 @@ import TabBar from '../components/TabBar.vue';
 import AttachmentUploader from '../components/AttachmentUploader.vue';
 import { useCrud } from '../composables/useCrud';
 import { useFormat } from '../composables/useFormat';
+import { yearOptions as periodYears, monthsForYear } from '../composables/usePeriod';
 import { useEntitiesStore } from '../stores/entities';
 import { invoicesApi } from '../api/invoices';
 import type { Invoice, InvoiceKind, InvoiceStatus, InvoicePayload } from '../types';
@@ -71,9 +72,14 @@ const activeTab = ref<InvoiceTab>('ALL');
 // ---- Período tributario seleccionado (controla resumen IVA + dashboard) ----
 const now = new Date();
 const period = ref({ year: now.getFullYear(), month: now.getMonth() + 1 });
-const yearOptions = computed(() => {
-  const y = now.getFullYear();
-  return [y - 2, y - 1, y, y + 1];
+const yearOptions = computed(() => periodYears());
+// Meses válidos según el año (en el año de inicio, solo desde mayo).
+const monthOptions = computed(() => monthsForYear(period.value.year));
+// Si al cambiar de año el mes queda fuera del rango permitido, se ajusta al mínimo válido.
+watch(() => period.value.year, () => {
+  if (!monthOptions.value.some((m) => m.value === period.value.month)) {
+    period.value.month = monthOptions.value[0]?.value ?? period.value.month;
+  }
 });
 
 // ---- CRUD genérico (igual que Cuentas) ----
@@ -406,7 +412,7 @@ onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
       <template #actions>
         <div class="period-picker">
           <select v-model.number="period.month" aria-label="Mes">
-            <option v-for="(m, i) in MONTHS" :key="i" :value="i + 1">{{ m }}</option>
+            <option v-for="m in monthOptions" :key="m.value" :value="m.value">{{ m.label }}</option>
           </select>
           <select v-model.number="period.year" aria-label="Año">
             <option v-for="y in yearOptions" :key="y" :value="y">{{ y }}</option>

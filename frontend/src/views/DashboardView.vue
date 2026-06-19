@@ -13,6 +13,8 @@ import {
 } from 'chart.js';
 import { http } from '../api/http';
 import { useAuthStore } from '../stores/auth';
+import { useFormat } from '../composables/useFormat';
+import { periodOptions as periodOpts, MONTH_NAMES } from '../composables/usePeriod';
 import OnboardingGuide from '../components/OnboardingGuide.vue';
 import {
   TrendingUp,
@@ -98,21 +100,8 @@ const data = ref<DashboardPayload | null>(null);
 const loading = ref(true);
 const error = ref('');
 
-const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-// El sistema empezó en mayo 2026: el resumen lista desde ese mes hasta el actual
-// (más reciente primero). Al avanzar el calendario, el mes nuevo aparece solo.
-const START_YEAR = 2026, START_MONTH = 5;
-const periodOptions = computed(() => {
-  const opts: Array<{ value: string; label: string; year: number; month: number }> = [];
-  const today = new Date();
-  let y = today.getFullYear(), m = today.getMonth() + 1;
-  while (y > START_YEAR || (y === START_YEAR && m >= START_MONTH)) {
-    opts.push({ value: `${y}-${m}`, label: `${MONTH_NAMES[m - 1]} ${y}`, year: y, month: m });
-    m--; if (m < 1) { m = 12; y--; }
-  }
-  return opts;
-});
+// Período unificado (desde mayo 2026 hasta el mes actual).
+const periodOptions = computed(() => periodOpts());
 
 const selectedPeriod = computed({
   get: () => `${year.value}-${month.value}`,
@@ -124,7 +113,7 @@ const selectedPeriod = computed({
   }
 });
 
-const formatMoney = (value: number) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(Number(value || 0));
+const { formatMoney } = useFormat();
 
 function pctChange(curr: number, prev: number) {
   if (!prev) return curr ? 100 : 0;
@@ -296,10 +285,7 @@ function rowAmount(row: Movement): { text: string; cls: string } {
   return { text: m, cls: '' }; // TRANSFER
 }
 function accountTypeLabel(type: string) { return ACCOUNT_LABEL[type] || type; }
-function formatDate(value: string) {
-  const d = new Date(value);
-  return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
-}
+const { formatDate } = useFormat();
 function formatChange(value: number) {
   const sign = value >= 0 ? '↑' : '↓';
   return `${sign} ${Math.abs(value).toFixed(1)}%`;

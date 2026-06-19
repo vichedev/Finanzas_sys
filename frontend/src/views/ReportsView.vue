@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from 'vue';
 import { FileDown, FileSpreadsheet, TrendingUp, TrendingDown, Scale, BarChart3 } from 'lucide-vue-next';
 import { http } from '../api/http';
+import { useFormat } from '../composables/useFormat';
+import { periodOptions as periodOpts } from '../composables/usePeriod';
 
 type CategoryRow = { type: string; categoryName: string; amount: number };
 type Summary = { year: number; month: number; income: number; expense: number; balance: number; byCategory: CategoryRow[] };
@@ -14,26 +16,13 @@ const loading = ref(true);
 const downloadingPdf = ref(false);
 const downloadError = ref('');
 
-const MONTH_NAMES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-// Igual que el resumen: desde mayo 2026 hasta el mes actual (más reciente primero).
-const START_YEAR = 2026, START_MONTH = 5;
-const periodOptions = computed(() => {
-  const opts: Array<{ value: string; label: string; year: number; month: number }> = [];
-  const today = new Date();
-  let y = today.getFullYear(), m = today.getMonth() + 1;
-  while (y > START_YEAR || (y === START_YEAR && m >= START_MONTH)) {
-    opts.push({ value: `${y}-${m}`, label: `${MONTH_NAMES[m - 1]} ${y}`, year: y, month: m });
-    m--; if (m < 1) { m = 12; y--; }
-  }
-  return opts;
-});
+const periodOptions = computed(() => periodOpts());
 const selectedPeriod = computed({
   get: () => `${year.value}-${month.value}`,
   set: (val: string) => { const [y, m] = val.split('-').map(Number); year.value = y; month.value = m; load(); }
 });
 
-const formatMoney = (value: number) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
+const { formatMoney } = useFormat();
 
 const incomeRows = computed(() => summary.value?.byCategory.filter((row) => row.type === 'INCOME') ?? []);
 const expenseRows = computed(() => summary.value?.byCategory.filter((row) => row.type === 'EXPENSE') ?? []);
