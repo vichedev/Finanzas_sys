@@ -4,6 +4,7 @@ import { FileDown, FileSpreadsheet, TrendingUp, TrendingDown, Scale, BarChart3 }
 import { http } from '../api/http';
 import { useFormat } from '../composables/useFormat';
 import { periodOptions as periodOpts } from '../composables/usePeriod';
+import PageHeader from '../components/PageHeader.vue';
 
 type CategoryRow = { type: string; categoryName: string; amount: number };
 type Summary = { year: number; month: number; income: number; expense: number; balance: number; byCategory: CategoryRow[] };
@@ -90,13 +91,9 @@ onMounted(load);
 
 <template>
   <section class="dashboard">
-    <header class="dash-header">
-      <div class="dash-header-left">
-        <h1>Reportes</h1>
-        <p>Resumen mensual por categoría.</p>
-      </div>
-      <div class="dash-header-right">
-        <select v-model="selectedPeriod" class="period-select">
+    <PageHeader title="Reportes" subtitle="Resumen mensual por categoría.">
+      <template #actions>
+        <select v-model="selectedPeriod" class="period-select" aria-label="Período">
           <option v-for="opt in periodOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
         <div class="export-group">
@@ -109,8 +106,8 @@ onMounted(load);
             {{ downloadingXlsx ? 'Generando…' : 'Excel' }}
           </button>
         </div>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <p v-if="downloadError" class="error">{{ downloadError }}</p>
     <p v-if="loading" class="dash-loading">Cargando...</p>

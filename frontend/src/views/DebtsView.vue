@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { http } from '../api/http';
 import { HandCoins, FileText, UserCheck, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
 import TabBar from '../components/TabBar.vue';
+import PageHeader from '../components/PageHeader.vue';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
 
@@ -284,30 +285,28 @@ onMounted(load);
 
 <template>
   <section class="dashboard">
-    <header class="dash-header">
-      <div class="dash-header-left">
-        <h1>{{ meta.title }}</h1>
-        <p>{{ meta.subtitle }}</p>
-      </div>
-      <div class="kpi-strip">
-        <div class="mini-kpi">
-          <span class="mini-kpi-label">Saldo pendiente</span>
-          <strong class="mini-kpi-value">{{ formatMoney(totalBalance) }}</strong>
+    <PageHeader :title="meta.title" :subtitle="meta.subtitle">
+      <template #actions>
+        <div class="kpi-strip">
+          <div class="mini-kpi">
+            <span class="mini-kpi-label">Saldo pendiente</span>
+            <strong class="mini-kpi-value">{{ formatMoney(totalBalance) }}</strong>
+          </div>
+          <div class="mini-kpi">
+            <span class="mini-kpi-label">Registros pendientes</span>
+            <strong class="mini-kpi-value">{{ pendingRows.length }}</strong>
+          </div>
+          <div v-if="kindFilter === 'LOAN' || kindFilter === 'ALL'" class="mini-kpi">
+            <span class="mini-kpi-label">Cuota mensual total</span>
+            <strong class="mini-kpi-value">{{ formatMoney(totalMonthlyInstallment) }}</strong>
+          </div>
+          <div class="mini-kpi">
+            <span class="mini-kpi-label">Próximo vencimiento</span>
+            <strong class="mini-kpi-value">{{ nextDueLabel }}</strong>
+          </div>
         </div>
-        <div class="mini-kpi">
-          <span class="mini-kpi-label">Registros pendientes</span>
-          <strong class="mini-kpi-value">{{ pendingRows.length }}</strong>
-        </div>
-        <div v-if="kindFilter === 'LOAN' || kindFilter === 'ALL'" class="mini-kpi">
-          <span class="mini-kpi-label">Cuota mensual total</span>
-          <strong class="mini-kpi-value">{{ formatMoney(totalMonthlyInstallment) }}</strong>
-        </div>
-        <div class="mini-kpi">
-          <span class="mini-kpi-label">Próximo vencimiento</span>
-          <strong class="mini-kpi-value">{{ nextDueLabel }}</strong>
-        </div>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <TabBar :tabs="DEBT_TABS" v-model="activeTab" />
 

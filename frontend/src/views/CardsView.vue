@@ -5,6 +5,7 @@ import { http } from '../api/http';
 import { useEntitiesStore } from '../stores/entities';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
+import PageHeader from '../components/PageHeader.vue';
 import AppModal from '../components/AppModal.vue';
 
 const { formatMoney } = useFormat();
@@ -184,12 +185,7 @@ onMounted(() => Promise.all([load(), entities.ensureBanks(true), entities.ensure
 
 <template>
   <section class="dashboard">
-    <header class="dash-header">
-      <div class="dash-header-left">
-        <h1>Tarjetas</h1>
-        <p>Tarjetas de crédito y débito.</p>
-      </div>
-    </header>
+    <PageHeader title="Tarjetas" subtitle="Tarjetas de crédito y débito." />
 
     <div class="stack">
       <div class="panel">

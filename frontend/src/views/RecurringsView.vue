@@ -4,6 +4,7 @@ import { http } from '../api/http';
 import { Repeat, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
+import PageHeader from '../components/PageHeader.vue';
 
 type RecurringType = 'INCOME' | 'EXPENSE' | 'TRANSFER';
 type RecurringStatus = 'ACTIVE' | 'PAUSED' | 'FINISHED';
@@ -121,17 +122,15 @@ onMounted(load);
 
 <template>
   <section class="dashboard">
-    <header class="dash-header">
-      <div class="dash-header-left">
-        <h1>Pagos / cobros recurrentes</h1>
-        <p>Pagos automáticos que se repiten.</p>
-      </div>
-      <div class="kpi-strip">
-        <div class="mini-kpi"><span class="mini-kpi-label">Ingresos mensuales</span><strong class="mini-kpi-value pos">+{{ formatMoney(totalMonthlyIncome) }}</strong></div>
-        <div class="mini-kpi"><span class="mini-kpi-label">Gastos mensuales</span><strong class="mini-kpi-value neg">-{{ formatMoney(totalMonthlyExpense) }}</strong></div>
-        <div class="mini-kpi"><span class="mini-kpi-label">Balance neto</span><strong class="mini-kpi-value" :class="monthlyNet >= 0 ? 'pos' : 'neg'">{{ formatMoney(monthlyNet) }}</strong></div>
-      </div>
-    </header>
+    <PageHeader title="Pagos / cobros recurrentes" subtitle="Pagos automáticos que se repiten.">
+      <template #actions>
+        <div class="kpi-strip">
+          <div class="mini-kpi"><span class="mini-kpi-label">Ingresos mensuales</span><strong class="mini-kpi-value pos">+{{ formatMoney(totalMonthlyIncome) }}</strong></div>
+          <div class="mini-kpi"><span class="mini-kpi-label">Gastos mensuales</span><strong class="mini-kpi-value neg">-{{ formatMoney(totalMonthlyExpense) }}</strong></div>
+          <div class="mini-kpi"><span class="mini-kpi-label">Balance neto</span><strong class="mini-kpi-value" :class="monthlyNet >= 0 ? 'pos' : 'neg'">{{ formatMoney(monthlyNet) }}</strong></div>
+        </div>
+      </template>
+    </PageHeader>
 
     <div class="stack">
       <div class="panel">

@@ -16,6 +16,7 @@ import { useAuthStore } from '../stores/auth';
 import { useFormat } from '../composables/useFormat';
 import { periodOptions as periodOpts, MONTH_NAMES } from '../composables/usePeriod';
 import OnboardingGuide from '../components/OnboardingGuide.vue';
+import PageHeader from '../components/PageHeader.vue';
 import {
   TrendingUp,
   TrendingDown,
@@ -307,17 +308,13 @@ function accountIcon(type: string) {
 
 <template>
   <section class="dashboard">
-    <header class="dash-header">
-      <div class="dash-header-left">
-        <h1>{{ greeting }}, {{ userFirstName }} 👋</h1>
-        <p>Así están tus finanzas en {{ MONTH_NAMES[month - 1] }} {{ year }}.</p>
-      </div>
-      <div class="dash-header-right">
-        <select v-model="selectedPeriod" class="period-select">
+    <PageHeader :title="`${greeting}, ${userFirstName} 👋`" :subtitle="`Así están tus finanzas en ${MONTH_NAMES[month - 1]} ${year}.`">
+      <template #actions>
+        <select v-model="selectedPeriod" class="period-select" aria-label="Período">
           <option v-for="opt in periodOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
         </select>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <OnboardingGuide />
 
