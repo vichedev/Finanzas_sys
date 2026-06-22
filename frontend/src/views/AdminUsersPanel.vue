@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { http } from '../api/http';
 import { useAuthStore, type Permissions, type ModuleName, type PermissionLevel } from '../stores/auth';
+import { useConfirm } from '../composables/useConfirm';
 
 type SystemRole = 'ADMIN_EMPRESA' | 'USUARIO_EMPRESA';
 const ROLE_LABEL: Record<SystemRole, string> = { ADMIN_EMPRESA: 'Administrador', USUARIO_EMPRESA: 'Usuario normal' };
@@ -36,6 +37,7 @@ interface CreateResponse {
 }
 
 const auth = useAuthStore();
+const { confirm } = useConfirm();
 const users = ref<UserRow[]>([]);
 const rolesTpl = ref<RoleTemplate[]>([]);
 const mailerConfigured = ref(false);
@@ -259,7 +261,7 @@ async function submitForm() {
 
 async function changeRole(u: UserRow, newRole: SystemRole) {
   if (u.id === auth.user?.id || u.role === newRole) return;
-  if (!confirm(`¿Cambiar el rol de ${u.email} a "${ROLE_LABEL[newRole] || newRole}"?`)) return;
+  if (!(await confirm({ message: `¿Cambiar el rol de ${u.email} a "${ROLE_LABEL[newRole] || newRole}"?`, confirmText: 'Cambiar' }))) return;
   try {
     await http.put(`/admin/users/${u.id}`, { role: newRole });
     await load();
@@ -279,7 +281,7 @@ async function toggleActive(u: UserRow) {
 
 async function removeUser(u: UserRow) {
   if (u.id === auth.user?.id) return;
-  if (!confirm(`¿Eliminar a ${u.email} y TODOS sus datos? No se puede deshacer.`)) return;
+  if (!(await confirm({ message: `¿Eliminar a ${u.email} y TODOS sus datos? No se puede deshacer.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/admin/users/${u.id}`);
     successMsg.value = 'Usuario eliminado.';

@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { http } from '../api/http';
+import { useConfirm } from '../composables/useConfirm';
 import type { Permissions, ModuleName, PermissionLevel } from '../stores/auth';
+
+const { confirm } = useConfirm();
 
 interface Role {
   id: number;
@@ -122,7 +125,7 @@ async function saveEdit() {
 
 async function removeRole(r: Role) {
   if (r.isBuiltIn) return;
-  if (!confirm(`Eliminar el rol "${r.name}"? Los usuarios que ya tenían sus permisos los conservarán.`)) return;
+  if (!(await confirm({ message: `¿Eliminar el rol "${r.name}"? Los usuarios que ya tenían sus permisos los conservarán.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/admin/roles/${r.id}`);
     successMsg.value = 'Rol eliminado.';

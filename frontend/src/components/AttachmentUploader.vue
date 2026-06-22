@@ -7,9 +7,11 @@ import { Paperclip, Eye, Trash2, FileText, Image as ImageIcon, Pencil, Check, X 
 import { attachmentsApi, type AttachmentMeta, type EntityType } from '../api/attachments';
 import AttachmentViewer from './AttachmentViewer.vue';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
 
 const props = defineProps<{ entityType: EntityType; entityId: number | null }>();
 const toast = useToast();
+const { confirm } = useConfirm();
 
 const ALLOWED = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif', 'application/pdf'];
 const MAX = 8 * 1024 * 1024;
@@ -102,7 +104,7 @@ const viewing = ref<AttachmentMeta | null>(null);
 const viewerOpen = ref(false);
 function view(a: AttachmentMeta) { viewing.value = a; viewerOpen.value = true; }
 async function removeServer(a: AttachmentMeta) {
-  if (!confirm(`Eliminar "${a.filename}"?`)) return;
+  if (!(await confirm({ message: `¿Eliminar "${a.filename}"?`, danger: true, confirmText: 'Eliminar' }))) return;
   try { await attachmentsApi.remove(a.id); list.value = list.value.filter((x) => x.id !== a.id); }
   catch { toast.error('No se pudo eliminar el comprobante.'); }
 }

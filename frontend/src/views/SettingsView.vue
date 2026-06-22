@@ -12,6 +12,7 @@ import { aiApi } from '../api/ai';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
 import AppModal from '../components/AppModal.vue';
+import { useConfirm } from '../composables/useConfirm';
 
 type Category = { id: number; name: string; type: 'INCOME' | 'EXPENSE'; color?: string | null; icon?: string | null };
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
@@ -26,6 +27,7 @@ type SmtpPublic = { host: string; port: number; user: string; hasPass: boolean; 
 
 const auth = useAuthStore();
 const entities = useEntitiesStore();
+const { confirm, alert } = useConfirm();
 
 // ---- FinancIA (IA de análisis con Groq) ----
 const aiCfg = ref<{ model: string; enabled: boolean; hasKey: boolean }>({ model: 'llama-3.3-70b-versatile', enabled: false, hasKey: false });
@@ -66,7 +68,7 @@ async function saveAiConfig() {
   } finally { aiSaving.value = false; }
 }
 async function clearAiKey() {
-  if (!confirm('¿Eliminar la clave de API y desactivar FinancIA?')) return;
+  if (!(await confirm({ message: '¿Eliminar la clave de API y desactivar FinancIA?', danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await aiApi.clearKey();
     aiCfg.value = { ...aiCfg.value, enabled: false, hasKey: false };
@@ -586,13 +588,13 @@ async function submitChangeEmail() {
 async function toggleTenantStatus(t: TenantRow) {
   const next = t.status === 'ACTIVE' ? 'suspend' : 'reactivate';
   const verb = next === 'suspend' ? 'suspender' : 'reactivar';
-  if (next === 'suspend' && !confirm(`¿Suspender la empresa "${t.legalName}"? Sus usuarios no podrán iniciar sesión hasta reactivarla.`)) return;
+  if (next === 'suspend' && !(await confirm({ message: `¿Suspender la empresa "${t.legalName}"? Sus usuarios no podrán iniciar sesión hasta reactivarla.`, danger: true, confirmText: 'Suspender' }))) return;
   try {
     await http.post(`/super-admin/tenants/${t.id}/${next}`);
     await loadTenants();
   } catch (e: unknown) {
     const err = e as { response?: { data?: { message?: string } } };
-    alert(err?.response?.data?.message || `No se pudo ${verb} la empresa.`);
+    await alert(err?.response?.data?.message || `No se pudo ${verb} la empresa.`);
   }
 }
 
@@ -691,7 +693,7 @@ function cancelEditBank() {
 }
 
 async function removeBank(b: Bank, force = false) {
-  if (!force && !confirm(`Eliminar el banco "${b.name}"? Los movimientos que lo referencian quedarán sin banco asociado.`)) return;
+  if (!force && !(await confirm({ message: `¿Eliminar el banco "${b.name}"? Los movimientos que lo referencian quedarán sin banco asociado.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/banks/${b.id}`, { params: force ? { force: 1 } : undefined });
     bankMsg.value = 'Banco eliminado.';
@@ -701,7 +703,7 @@ async function removeBank(b: Bank, force = false) {
   } catch (e: unknown) {
     const err = e as { response?: { status?: number; data?: { message?: string; code?: string } } };
     if (err?.response?.status === 409 && err.response.data?.code === 'BANK_IN_USE') {
-      if (confirm(err.response.data.message || 'El banco está en uso. ¿Eliminar igual?')) { await removeBank(b, true); return; }
+      if (await confirm({ message: err.response.data.message || 'El banco está en uso. ¿Eliminar igual?', danger: true, confirmText: 'Eliminar' })) { await removeBank(b, true); return; }
       return;
     }
     bankErr.value = err?.response?.data?.message || 'No se pudo eliminar el banco.';
@@ -765,7 +767,7 @@ function cancelEditWallet() {
 }
 
 async function removeWallet(w: Wallet) {
-  if (!confirm(`Eliminar la billetera "${w.name}"? Los movimientos que la referencian quedarán sin billetera asociada.`)) return;
+  if (!(await confirm({ message: `¿Eliminar la billetera "${w.name}"? Los movimientos que la referencian quedarán sin billetera asociada.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/wallets/${w.id}`);
     walletMsg.value = 'Billetera eliminada.';
@@ -808,7 +810,7 @@ async function onImportFile(e: Event) {
   const file = input.files?.[0];
   input.value = '';
   if (!file) return;
-  if (!confirm('Vas a IMPORTAR datos desde un respaldo. Se AGREGARÁN a la empresa actual (lo ideal es importar en una empresa vacía). ¿Continuar?')) return;
+  if (!(await confirm({ title: 'Importar respaldo', message: 'Vas a IMPORTAR datos desde un respaldo. Se AGREGARÁN a la empresa actual (lo ideal es importar en una empresa vacía). ¿Continuar?', confirmText: 'Importar' }))) return;
   importBusy.value = true; backupErr.value = ''; backupMsg.value = '';
   try {
     const json = JSON.parse(await file.text());
@@ -886,7 +888,7 @@ async function onLogoFile(e: Event) {
   } finally { identityBusy.value = false; }
 }
 async function removeLogo() {
-  if (!confirm('¿Quitar el logo actual?')) return;
+  if (!(await confirm({ message: '¿Quitar el logo actual?', danger: true, confirmText: 'Quitar' }))) return;
   try {
     await brandingStore.removeLogo();
     identityMsg.value = 'Logo eliminado.';
@@ -980,7 +982,7 @@ function cancelEditCategory() {
 }
 
 async function removeCategory(c: Category) {
-  if (!confirm(`Eliminar la categoría "${c.name}"? Los movimientos que la usan quedarán sin categoría.`)) return;
+  if (!(await confirm({ message: `¿Eliminar la categoría "${c.name}"? Los movimientos que la usan quedarán sin categoría.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/categories/${c.id}`);
     catMsg.value = 'Categoría eliminada.';
@@ -1017,7 +1019,7 @@ async function saveSmtp() {
 }
 
 async function clearSmtp() {
-  if (!confirm('¿Eliminar la configuración SMTP? Los emails dejarán de enviarse.')) return;
+  if (!(await confirm({ message: '¿Eliminar la configuración SMTP? Los emails dejarán de enviarse.', danger: true, confirmText: 'Eliminar' }))) return;
   await http.delete('/admin/settings/smtp');
   await loadSmtp();
   smtpMsg.value = 'Configuración eliminada.';

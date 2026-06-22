@@ -10,6 +10,7 @@ import DataTable, { type Column } from '../components/DataTable.vue';
 import { http } from '../api/http';
 import { useCrud } from '../composables/useCrud';
 import { useFormat } from '../composables/useFormat';
+import { useConfirm } from '../composables/useConfirm';
 import { useEntitiesStore } from '../stores/entities';
 import { accountsApi } from '../api/accounts';
 import {
@@ -61,6 +62,7 @@ const crud = useCrud<Account, AccountPayload>({
   }
 });
 const { rows, form, editingId, saving, save, startEdit, cancelEdit, load } = crud;
+const { confirm, alert } = useConfirm();
 // Catálogo de razones sociales (solo estas pueden asignarse a una cuenta).
 const entityList = ref<Entity[]>([]);
 async function loadEntities() { entityList.value = (await http.get<Entity[]>('/entities')).data; }
@@ -94,7 +96,7 @@ async function onSave() {
   entities.invalidate('accounts');
 }
 async function onRemove(item: Account, force = false) {
-  if (!force && !confirm(`Eliminar la cuenta "${item.name}"? Esto la marcará inactiva. Sus movimientos NO se eliminan.`)) return;
+  if (!force && !(await confirm({ message: `¿Eliminar la cuenta "${item.name}"? Esto la marcará inactiva. Sus movimientos NO se eliminan.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/accounts/${item.id}`, { params: force ? { force: 1 } : undefined });
     await load();
@@ -102,10 +104,10 @@ async function onRemove(item: Account, force = false) {
   } catch (err: unknown) {
     const e = err as { response?: { status?: number; data?: { message?: string; code?: string } } };
     if (e?.response?.status === 409 && e.response.data?.code === 'NONZERO_BALANCE') {
-      if (confirm(e.response.data.message || 'La cuenta tiene saldo. ¿Marcar inactiva igual?')) await onRemove(item, true);
+      if (await confirm({ message: e.response.data.message || 'La cuenta tiene saldo. ¿Marcar inactiva igual?', danger: true })) await onRemove(item, true);
       return;
     }
-    alert('No se pudo eliminar la cuenta.');
+    await alert('No se pudo eliminar la cuenta.');
   }
 }
 

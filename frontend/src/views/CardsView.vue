@@ -5,11 +5,13 @@ import { http } from '../api/http';
 import { useEntitiesStore } from '../stores/entities';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
 import PageHeader from '../components/PageHeader.vue';
 import AppModal from '../components/AppModal.vue';
 
 const { formatMoney } = useFormat();
 const toast = useToast();
+const { confirm } = useConfirm();
 const entities = useEntitiesStore();
 const activeBanks = computed(() => entities.activeBanks);
 const activeAccounts = computed(() => entities.accounts.filter((a) => a.isActive !== false));
@@ -178,7 +180,7 @@ function cancelEdit() {
 }
 
 async function removeRow(item: Card, force = false) {
-  if (!force && !confirm(`¿Eliminar definitivamente la tarjeta "${item.name}"? Sus movimientos se conservan pero quedan sin tarjeta asociada. Si solo quieres ocultarla, usa "Desactivar".`)) return;
+  if (!force && !(await confirm({ message: `¿Eliminar definitivamente la tarjeta "${item.name}"? Sus movimientos se conservan pero quedan sin tarjeta asociada. Si solo quieres ocultarla, usa "Desactivar".`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/cards/${item.id}`, { params: force ? { force: 1 } : undefined });
     toast.success('Tarjeta eliminada.');
@@ -187,7 +189,7 @@ async function removeRow(item: Card, force = false) {
   } catch (err: unknown) {
     const e = err as { response?: { status?: number; data?: { message?: string; code?: string } } };
     if (e?.response?.status === 409 && e.response.data?.code === 'NONZERO_BALANCE') {
-      if (confirm(e.response.data.message || 'La tarjeta tiene saldo. ¿Marcar inactiva igual?')) await removeRow(item, true);
+      if (await confirm({ message: e.response.data.message || 'La tarjeta tiene saldo usado. ¿Eliminar de todos modos?', danger: true, confirmText: 'Eliminar' })) await removeRow(item, true);
       return;
     }
     toast.error('No se pudo eliminar la tarjeta.');

@@ -8,6 +8,7 @@ import AppButton from '../components/AppButton.vue';
 import DataTable, { type Column } from '../components/DataTable.vue';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
 import { useEntitiesStore } from '../stores/entities';
 import { budgetsApi } from '../api/budgets';
 import type { Budget } from '../types';
@@ -29,6 +30,7 @@ const period = ref<{ year: number; month: number }>({ year: 0, month: 0 });
 const form = ref<{ id: number | null; categoryId: number | null; amount: number | null }>({ id: null, categoryId: null, amount: null });
 const saving = ref(false);
 const toast = useToast();
+const { confirm } = useConfirm();
 
 const monthLabel = computed(() => {
   if (!period.value.year) return '';
@@ -75,7 +77,7 @@ function startEdit(row: Budget) {
 function cancelEdit() { form.value = { id: null, categoryId: null, amount: null }; }
 
 async function remove(row: Budget) {
-  if (!confirm(`Eliminar el presupuesto de "${row.categoryName}"?`)) return;
+  if (!(await confirm({ message: `¿Eliminar el presupuesto de "${row.categoryName}"?`, danger: true, confirmText: 'Eliminar' }))) return;
   try { await budgetsApi.remove(row.id); toast.success('Presupuesto eliminado.'); await load(); }
   catch { toast.error('No se pudo eliminar el presupuesto.'); }
 }

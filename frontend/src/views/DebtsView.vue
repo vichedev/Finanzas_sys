@@ -8,6 +8,7 @@ import PageHeader from '../components/PageHeader.vue';
 import AppModal from '../components/AppModal.vue';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
 
 type DebtKind = 'PAYABLE' | 'RECEIVABLE' | 'LOAN';
 type DebtStatus = 'OPEN' | 'PARTIAL' | 'PAID' | 'CANCELED';
@@ -68,6 +69,7 @@ const activeTab = computed<DebtTab>({
 const rows = ref<DebtRow[]>([]);
 const accounts = ref<AccountRef[]>([]);
 const toast = useToast();
+const { confirm } = useConfirm();
 const saving = ref(false);
 const editingId = ref<number | null>(null);
 
@@ -234,7 +236,7 @@ function cancelEdit() {
 }
 
 async function removeRow(item: DebtRow) {
-  if (!confirm(`Eliminar el registro "${item.name}"? Esta acción no se puede deshacer.`)) return;
+  if (!(await confirm({ message: `¿Eliminar el registro "${item.name}"? Esta acción no se puede deshacer.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/debts/${item.id}`);
     toast.success('Registro eliminado.');

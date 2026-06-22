@@ -14,6 +14,7 @@ import AttachmentViewer from '../components/AttachmentViewer.vue';
 import { START_YEAR, START_MONTH, yearOptions as periodYears } from '../composables/usePeriod';
 import { attachmentsApi, type AttachmentMeta } from '../api/attachments';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
 import { useFormat } from '../composables/useFormat';
 
 type MovementType = 'INCOME' | 'EXPENSE' | 'TRANSFER' | 'WITHDRAWAL' | 'PURCHASE' | 'CARD_PAYMENT' | 'ADJUSTMENT';
@@ -46,6 +47,7 @@ interface Movement {
 
 const route = useRoute();
 const toast = useToast();
+const { confirm } = useConfirm();
 const { formatMoney } = useFormat();
 const now = new Date();
 // "Hoy" en fecha LOCAL del usuario (no UTC) para que el default del input sea correcto.
@@ -750,7 +752,7 @@ async function removeRow(item: Movement) {
   const msg = item.type === 'CARD_PAYMENT'
     ? `¿Eliminar este pago de tarjeta (${formatMoney(item.amount)})? Se devolverá el dinero a la cuenta de origen y se restaurará el saldo usado de la tarjeta.`
     : `Eliminar el movimiento "${item.description}" (${formatMoney(item.amount)})? Se revertirá el saldo en la cuenta/tarjeta afectada.`;
-  if (!confirm(msg)) return;
+  if (!(await confirm({ message: msg, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/movements/${item.id}`);
     toast.success('Movimiento eliminado y saldo revertido.');

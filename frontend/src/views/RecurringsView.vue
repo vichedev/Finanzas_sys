@@ -4,6 +4,7 @@ import { http } from '../api/http';
 import { Repeat, Pencil, Trash2, Plus, X } from 'lucide-vue-next';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
 import PageHeader from '../components/PageHeader.vue';
 
 type RecurringType = 'INCOME' | 'EXPENSE' | 'TRANSFER';
@@ -27,6 +28,7 @@ const accounts = ref<Account[]>([]);
 const acctLabel = (a: Account) => [a.name, a.bankName, a.accountNumber ? '****' + a.accountNumber.slice(-4) : ''].filter(Boolean).join(' · ');
 const saving = ref(false);
 const toast = useToast();
+const { confirm } = useConfirm();
 const editingId = ref<number | null>(null);
 
 const emptyForm = () => ({
@@ -108,7 +110,7 @@ function cancelEdit() {
 }
 
 async function removeRow(r: RecurringRow) {
-  if (!confirm(`Eliminar la regla "${r.name}"? Esta acción no se puede deshacer.`)) return;
+  if (!(await confirm({ message: `¿Eliminar la regla "${r.name}"? Esta acción no se puede deshacer.`, danger: true, confirmText: 'Eliminar' }))) return;
   try {
     await http.delete(`/recurrings/${r.id}`);
     toast.success('Regla eliminada.');

@@ -7,10 +7,12 @@ import PanelCard from '../components/PanelCard.vue';
 import AppModal from '../components/AppModal.vue';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
+import { useConfirm } from '../composables/useConfirm';
 import type { EntityKind } from '../types';
 
 const { formatMoney } = useFormat();
 const toast = useToast();
+const { confirm } = useConfirm();
 
 interface Entity { id: number; name: string; kind: EntityKind; taxId?: string | null; notes?: string | null; _count?: { accounts: number; cards: number } }
 interface Account { id: number; name: string; type: string; currentBalance: number | string; entityId?: number | null; bankName?: string | null }
@@ -102,7 +104,7 @@ async function save() {
 
 async function remove(e: Entity) {
   const used = (e._count?.accounts ?? 0) + (e._count?.cards ?? 0);
-  if (!confirm(`¿Eliminar la razón social "${e.name}"?${used ? ` ${used} cuenta(s)/tarjeta(s) quedarán sin asignar.` : ''}`)) return;
+  if (!(await confirm({ message: `¿Eliminar la razón social "${e.name}"?${used ? ` ${used} cuenta(s)/tarjeta(s) quedarán sin asignar.` : ''}`, danger: true, confirmText: 'Eliminar' }))) return;
   try { await http.delete(`/entities/${e.id}`); toast.success('Razón social eliminada.'); await load(); }
   catch { toast.error('No se pudo eliminar.'); }
 }

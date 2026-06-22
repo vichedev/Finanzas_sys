@@ -7,6 +7,7 @@ import { useEntitiesStore } from './stores/entities';
 import { http } from './api/http';
 import { useRoute, useRouter } from 'vue-router';
 import ToastHost from './components/ToastHost.vue';
+import ConfirmHost from './components/ConfirmHost.vue';
 import NotificationBell from './components/NotificationBell.vue';
 import {
   LayoutDashboard,
@@ -245,6 +246,7 @@ const roleLabel = computed(() => (auth.isSuper ? 'Super Admin' : auth.isAdmin ? 
   </div>
   <RouterView v-else />
   <ToastHost />
+  <ConfirmHost />
 </template>
 
 <style scoped>
