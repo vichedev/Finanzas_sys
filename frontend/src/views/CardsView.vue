@@ -501,7 +501,7 @@ button[disabled] { opacity: 0.6; cursor: not-allowed; }
 }
 .rcard-credit { background: linear-gradient(135deg, #4338ca 0%, #6d28d9 55%, #9333ea 100%); }
 .rcard-debit { background: linear-gradient(135deg, #0f766e 0%, #0891b2 55%, #0ea5e9 100%); }
-.rcard::after { content: ''; position: absolute; right: -40px; top: -40px; width: 160px; height: 160px; background: rgba(255,255,255,.08); border-radius: 50%; }
+.rcard::after { content: ''; position: absolute; right: -40px; top: -40px; width: 160px; height: 160px; background: rgba(255,255,255,.08); border-radius: 50%; pointer-events: none; }
 .rcard-row1 { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: .08em; font-weight: 700; opacity: .92; }
 .rcard-bank { opacity: .85; font-weight: 600; }
 .rcard-chip { width: 38px; height: 28px; border-radius: 6px; margin: 14px 0 10px; background: linear-gradient(135deg, #fde68a, #d4af37); box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
@@ -515,7 +515,7 @@ button[disabled] { opacity: 0.6; cursor: not-allowed; }
 .rcard-stat strong { font-size: 14px; font-weight: 700; }
 .rcard-progress { height: 5px; border-radius: 999px; background: rgba(255,255,255,.25); margin-top: 10px; overflow: hidden; }
 .rcard-progress-fill { height: 100%; background: #fff; border-radius: 999px; }
-.rcard-actions { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; opacity: 0; transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease; }
+.rcard-actions { position: absolute; top: 12px; right: 12px; z-index: 3; display: flex; gap: 6px; opacity: 0; transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease; }
 .rcard:hover .rcard-actions { opacity: 1; transform: none; }
 /* Botones de acción: círculo claro con icono oscuro (alto contraste sobre la tarjeta) */
 .rcard-actions .rcard-act { width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(255,255,255,.92); color: #1e293b; cursor: pointer; display: inline-grid; place-items: center; box-shadow: 0 2px 6px rgba(0,0,0,.2); transition: background .12s ease, color .12s ease, transform .1s ease; }
