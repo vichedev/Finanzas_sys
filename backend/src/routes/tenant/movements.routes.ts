@@ -300,23 +300,33 @@ movementsRouter.get('/monthly-summary', async (req, res) => {
   const month = Number(req.query.month || now.getUTCMonth() + 1);
   const { start, end } = monthRange(year, month);
 
+  const userId = req.tenantUserId!;
+  // Misma definición de Ingresos/Gastos que el Dashboard y la tabla de Movimientos:
+  //  - Ingreso = INCOME
+  //  - Gasto   = EXPENSE + WITHDRAWAL + PURCHASE pagada (no fiada) + comisiones
   const [totals, byCategory, categories] = await Promise.all([
-    req.tenantPrisma!.movement.groupBy({
-      by: ['type'],
-      where: { userId: req.tenantUserId!, movementDate: { gte: start, lt: end } },
-      _sum: { amount: true }
-    }),
+    req.tenantPrisma!.$queryRaw<Array<{ income: number; expense: number }>>(Prisma.sql`
+      SELECT
+        SUM(CASE WHEN "type" = 'INCOME' THEN "amount" ELSE 0 END)::float8 AS income,
+        (SUM(CASE
+            WHEN "type" IN ('EXPENSE', 'WITHDRAWAL') THEN "amount"
+            WHEN "type" = 'PURCHASE' AND "isCredit" = false THEN "amount"
+            ELSE 0 END)
+         + COALESCE(SUM("commission"), 0))::float8 AS expense
+      FROM "Movement"
+      WHERE "userId" = ${userId} AND "movementDate" >= ${start} AND "movementDate" < ${end}
+    `),
     req.tenantPrisma!.movement.groupBy({
       by: ['categoryId', 'type'],
-      where: { userId: req.tenantUserId!, movementDate: { gte: start, lt: end } },
+      where: { userId, movementDate: { gte: start, lt: end } },
       _sum: { amount: true },
       orderBy: { _sum: { amount: 'desc' } }
     }),
-    req.tenantPrisma!.category.findMany({ where: { userId: req.tenantUserId! } })
+    req.tenantPrisma!.category.findMany({ where: { userId } })
   ]);
 
-  const income = Number(totals.find((t) => t.type === 'INCOME')?._sum.amount || 0);
-  const expense = Number(totals.find((t) => t.type === 'EXPENSE')?._sum.amount || 0);
+  const income = Number(totals[0]?.income || 0);
+  const expense = Number(totals[0]?.expense || 0);
 
   res.json({
     year, month, income, expense, balance: income - expense,

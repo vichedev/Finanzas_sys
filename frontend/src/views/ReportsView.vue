@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { FileDown, FileSpreadsheet, TrendingUp, TrendingDown, Scale, BarChart3 } from 'lucide-vue-next';
 import { http } from '../api/http';
 import { useFormat } from '../composables/useFormat';
@@ -87,6 +87,24 @@ async function downloadXlsx() {
 }
 
 onMounted(load);
+
+// Refresco en tiempo real: al volver a la pestaña/ventana, recarga el resumen.
+let lastRefresh = 0;
+function refreshOnFocus() {
+  if (document.visibilityState === 'hidden') return;
+  const now = Date.now();
+  if (now - lastRefresh < 1500) return;
+  lastRefresh = now;
+  load();
+}
+onMounted(() => {
+  window.addEventListener('focus', refreshOnFocus);
+  document.addEventListener('visibilitychange', refreshOnFocus);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', refreshOnFocus);
+  document.removeEventListener('visibilitychange', refreshOnFocus);
+});
 </script>
 
 <template>
