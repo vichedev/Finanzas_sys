@@ -619,10 +619,12 @@ function accountIcon(type: string) {
 
 <style scoped>
 .row-full { margin-bottom: var(--space-5); }
-.chart-toggle { display: inline-flex; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; overflow: hidden; }
-.chart-toggle button { border: none; background: #fff; color: #64748b; font-weight: 600; font-size: 12px; padding: 5px 12px; cursor: pointer; }
-.chart-toggle button.on { background: var(--color-primary, #2563eb); color: #fff; }
+.chart-toggle { display: inline-flex; gap: 2px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px; padding: 3px; }
+.chart-toggle button { border: none !important; background: transparent !important; color: #64748b !important; font-weight: 600; font-size: 12.5px; padding: 6px 16px; border-radius: 999px; cursor: pointer; box-shadow: none !important; transition: background .12s ease, color .12s ease; }
+.chart-toggle button:hover { color: #334155 !important; }
+.chart-toggle button.on { background: #fff !important; color: var(--color-primary, #2563eb) !important; box-shadow: 0 1px 2px rgba(15,23,42,.12) !important; }
 .chart-note { margin: 0 0 8px; font-size: 12.5px; color: #64748b; }
+.panel-header-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .compare-panel { margin-bottom: 1rem; }
 
 .compare-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
