@@ -43,7 +43,9 @@
       "Bash(grep -rn \"{ label:.*year\\\\|periodLabel\\\\|monthYear\\\\|value:.*ym\\\\|YYYY-MM\\\\|slice\\(0, 7\\)\\\\|months.push\\\\|period\" frontend/src/views/DashboardView.vue)",
       "Bash(powershell.exe -NoProfile -Command \"Get-CimInstance Win32_Process -Filter \\\\\"name='node.exe'\\\\\" | Select-Object ProcessId,CommandLine | Format-List\")",
       "Bash(taskkill //PID 20284 //F)",
-      "Bash(taskkill //PID 4680 //F)"
+      "Bash(taskkill //PID 4680 //F)",
+      "Bash(grep -rn \"dbName\\\\|finanzas_t_\\\\|t_\\\\${\\\\|_t_\\\\|dbName =\" backend/src/lib/tenantProvisioning.ts)",
+      "Bash(netstat -ano)"
     ]
   }
 }
