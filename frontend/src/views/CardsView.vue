@@ -400,10 +400,10 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
             </div>
 
             <div class="rcard-actions">
-              <button v-if="item.type === 'CREDIT' && item.isActive !== false" type="button" title="Pagar tarjeta" @click="openPay(item)"><Wallet :size="15" /></button>
-              <button type="button" title="Editar" :disabled="editingId === Number(item.id)" @click="startEdit(item)"><Pencil :size="15" /></button>
-              <button type="button" :title="item.isActive === false ? 'Activar' : 'Desactivar'" @click="toggleActive(item)"><Power :size="15" /></button>
-              <button type="button" title="Eliminar" @click="removeRow(item)"><Trash2 :size="15" /></button>
+              <button v-if="item.type === 'CREDIT' && item.isActive !== false" type="button" class="icon-btn rcard-act" title="Pagar tarjeta" @click="openPay(item)"><Wallet :size="16" /></button>
+              <button type="button" class="icon-btn rcard-act" title="Editar" :disabled="editingId === Number(item.id)" @click="startEdit(item)"><Pencil :size="16" /></button>
+              <button type="button" class="icon-btn rcard-act" :title="item.isActive === false ? 'Activar' : 'Desactivar'" @click="toggleActive(item)"><Power :size="16" /></button>
+              <button type="button" class="icon-btn rcard-act danger" title="Eliminar" @click="removeRow(item)"><Trash2 :size="16" /></button>
             </div>
           </div>
         </div>
@@ -515,12 +515,15 @@ button[disabled] { opacity: 0.6; cursor: not-allowed; }
 .rcard-stat strong { font-size: 14px; font-weight: 700; }
 .rcard-progress { height: 5px; border-radius: 999px; background: rgba(255,255,255,.25); margin-top: 10px; overflow: hidden; }
 .rcard-progress-fill { height: 100%; background: #fff; border-radius: 999px; }
-.rcard-actions { position: absolute; top: 12px; right: 14px; display: flex; gap: 4px; opacity: 0; transition: opacity .15s ease; }
-.rcard:hover .rcard-actions { opacity: 1; }
-.rcard-actions button { width: 30px; height: 30px; border: none; border-radius: 8px; background: rgba(255,255,255,.22); color: #fff; cursor: pointer; display: inline-grid; place-items: center; }
-.rcard-actions button:hover:not(:disabled) { background: rgba(255,255,255,.4); }
-.rcard-actions button:disabled { opacity: .4; cursor: not-allowed; }
-@media (hover: none) { .rcard-actions { opacity: 1; } }
+.rcard-actions { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; opacity: 0; transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease; }
+.rcard:hover .rcard-actions { opacity: 1; transform: none; }
+/* Botones de acción: círculo claro con icono oscuro (alto contraste sobre la tarjeta) */
+.rcard-actions .rcard-act { width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(255,255,255,.92); color: #1e293b; cursor: pointer; display: inline-grid; place-items: center; box-shadow: 0 2px 6px rgba(0,0,0,.2); transition: background .12s ease, color .12s ease, transform .1s ease; }
+.rcard-actions .rcard-act:hover:not(:disabled) { background: #fff; transform: translateY(-1px); }
+.rcard-actions .rcard-act.danger { color: #dc2626; }
+.rcard-actions .rcard-act.danger:hover:not(:disabled) { background: #fee2e2; }
+.rcard-actions .rcard-act:disabled { opacity: .5; cursor: not-allowed; }
+@media (hover: none) { .rcard-actions { opacity: 1; transform: none; } }
 .rcard-logo { max-height: 26px; max-width: 90px; object-fit: contain; }
 .rcard-off { filter: grayscale(.7); opacity: .6; }
 .rcard-badge { position: absolute; top: 12px; left: 14px; font-size: 10px; font-weight: 800; background: rgba(0,0,0,.35); padding: 3px 8px; border-radius: 999px; letter-spacing: .04em; }

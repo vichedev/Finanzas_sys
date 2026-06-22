@@ -11,6 +11,7 @@ import { backupApi } from '../api/backup';
 import { aiApi } from '../api/ai';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
+import AppModal from '../components/AppModal.vue';
 
 type Category = { id: number; name: string; type: 'INCOME' | 'EXPENSE'; color?: string | null; icon?: string | null };
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
@@ -327,6 +328,7 @@ const emptyWalletForm = () => ({ name: '', provider: '', identifier: '', isActiv
 const newWallet = ref(emptyWalletForm());
 const editingWalletId = ref<number | null>(null);
 const walletMsg = ref(''); const walletErr = ref('');
+const walletAccModalOpen = ref(false);
 function toggleWalletAccount(id: number) {
   const arr = newWallet.value.accountIds;
   const i = arr.indexOf(id);
@@ -1419,26 +1421,42 @@ onMounted(async () => {
           <p v-if="!walletAccounts.length" class="hint">
             No tienes cuentas creadas. Agrégalas en la sección <strong>Cuentas</strong> para poder ligarlas.
           </p>
-          <div v-else class="wallet-acc-grid">
+          <template v-else>
+            <button type="button" class="wallet-acc-trigger" @click="walletAccModalOpen = true">
+              <Landmark :size="16" />
+              <span>{{ newWallet.accountIds.length ? `${newWallet.accountIds.length} cuenta${newWallet.accountIds.length === 1 ? '' : 's'} seleccionada${newWallet.accountIds.length === 1 ? '' : 's'}` : 'Seleccionar cuentas…' }}</span>
+              <X v-if="newWallet.accountIds.length" :size="14" class="wallet-acc-clear" @click.stop="newWallet.accountIds = []" />
+            </button>
+            <div v-if="newWallet.accountIds.length" class="wallet-acc-tags">
+              <span v-for="id in newWallet.accountIds" :key="id" class="cat-pill" style="background:#eef2ff;color:#4338ca">
+                🏦 {{ walletAccounts.find((a) => a.id === id)?.name || 'Cuenta' }}
+              </span>
+            </div>
+          </template>
+          <small class="hint">
+            Al registrar un movimiento con esta billetera podrás elegir cuál de estas cuentas la respalda y su saldo se ajustará.
+          </small>
+        </div>
+
+        <AppModal :open="walletAccModalOpen" title="Cuentas que respaldan la billetera" @close="walletAccModalOpen = false">
+          <div class="wallet-acc-modal">
+            <p class="hint" style="margin-top:0">Marca una o varias cuentas de banco.</p>
             <label
               v-for="a in walletAccounts"
               :key="a.id"
-              class="wallet-acc-chip"
+              class="wallet-acc-row"
               :class="{ on: newWallet.accountIds.includes(a.id) }"
             >
-              <input
-                type="checkbox"
-                :checked="newWallet.accountIds.includes(a.id)"
-                @change="toggleWalletAccount(a.id)"
-              />
+              <input type="checkbox" :checked="newWallet.accountIds.includes(a.id)" @change="toggleWalletAccount(a.id)" />
               <span>{{ walletAccountLabel(a) }}</span>
+              <Check v-if="newWallet.accountIds.includes(a.id)" :size="16" class="wallet-acc-check" />
             </label>
           </div>
-          <small class="hint">
-            Marca una o varias cuentas. Al registrar un movimiento con esta billetera podrás elegir cuál la respalda
-            y su saldo se ajustará.
-          </small>
-        </div>
+          <template #footer>
+            <button type="button" class="ghost" @click="newWallet.accountIds = []">Limpiar</button>
+            <button type="button" @click="walletAccModalOpen = false"><Check :size="16" /> Listo ({{ newWallet.accountIds.length }})</button>
+          </template>
+        </AppModal>
 
         <div class="form-footer">
           <div class="field field-narrow">
@@ -2664,7 +2682,28 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .financia-empty p { margin: 0; font-size: 13px; max-width: 320px; }
 @media (max-width: 880px) { .financia-grid { grid-template-columns: 1fr; } }
 
-/* Cuentas de respaldo de una billetera (multi-selección por chips) */
+/* Cuentas de respaldo de una billetera: botón + modal */
+.wallet-acc-trigger {
+  display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px; margin: 2px 0 4px;
+  border: 1.5px solid var(--color-border, #e2e8f0); border-radius: 10px; background: #fff;
+  color: #334155; font-weight: 600; font-size: 13.5px; cursor: pointer; transition: border-color .12s ease, background .12s ease;
+}
+.wallet-acc-trigger:hover { border-color: #c7d2fe; background: #f8fafc; }
+.wallet-acc-clear { color: #94a3b8; margin-left: 2px; }
+.wallet-acc-clear:hover { color: #dc2626; }
+.wallet-acc-modal { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; }
+.wallet-acc-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border: 1.5px solid var(--color-border, #e2e8f0); border-radius: 10px; cursor: pointer; font-weight: 600; color: #475569;
+  transition: border-color .12s ease, background .12s ease;
+}
+.wallet-acc-row:hover { border-color: #c7d2fe; background: #f8fafc; }
+.wallet-acc-row.on { border-color: var(--color-primary, #4338ca); background: #eef2ff; color: #3730a3; }
+.wallet-acc-row input { accent-color: var(--color-primary, #4338ca); width: 16px; height: 16px; }
+.wallet-acc-row span { flex: 1; }
+.wallet-acc-check { color: var(--color-primary, #4338ca); }
+
+/* (legado) chips */
 .wallet-acc-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 4px; }
 .wallet-acc-chip {
   display: inline-flex; align-items: center; gap: 7px;
