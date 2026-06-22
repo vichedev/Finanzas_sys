@@ -20,8 +20,28 @@ const cardSchema = z.object({
   creditLimit: z.coerce.number().finite().gte(0).lte(99_999_999_999.99).optional().nullable(),
   cutoffDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
   paymentDueDay: z.coerce.number().int().min(1).max(31).optional().nullable(),
-  currentBalance: z.coerce.number().finite().gte(-99_999_999_999.99).lte(99_999_999_999.99).default(0)
+  currentBalance: z.coerce.number().finite().gte(-99_999_999_999.99).lte(99_999_999_999.99).default(0),
+  color: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, 'Color inválido').optional().nullable(),
+  isActive: z.boolean().optional(),
+  // Logo como data URL (data:image/...;base64,....) o null para quitarlo. ~1.5 MB máx.
+  logoDataUrl: z.string().max(2_000_000).optional().nullable()
 }).strict();
+
+// Convierte un data URL de imagen a { mime, buffer }. Devuelve null si está vacío.
+function parseLogo(dataUrl?: string | null): { mime: string; buffer: Uint8Array<ArrayBuffer> } | null {
+  if (!dataUrl) return null;
+  const m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(dataUrl);
+  if (!m) throw Object.assign(new Error('Logo inválido: debe ser una imagen.'), { status: 400 });
+  const buf = Buffer.from(m[2], 'base64');
+  const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+  return { mime: m[1], buffer: new Uint8Array(ab) };
+}
+
+// Aplana la tarjeta para la respuesta: logo como data URL, sin los bytes crudos.
+function shapeCard<T extends { logoData?: Buffer | Uint8Array | null; logoMime?: string | null }>(c: T) {
+  const { logoData, logoMime, ...rest } = c;
+  return { ...rest, logo: logoData && logoMime ? `data:${logoMime};base64,${Buffer.from(logoData).toString('base64')}` : null };
+}
 
 /** Resuelve el nombre del banco a partir del bankId (denormalizado para mostrar). */
 async function resolveBankName(prisma: any, userId: number, bankId?: number | null): Promise<string | null> {
@@ -31,21 +51,26 @@ async function resolveBankName(prisma: any, userId: number, bankId?: number | nu
 }
 
 cardsRouter.get('/', async (req, res) => {
+  // ?all=1 incluye inactivas (para gestionarlas/reactivarlas en la vista de Tarjetas).
+  const includeInactive = req.query.all === '1' || req.query.all === 'true';
   const rows = await req.tenantPrisma!.card.findMany({
-    where: { userId: req.tenantUserId!, isActive: true },
+    where: { userId: req.tenantUserId!, ...(includeInactive ? {} : { isActive: true }) },
     include: { bank: { select: { id: true, name: true } }, entity: true },
-    orderBy: { createdAt: 'asc' }
+    orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }]
   });
-  res.json(rows);
+  res.json(rows.map(shapeCard));
 });
 
 cardsRouter.post('/', async (req, res) => {
-  const body = cardSchema.parse(req.body);
+  const { logoDataUrl, ...body } = cardSchema.parse(req.body);
   const userId = req.tenantUserId!;
   const bankName = body.bankId ? await resolveBankName(req.tenantPrisma!, userId, body.bankId) : (body.bankName ?? null);
-  const row = await req.tenantPrisma!.card.create({ data: { ...body, bankName, userId } });
+  const logo = parseLogo(logoDataUrl);
+  const row = await req.tenantPrisma!.card.create({
+    data: { ...body, bankName, userId, logoMime: logo?.mime ?? null, logoData: logo?.buffer ?? null }
+  });
   void auditFromReq(req, 'CREATE', 'card', row.id, `Tarjeta "${row.name}"`);
-  res.status(201).json(row);
+  res.status(201).json(shapeCard(row));
 });
 
 cardsRouter.put('/:id', async (req, res) => {
@@ -69,9 +94,16 @@ cardsRouter.put('/:id', async (req, res) => {
     data.bankId = body.bankId ?? null;
     data.bankName = body.bankId ? await resolveBankName(req.tenantPrisma!, userId, body.bankId) : null;
   }
+  if (has('color')) data.color = body.color ?? null;
+  if (has('isActive')) data.isActive = body.isActive;
+  if (has('logoDataUrl')) {
+    const logo = parseLogo(body.logoDataUrl);
+    data.logoMime = logo?.mime ?? null;
+    data.logoData = logo?.buffer ?? null;
+  }
   const row = await req.tenantPrisma!.card.update({ where: { id, userId }, data });
   void auditFromReq(req, 'UPDATE', 'card', id, `Tarjeta "${row.name}"`);
-  res.json(row);
+  res.json(shapeCard(row));
 });
 
 cardsRouter.delete('/:id', async (req, res) => {
@@ -82,13 +114,14 @@ cardsRouter.delete('/:id', async (req, res) => {
   if (!card) return res.status(404).json({ message: 'Tarjeta no encontrada' });
   if (!force && card.type === 'CREDIT' && Math.abs(Number(card.currentBalance)) > 0.009) {
     return res.status(409).json({
-      message: `La tarjeta tiene un saldo usado de ${fmtMoney(card.currentBalance)}. ¿Deseas marcarla inactiva igualmente?`,
+      message: `La tarjeta tiene un saldo usado de ${fmtMoney(card.currentBalance)}. ¿Deseas eliminarla de todos modos? (sus movimientos quedarán sin tarjeta asociada)`,
       code: 'NONZERO_BALANCE',
       balance: Number(card.currentBalance)
     });
   }
-  await req.tenantPrisma!.card.update({ where: { id, userId }, data: { isActive: false } });
-  void auditFromReq(req, 'DELETE', 'card', id, `Tarjeta "${card.name}" marcada inactiva`);
+  // Borrado definitivo. Los movimientos conservan sus datos (cardId → null por SetNull).
+  await req.tenantPrisma!.card.delete({ where: { id, userId } });
+  void auditFromReq(req, 'DELETE', 'card', id, `Tarjeta "${card.name}" eliminada`);
   res.status(204).send();
 });
 

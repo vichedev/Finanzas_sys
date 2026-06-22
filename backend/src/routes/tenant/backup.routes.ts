@@ -46,8 +46,10 @@ backupRouter.get('/export', async (req, res) => {
       movements: movements.length, invoices: invoices.length, attachments: attachments.length,
       budgets: budgets.length, notifications: notifications.length, auditLogs: auditLogs.length
     },
-    banks, accounts, cards, wallets, walletAccounts, entities, categories, debts, recurrings, movements, invoices, budgets,
+    banks, accounts, wallets, walletAccounts, entities, categories, debts, recurrings, movements, invoices, budgets,
     notifications, auditLogs,
+    // El logo de la tarjeta va en base64 (los bytes crudos no serializan bien en JSON).
+    cards: cards.map((c) => { const { logoData, ...rest } = c; return { ...rest, logoData: undefined, logoBase64: logoData ? Buffer.from(logoData).toString('base64') : null }; }),
     attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') })),
     // Identidad de la empresa (logo en base64) — singleton por empresa.
     branding: branding ? {
@@ -132,7 +134,9 @@ backupRouter.post('/import', async (req, res) => {
           userId, name: c.name, type: c.type, bankId: remap(mBank, c.bankId), bankName: c.bankName ?? null, last4: c.last4 ?? null,
           entityId: remap(mEntity, c.entityId),
           creditLimit: c.creditLimit ?? null, cutoffDay: c.cutoffDay ?? null, paymentDueDay: c.paymentDueDay ?? null,
-          currentBalance: c.currentBalance ?? 0, isActive: c.isActive ?? true
+          currentBalance: c.currentBalance ?? 0, isActive: c.isActive ?? true,
+          color: c.color ?? null, logoMime: c.logoMime ?? null,
+          logoData: c.logoBase64 ? Buffer.from(c.logoBase64, 'base64') : null
         } });
         mCard[c.id] = created.id; bump('cards');
       }

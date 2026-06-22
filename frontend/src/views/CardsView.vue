@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { CreditCard, Pencil, Trash2, Plus, X, Wallet } from 'lucide-vue-next';
+import { CreditCard, Pencil, Trash2, Plus, X, Wallet, Power } from 'lucide-vue-next';
 import { http } from '../api/http';
 import { useEntitiesStore } from '../stores/entities';
 import { useFormat } from '../composables/useFormat';
@@ -27,6 +27,9 @@ interface Card {
   cutoffDay?: number | null;
   paymentDueDay?: number | null;
   currentBalance?: number | string | null;
+  color?: string | null;
+  logo?: string | null;
+  isActive?: boolean;
 }
 
 interface CardForm {
@@ -39,12 +42,17 @@ interface CardForm {
   cutoffDay: number | null;
   paymentDueDay: number | null;
   currentBalance: number;
+  color: string;
+  logo: string | null;       // data URL del logo (preview)
 }
 
 const emptyForm = (): CardForm => ({
   name: '', type: 'CREDIT', entityId: null, bankId: null, last4: '',
-  creditLimit: null, cutoffDay: null, paymentDueDay: null, currentBalance: 0
+  creditLimit: null, cutoffDay: null, paymentDueDay: null, currentBalance: 0,
+  color: '#4338ca', logo: null
 });
+// Marca si el logo cambió en esta edición (para enviarlo solo cuando hace falta).
+const logoTouched = ref(false);
 const entityList = ref<{ id: number; name: string; kind: 'PERSONAL' | 'BUSINESS' }[]>([]);
 async function loadEntities() { entityList.value = (await http.get<typeof entityList.value>('/entities')).data; }
 
@@ -64,8 +72,44 @@ function usedPct(item: Card) { const limit = toNumber(item.creditLimit); if (lim
 function pctSeverity(pct: number) { if (pct >= 80) return 'high'; if (pct >= 50) return 'mid'; return 'low'; }
 function sanitizeLast4() { form.value.last4 = form.value.last4.replace(/\D+/g, '').slice(0, 4); }
 
+// Colores sugeridos + subida de logo
+const PRESET_COLORS = ['#4338ca', '#6d28d9', '#9333ea', '#0f766e', '#0891b2', '#1e3a8a', '#b91c1c', '#b45309', '#0f172a', '#be185d'];
+const MAX_LOGO = 1.5 * 1024 * 1024;
+async function onLogoFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0]; input.value = '';
+  if (!f) return;
+  if (!f.type.startsWith('image/')) { toast.error('El logo debe ser una imagen.'); return; }
+  if (f.size > MAX_LOGO) { toast.error('El logo es muy grande (máx 1.5 MB).'); return; }
+  const dataUrl = await new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = rej; r.readAsDataURL(f); });
+  form.value.logo = dataUrl; logoTouched.value = true;
+}
+function clearLogo() { form.value.logo = null; logoTouched.value = true; }
+
+// Estilo del fondo de una tarjeta (color personalizado o gradiente por tipo).
+function cardStyle(c: Card) {
+  if (c.color) return { background: `linear-gradient(135deg, ${c.color} 0%, ${shade(c.color, -0.28)} 100%)` };
+  return {};
+}
+function shade(hex: string, amt: number) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex); if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const adj = (v: number) => Math.max(0, Math.min(255, Math.round(v + 255 * amt)));
+  const r = adj((n >> 16) & 255), g = adj((n >> 8) & 255), b = adj(n & 255);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+async function toggleActive(item: Card) {
+  try {
+    await http.put(`/cards/${item.id}`, { isActive: !(item.isActive ?? true) });
+    toast.success((item.isActive ?? true) ? 'Tarjeta desactivada.' : 'Tarjeta activada.');
+    await load();
+  } catch { toast.error('No se pudo cambiar el estado.'); }
+}
+
 async function load() {
-  try { const r = await http.get<Card[]>('/cards'); rows.value = Array.isArray(r.data) ? r.data : []; }
+  // ?all=1: incluye inactivas para poder reactivarlas o eliminarlas.
+  try { const r = await http.get<Card[]>('/cards', { params: { all: 1 } }); rows.value = Array.isArray(r.data) ? r.data : []; }
   catch { toast.error('No se pudieron cargar las tarjetas.'); }
 }
 
@@ -77,8 +121,11 @@ async function save() {
     entityId: form.value.entityId || null,
     bankId: form.value.bankId ?? null,
     last4: form.value.last4 || null,
+    color: form.value.color || null,
     currentBalance: toNumber(form.value.currentBalance)
   };
+  // El logo solo se envía al crear o si cambió (evita re-subir la imagen en cada guardado).
+  if (editingId.value === null || logoTouched.value) payload.logoDataUrl = form.value.logo;
   if (form.value.type === 'CREDIT') {
     payload.creditLimit = form.value.creditLimit !== null ? toNumber(form.value.creditLimit) : null;
     payload.cutoffDay = form.value.cutoffDay ?? null;
@@ -97,6 +144,7 @@ async function save() {
     }
     form.value = emptyForm();
     editingId.value = null;
+    logoTouched.value = false;
     await load();
   }
   catch (err: unknown) {
@@ -107,6 +155,7 @@ async function save() {
 
 function startEdit(item: Card) {
   editingId.value = Number(item.id);
+  logoTouched.value = false;
   form.value = {
     name: item.name,
     type: item.type,
@@ -116,7 +165,9 @@ function startEdit(item: Card) {
     creditLimit: item.creditLimit !== null && item.creditLimit !== undefined ? toNumber(item.creditLimit) : null,
     cutoffDay: item.cutoffDay ?? null,
     paymentDueDay: item.paymentDueDay ?? null,
-    currentBalance: toNumber(item.currentBalance)
+    currentBalance: toNumber(item.currentBalance),
+    color: item.color || '#4338ca',
+    logo: item.logo ?? null
   };
   if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -127,7 +178,7 @@ function cancelEdit() {
 }
 
 async function removeRow(item: Card, force = false) {
-  if (!force && !confirm(`Eliminar la tarjeta "${item.name}"? Se marcará inactiva. Sus movimientos NO se eliminan.`)) return;
+  if (!force && !confirm(`¿Eliminar definitivamente la tarjeta "${item.name}"? Sus movimientos se conservan pero quedan sin tarjeta asociada. Si solo quieres ocultarla, usa "Desactivar".`)) return;
   try {
     await http.delete(`/cards/${item.id}`, { params: force ? { force: 1 } : undefined });
     toast.success('Tarjeta eliminada.');
@@ -240,6 +291,28 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
               <small class="hint">Para identificarla a simple vista.</small>
             </div>
 
+            <div class="field">
+              <label>Color de la tarjeta</label>
+              <div class="color-row">
+                <input type="color" v-model="form.color" class="color-input" aria-label="Color personalizado" />
+                <button v-for="c in PRESET_COLORS" :key="c" type="button" class="color-dot" :class="{ on: form.color.toLowerCase() === c }" :style="{ background: c }" :title="c" @click="form.color = c"></button>
+              </div>
+              <small class="hint">Elige un color o uno de los sugeridos.</small>
+            </div>
+
+            <div class="field">
+              <label>Logo de la tarjeta</label>
+              <div class="logo-row">
+                <span class="logo-prev" :class="{ empty: !form.logo }">
+                  <img v-if="form.logo" :src="form.logo" alt="logo" />
+                  <span v-else>Sin logo</span>
+                </span>
+                <label class="logo-btn">Subir imagen<input type="file" accept="image/*" hidden @change="onLogoFile" /></label>
+                <button v-if="form.logo" type="button" class="ghost mini danger" @click="clearLogo"><X :size="14" /> Quitar</button>
+              </div>
+              <small class="hint">PNG/JPG, máx 1.5 MB.</small>
+            </div>
+
             <template v-if="isCredit">
               <div class="field">
                 <label for="card-cutoff">Día de corte (1-31)</label>
@@ -295,10 +368,12 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
         </div>
 
         <div v-else class="real-cards">
-          <div v-for="item in rows" :key="item.id" class="rcard" :class="item.type === 'CREDIT' ? 'rcard-credit' : 'rcard-debit'">
+          <div v-for="item in rows" :key="item.id" class="rcard" :class="[item.color ? '' : (item.type === 'CREDIT' ? 'rcard-credit' : 'rcard-debit'), { 'rcard-off': item.isActive === false }]" :style="cardStyle(item)">
+            <span v-if="item.isActive === false" class="rcard-badge">Inactiva</span>
             <div class="rcard-row1">
               <span class="rcard-kind">{{ item.type === 'CREDIT' ? 'CRÉDITO' : 'DÉBITO' }}</span>
-              <span class="rcard-bank">{{ item.bankName || 'Sin banco' }}</span>
+              <img v-if="item.logo" :src="item.logo" alt="logo" class="rcard-logo" />
+              <span v-else class="rcard-bank">{{ item.bankName || 'Sin banco' }}</span>
             </div>
             <div class="rcard-chip"></div>
             <div class="rcard-number">**** **** **** {{ item.last4 || '••••' }}</div>
@@ -325,8 +400,9 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
             </div>
 
             <div class="rcard-actions">
-              <button v-if="item.type === 'CREDIT'" type="button" title="Pagar tarjeta" @click="openPay(item)"><Wallet :size="15" /></button>
+              <button v-if="item.type === 'CREDIT' && item.isActive !== false" type="button" title="Pagar tarjeta" @click="openPay(item)"><Wallet :size="15" /></button>
               <button type="button" title="Editar" :disabled="editingId === Number(item.id)" @click="startEdit(item)"><Pencil :size="15" /></button>
+              <button type="button" :title="item.isActive === false ? 'Activar' : 'Desactivar'" @click="toggleActive(item)"><Power :size="15" /></button>
               <button type="button" title="Eliminar" @click="removeRow(item)"><Trash2 :size="15" /></button>
             </div>
           </div>
@@ -445,4 +521,19 @@ button[disabled] { opacity: 0.6; cursor: not-allowed; }
 .rcard-actions button:hover:not(:disabled) { background: rgba(255,255,255,.4); }
 .rcard-actions button:disabled { opacity: .4; cursor: not-allowed; }
 @media (hover: none) { .rcard-actions { opacity: 1; } }
+.rcard-logo { max-height: 26px; max-width: 90px; object-fit: contain; }
+.rcard-off { filter: grayscale(.7); opacity: .6; }
+.rcard-badge { position: absolute; top: 12px; left: 14px; font-size: 10px; font-weight: 800; background: rgba(0,0,0,.35); padding: 3px 8px; border-radius: 999px; letter-spacing: .04em; }
+
+/* Personalización en el formulario */
+.color-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.color-input { width: 42px; height: 32px; padding: 0; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: none; cursor: pointer; }
+.color-dot { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #e2e8f0; cursor: pointer; }
+.color-dot.on { box-shadow: 0 0 0 2px var(--color-primary, #2563eb); }
+.logo-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.logo-prev { width: 56px; height: 40px; border-radius: 8px; border: 1px dashed #cbd5e1; display: inline-grid; place-items: center; overflow: hidden; background: #f8fafc; }
+.logo-prev img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.logo-prev.empty span { font-size: 10px; color: #94a3b8; }
+.logo-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; color: #475569; font-weight: 600; font-size: 13px; cursor: pointer; }
+.logo-btn:hover { background: #f1f5f9; }
 </style>
