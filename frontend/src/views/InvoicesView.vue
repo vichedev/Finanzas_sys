@@ -18,9 +18,10 @@ import AppButton from '../components/AppButton.vue';
 import DataTable, { type Column } from '../components/DataTable.vue';
 import TabBar from '../components/TabBar.vue';
 import AttachmentUploader from '../components/AttachmentUploader.vue';
+import { http } from '../api/http';
 import { useCrud } from '../composables/useCrud';
 import { useFormat } from '../composables/useFormat';
-import { yearOptions as periodYears, monthsForYear } from '../composables/usePeriod';
+import { yearOptions as periodYears, monthsForYear, START_YEAR, START_MONTH } from '../composables/usePeriod';
 import { useEntitiesStore } from '../stores/entities';
 import { invoicesApi } from '../api/invoices';
 import type { Invoice, InvoiceKind, InvoiceStatus, InvoicePayload } from '../types';
@@ -30,6 +31,8 @@ ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale)
 const { formatMoney } = useFormat();
 const entities = useEntitiesStore();
 const accounts = computed(() => entities.accounts);
+const entityList = ref<{ id: number; name: string; kind: 'PERSONAL' | 'BUSINESS' }[]>([]);
+async function loadEntities() { entityList.value = (await http.get<typeof entityList.value>('/entities')).data; }
 
 // Etiqueta de cuenta: "Nombre · Banco · ****1234" (igual que en otras secciones).
 function accountLabel(a: { name: string; bankName?: string | null; accountNumber?: string | null }): string {
@@ -95,6 +98,7 @@ const crud = useCrud<Invoice, InvoicePayload>({
     netAmount: 0,
     vatRate: 15,
     accountId: null,
+    entityId: null,
     description: '',
     notes: ''
   }),
@@ -108,6 +112,7 @@ const crud = useCrud<Invoice, InvoicePayload>({
     netAmount: Number(i.netAmount),
     vatRate: Number(i.vatRate),
     accountId: i.accountId ?? null,
+    entityId: i.entityId ?? null,
     description: i.description || '',
     notes: i.notes || ''
   }),
@@ -121,6 +126,7 @@ const crud = useCrud<Invoice, InvoicePayload>({
     netAmount: Number(f.netAmount) || 0,
     vatRate: Number(f.vatRate),
     accountId: f.accountId || null,
+    entityId: f.entityId || null,
     description: (f.description || '').trim() || null,
     notes: (f.notes || '').trim() || null
   }),
@@ -182,11 +188,30 @@ const summary = computed(() => {
   };
 });
 
+// IVA del período desglosado por razón social (cuánto declara/paga cada entidad).
+const vatByEntity = computed(() => {
+  const map = new Map<number, { name: string; salesVat: number; purchasesVat: number }>();
+  for (const r of validRows.value) {
+    if (ym(r.issueDate) !== periodKey.value) continue;
+    const key = r.entity?.id ?? -1;
+    let row = map.get(key);
+    if (!row) { row = { name: r.entity?.name ?? 'Sin razón social', salesVat: 0, purchasesVat: 0 }; map.set(key, row); }
+    if (r.kind === 'SALE') row.salesVat += Number(r.vatAmount); else row.purchasesVat += Number(r.vatAmount);
+  }
+  return [...map.values()].map((e) => {
+    const net = round2(e.salesVat - e.purchasesVat);
+    return { name: e.name, salesVat: round2(e.salesVat), purchasesVat: round2(e.purchasesVat), vatToPay: net > 0 ? net : 0, vatCredit: net < 0 ? round2(-net) : 0 };
+  }).sort((a, b) => b.vatToPay - a.vatToPay);
+});
+
 // ---- Serie mensual (12 meses terminando en el período seleccionado) ----
 const monthlySeries = computed(() => {
   const buckets: Array<{ key: string; label: string; salesNet: number; salesVat: number; purchasesNet: number; purchasesVat: number }> = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(period.value.year, period.value.month - 1 - i, 1);
+    const y = d.getFullYear(), mo = d.getMonth() + 1;
+    // No mostrar meses anteriores al inicio del sistema (mayo 2026).
+    if (y < START_YEAR || (y === START_YEAR && mo < START_MONTH)) continue;
     buckets.push({
       key: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`,
       label: `${MONTH_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
@@ -258,7 +283,7 @@ function onRemove(item: Invoice) {
   return remove(item, `Eliminar la ${label}? Esta acción no se puede deshacer.`);
 }
 
-onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
+onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()]));
 </script>
 
 <template>
@@ -302,6 +327,13 @@ onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
               <select id="inv-account" v-model.number="form.accountId">
                 <option :value="null">Sin cuenta vinculada</option>
                 <option v-for="a in accounts" :key="a.id" :value="a.id">{{ accountLabel(a) }}</option>
+              </select>
+            </FormField>
+
+            <FormField label="Razón social" html-for="inv-entity" hint="Para saber el IVA por entidad.">
+              <select id="inv-entity" v-model.number="form.entityId">
+                <option :value="null">Sin razón social</option>
+                <option v-for="e in entityList" :key="e.id" :value="e.id">{{ e.name }}</option>
               </select>
             </FormField>
 
@@ -439,6 +471,23 @@ onMounted(() => Promise.all([load(), entities.ensureAccounts()]));
           <small v-if="summary.vatToPay > 0">Se declara y paga en <strong>{{ summary.paymentLabel }}</strong></small>
           <small v-else>Se traslada al siguiente período</small>
         </div>
+      </div>
+
+      <div v-if="vatByEntity.length" class="vat-entities" style="margin-top:16px">
+        <h3 style="font-size:14px;font-weight:700;color:#334155;margin:0 0 8px">IVA por razón social — {{ MONTHS[period.month - 1] }} {{ period.year }}</h3>
+        <table class="recent-table">
+          <thead>
+            <tr><th>Razón social</th><th class="right">IVA ventas</th><th class="right">IVA compras</th><th class="right">IVA a pagar</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="e in vatByEntity" :key="e.name">
+              <td><strong>{{ e.name }}</strong></td>
+              <td class="right pos">{{ formatMoney(e.salesVat) }}</td>
+              <td class="right neg">{{ formatMoney(e.purchasesVat) }}</td>
+              <td class="right"><strong :class="e.vatToPay > 0 ? 'neg' : 'pos'">{{ e.vatToPay > 0 ? formatMoney(e.vatToPay) : (e.vatCredit > 0 ? '−' + formatMoney(e.vatCredit) : formatMoney(0)) }}</strong></td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </PanelCard>
 

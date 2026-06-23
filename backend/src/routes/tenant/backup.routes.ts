@@ -14,7 +14,7 @@ backupRouter.get('/export', async (req, res) => {
   const userId = req.tenantUserId!;
   const p = req.tenantPrisma!;
 
-  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts, notifications, auditLogs, entities] =
+  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts, notifications, auditLogs, entities, statements] =
     await Promise.all([
       p.bank.findMany({ where: { userId } }),
       p.account.findMany({ where: { userId } }),
@@ -33,7 +33,8 @@ backupRouter.get('/export', async (req, res) => {
       p.walletAccount.findMany({ where: { wallet: { userId } }, select: { walletId: true, accountId: true } }),
       p.notification.findMany({ where: { userId } }),
       p.auditLog.findMany({}),
-      p.entity.findMany({ where: { userId } })
+      p.entity.findMany({ where: { userId } }),
+      p.bankStatement.findMany({ where: { userId } })
     ]);
 
   const data = {
@@ -51,6 +52,7 @@ backupRouter.get('/export', async (req, res) => {
     // El logo de la tarjeta va en base64 (los bytes crudos no serializan bien en JSON).
     cards: cards.map((c) => { const { logoData, ...rest } = c; return { ...rest, logoData: undefined, logoBase64: logoData ? Buffer.from(logoData).toString('base64') : null }; }),
     attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') })),
+    statements: statements.map((s) => ({ ...s, data: Buffer.from(s.data).toString('base64') })),
     // Identidad de la empresa (logo en base64) — singleton por empresa.
     branding: branding ? {
       systemTitle: branding.systemTitle, subtitle: branding.subtitle,
@@ -97,8 +99,8 @@ backupRouter.post('/import', async (req, res) => {
         mWallet[w.id] = id;
       }
       for (const c of data.categories || []) {
-        const ex = await tx.category.findFirst({ where: { userId, name: c.name, type: c.type }, select: { id: true } });
-        const id = ex?.id ?? (await tx.category.create({ data: { userId, name: c.name, type: c.type, color: c.color ?? null, icon: c.icon ?? null, isDefault: c.isDefault ?? false } })).id;
+        const ex = await tx.category.findFirst({ where: { userId, name: c.name }, select: { id: true } });
+        const id = ex?.id ?? (await tx.category.create({ data: { userId, name: c.name, type: c.type ?? null, color: c.color ?? null, icon: c.icon ?? null, isDefault: c.isDefault ?? false } })).id;
         if (!ex) bump('categories');
         mCategory[c.id] = id;
       }
@@ -182,7 +184,7 @@ backupRouter.post('/import', async (req, res) => {
           userId, kind: inv.kind, status: inv.status, number: inv.number ?? null, counterparty: inv.counterparty,
           counterpartyTaxId: inv.counterpartyTaxId ?? null, issueDate: toDate(inv.issueDate) ?? new Date(),
           netAmount: inv.netAmount ?? 0, vatRate: inv.vatRate ?? 0, vatAmount: inv.vatAmount ?? 0, total: inv.total ?? 0,
-          accountId: remap(mAccount, inv.accountId), description: inv.description ?? null, notes: inv.notes ?? null
+          accountId: remap(mAccount, inv.accountId), entityId: remap(mEntity, inv.entityId), description: inv.description ?? null, notes: inv.notes ?? null
         } });
         mInvoice[inv.id] = created.id; bump('invoices');
       }
@@ -198,6 +200,15 @@ backupRouter.post('/import', async (req, res) => {
           size: at.size ?? 0, data: Buffer.from(at.data || '', 'base64')
         } });
         bump('attachments');
+      }
+      // Estados de cuenta (remap de cuenta opcional).
+      for (const s of data.statements || []) {
+        await tx.bankStatement.create({ data: {
+          userId, accountId: remap(mAccount, s.accountId), periodDate: toDate(s.periodDate) ?? new Date(),
+          title: s.title, filename: s.filename, mimeType: s.mimeType, size: s.size ?? 0,
+          data: Buffer.from(s.data || '', 'base64'), notes: s.notes ?? null
+        } });
+        bump('statements');
       }
 
       // Presupuestos (remap de categoría; únicos por userId+categoría+periodo)

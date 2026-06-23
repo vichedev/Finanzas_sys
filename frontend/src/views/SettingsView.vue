@@ -14,13 +14,12 @@ import RolesPanel from './RolesPanel.vue';
 import AppModal from '../components/AppModal.vue';
 import { useConfirm } from '../composables/useConfirm';
 
-type Category = { id: number; name: string; type: 'INCOME' | 'EXPENSE'; color?: string | null; icon?: string | null };
+type Category = { id: number; name: string; type?: 'INCOME' | 'EXPENSE' | null; color?: string | null; icon?: string | null };
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
 type Bank = { id: number; name: string; accountNumber?: string | null; accountKind?: BankAccountKind | null; isActive: boolean; notes?: string | null };
 type Wallet = { id: number; name: string; provider?: string | null; identifier?: string | null; isActive: boolean; notes?: string | null; accountIds?: number[] };
 type WalletAccountOption = { id: number; name: string; bankName?: string | null; accountNumber?: string | null; isActive?: boolean };
 const BANK_KIND_LABEL: Record<BankAccountKind, string> = { SAVINGS: 'Ahorros', CHECKING: 'Corriente' };
-type FilterType = 'ALL' | 'INCOME' | 'EXPENSE';
 type Profile = { id?: number; name?: string; email?: string; currency?: string; role?: string; createdAt?: string };
 
 type SmtpPublic = { host: string; port: number; user: string; hasPass: boolean; secure: boolean; from: string; publicUrl: string };
@@ -114,8 +113,7 @@ const aiResultHtml = computed(() => {
   return out.join('');
 });
 const categories = ref<Category[]>([]);
-const filter = ref<FilterType>('ALL');
-const emptyCategoryForm = () => ({ name: '', type: 'EXPENSE' as 'INCOME' | 'EXPENSE', icon: '' });
+const emptyCategoryForm = () => ({ name: '', icon: '' });
 
 const ICON_GROUPS: { name: string; icons: { value: string; label: string }[] }[] = [
   {
@@ -629,7 +627,6 @@ async function createTenant() {
   }
 }
 
-const filteredCategories = computed(() => filter.value === 'ALL' ? categories.value : categories.value.filter((c) => c.type === filter.value));
 
 const formatDate = (iso?: string) => {
   if (!iso) return '—';
@@ -948,7 +945,7 @@ async function addCategory() {
   catErr.value = ''; catMsg.value = '';
   if (!newCategory.value.name.trim()) { catErr.value = 'El nombre es obligatorio.'; return; }
   try {
-    const payload: Record<string, unknown> = { name: newCategory.value.name.trim(), type: newCategory.value.type };
+    const payload: Record<string, unknown> = { name: newCategory.value.name.trim() };
     if (newCategory.value.icon.trim()) payload.icon = newCategory.value.icon.trim();
     if (editingCategoryId.value !== null) {
       await http.put(`/categories/${editingCategoryId.value}`, payload);
@@ -971,7 +968,6 @@ function startEditCategory(c: Category) {
   editingCategoryId.value = c.id;
   newCategory.value = {
     name: c.name,
-    type: c.type,
     icon: c.icon || ''
   };
 }
@@ -1214,19 +1210,10 @@ onMounted(async () => {
     <div v-if="activeSection === 'categories'" class="panel">
       <div class="panel-header"><h2>{{ editingCategoryId !== null ? 'Editar categoría' : 'Nueva categoría' }}</h2></div>
       <form class="form" @submit.prevent="addCategory">
-        <div class="field-group">
-          <div class="field">
-            <label for="cat-name">Nombre</label>
-            <input id="cat-name" v-model="newCategory.name" required placeholder="ej. Combustible" />
-            <small class="hint">Un nombre corto y descriptivo.</small>
-          </div>
-          <div class="field">
-            <label for="cat-type">Tipo</label>
-            <select id="cat-type" v-model="newCategory.type">
-              <option value="INCOME">Ingreso</option>
-              <option value="EXPENSE">Gasto</option>
-            </select>
-          </div>
+        <div class="field">
+          <label for="cat-name">Nombre</label>
+          <input id="cat-name" v-model="newCategory.name" required placeholder="ej. Combustible" />
+          <small class="hint">Un nombre corto y descriptivo. Sirve para ingresos y gastos.</small>
         </div>
 
         <div class="field">
@@ -1270,22 +1257,15 @@ onMounted(async () => {
         <p v-if="catErr" class="error">{{ catErr }}</p>
       </form>
 
-      <div class="tab-filter">
-        <button type="button" class="tab-filter-btn" :class="{ active: filter === 'ALL' }" @click="filter = 'ALL'">Todas</button>
-        <button type="button" class="tab-filter-btn" :class="{ active: filter === 'INCOME' }" @click="filter = 'INCOME'">Ingresos</button>
-        <button type="button" class="tab-filter-btn" :class="{ active: filter === 'EXPENSE' }" @click="filter = 'EXPENSE'">Gastos</button>
-      </div>
-
       <table class="recent-table" style="margin-top: 12px">
-        <thead><tr><th>Nombre</th><th>Tipo</th><th class="right">Acciones</th></tr></thead>
+        <thead><tr><th>Nombre</th><th class="right">Acciones</th></tr></thead>
         <tbody>
-          <tr v-for="cat in filteredCategories" :key="cat.id">
+          <tr v-for="cat in categories" :key="cat.id">
             <td>
               <span v-if="cat.color" class="color-swatch" :style="{ backgroundColor: cat.color }"></span>
               <span v-if="cat.icon" class="cat-icon-text">{{ cat.icon }}</span>
               {{ cat.name }}
             </td>
-            <td><span class="cat-pill">{{ cat.type === 'INCOME' ? 'Ingreso' : 'Gasto' }}</span></td>
             <td class="right">
               <div class="row-actions">
                 <button type="button" class="ghost mini" @click="startEditCategory(cat)" :disabled="editingCategoryId === cat.id"><Pencil :size="14" /></button>
@@ -1293,7 +1273,7 @@ onMounted(async () => {
               </div>
             </td>
           </tr>
-          <tr v-if="!filteredCategories.length"><td colspan="3">
+          <tr v-if="!categories.length"><td colspan="2">
             <div class="empty-state">
               <div class="empty-state-illustration"><Tags :size="36" /></div>
               <strong>Sin categorías</strong>

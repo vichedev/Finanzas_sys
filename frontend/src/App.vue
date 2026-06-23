@@ -115,7 +115,7 @@ function item(to: string, icon: Component, label: string, module?: ModuleName): 
 
 const groups: NavGroup[] = [
   { heading: 'Principal', items: [item('/', LayoutDashboard, 'Resumen'), item('/movements', ArrowLeftRight, 'Movimientos', 'movements')] },
-  { heading: 'Tu dinero', items: [item('/accounts', Landmark, 'Cuentas', 'accounts'), item('/cards', CreditCard, 'Tarjetas', 'cards'), item('/entities', Scale, 'Razones sociales', 'accounts')] },
+  { heading: 'Tu dinero', items: [item('/accounts', Landmark, 'Cuentas', 'accounts'), item('/cards', CreditCard, 'Tarjetas', 'cards'), item('/entities', Scale, 'Razones sociales', 'accounts'), item('/statements', FileText, 'Estados de cuenta', 'accounts')] },
   { heading: 'Compromisos', items: [item('/debts', HandCoins, 'Deudas y cobros', 'debts'), item('/recurrings', Repeat, 'Pagos recurrentes', 'recurrings'), item('/budgets', PiggyBank, 'Presupuestos', 'movements')] },
   { heading: 'Facturación', items: [item('/invoices', FileText, 'Facturas e IVA', 'invoices')] },
   { heading: 'Análisis', items: [item('/reports', BarChart3, 'Reportes', 'reports'), item('/audit', History, 'Auditoría', 'reports'), item('/documents', FolderOpen, 'Documentos')] }

@@ -378,15 +378,8 @@ const acctOptLabel = (a: Account) => [a.name, a.bankName, a.accountNumber ? '***
 const filterAccounts = computed<Account[]>(() =>
   filterBankId.value ? accounts.value.filter((a) => a.bankId === filterBankId.value) : accounts.value
 );
-// Categorías relevantes al tipo en vista (gasto/compra → gasto; ingreso → ingreso).
-const filterCategories = computed(() => {
-  const t = typeFilter.value;
-  const want = (t === 'EXPENSE' || t === 'PURCHASE') ? 'EXPENSE' : (t === 'INCOME' ? 'INCOME' : null);
-  const list = categories.value as Array<{ id: number; name: string; icon?: string | null; type?: string; kind?: string }>;
-  if (!want) return list;
-  const filtered = list.filter((c) => (c.type || c.kind) === want);
-  return filtered.length ? filtered : list;
-});
+// Las categorías ya no se separan por tipo: el filtro muestra todas.
+const filterCategories = computed(() => categories.value as Array<{ id: number; name: string; icon?: string | null }>);
 // Tipos que muestran filtros de categoría y método de pago.
 const showCatPayFilters = computed(() => ['INCOME', 'EXPENSE', 'PURCHASE'].includes(typeFilter.value));
 

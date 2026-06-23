@@ -9,7 +9,7 @@ categoriesRouter.use(requireAuth, (req, res, next) => requirePermission('movemen
 
 const schema = z.object({
   name: z.string().trim().min(2).max(60),
-  type: z.enum(['INCOME', 'EXPENSE']),
+  type: z.enum(['INCOME', 'EXPENSE']).optional().nullable(), // ya no obligatorio
   color: z.string().trim().max(20).optional().nullable(),
   icon: z.string().trim().max(60).optional().nullable()
 }).strict();
@@ -17,7 +17,7 @@ const schema = z.object({
 categoriesRouter.get('/', async (req, res) => {
   const rows = await req.tenantPrisma!.category.findMany({
     where: { userId: req.tenantUserId! },
-    orderBy: [{ type: 'asc' }, { name: 'asc' }]
+    orderBy: [{ name: 'asc' }]
   });
   res.json(rows);
 });

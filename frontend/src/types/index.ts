@@ -109,6 +109,8 @@ export interface Invoice {
   total: number | string;
   accountId?: number | null;
   account?: { id: number; name: string } | null;
+  entityId?: number | null;
+  entity?: { id: number; name: string; kind: EntityKind } | null;
   description?: string | null;
   notes?: string | null;
 }
@@ -124,6 +126,7 @@ export interface InvoicePayload {
   vatRate: number;
   description?: string | null;
   accountId?: number | null;
+  entityId?: number | null;
   notes?: string | null;
 }
 
@@ -135,6 +138,7 @@ export interface VatSummary {
   vatToPay: number;
   vatCredit: number;
   netVat: number;
+  byEntity?: Array<{ entityId: number | null; name: string; kind: string | null; salesVat: number; purchasesVat: number; vatToPay: number; vatCredit: number; netVat: number }>;
 }
 
 export interface Budget {

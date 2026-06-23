@@ -36,6 +36,7 @@ const schema = z.object({
   vatRate: z.coerce.number().min(0).max(100),
   description: z.string().max(200).optional().nullable(),
   accountId: z.coerce.number().optional().nullable(),
+  entityId: z.coerce.number().optional().nullable(),
   notes: z.string().max(500).optional().nullable()
 }).strict();
 
@@ -53,7 +54,7 @@ invoicesRouter.get('/', async (req, res) => {
 
   const rows = await req.tenantPrisma!.invoice.findMany({
     where,
-    include: { account: { select: { id: true, name: true } } },
+    include: { account: { select: { id: true, name: true } }, entity: { select: { id: true, name: true, kind: true } } },
     orderBy: { issueDate: 'desc' }
   });
   res.json(rows);
@@ -97,6 +98,31 @@ invoicesRouter.get('/vat-summary', async (req, res) => {
   const netVat = round2(salesVat - purchasesVat); // + a pagar, − crédito a favor
   const pay = shiftMonth(year, month, 1); // se declara el mes siguiente
 
+  // Desglose de IVA por razón social (cuánto declara/paga cada entidad).
+  const byEntityRaw = await req.tenantPrisma!.invoice.groupBy({
+    by: ['entityId', 'kind'],
+    where: { userId: req.tenantUserId!, status: { not: 'VOID' }, issueDate: { gte: start, lt: end } },
+    _sum: { vatAmount: true }
+  });
+  const entities = await req.tenantPrisma!.entity.findMany({ where: { userId: req.tenantUserId! }, select: { id: true, name: true, kind: true } });
+  const entMap = new Map(entities.map((e) => [e.id, e]));
+  const acc = new Map<number, { entityId: number | null; name: string; kind: string | null; salesVat: number; purchasesVat: number }>();
+  for (const g of byEntityRaw) {
+    const key = g.entityId ?? -1;
+    let row = acc.get(key);
+    if (!row) {
+      const e = g.entityId != null ? entMap.get(g.entityId) : null;
+      row = { entityId: g.entityId ?? null, name: e?.name ?? 'Sin razón social', kind: e?.kind ?? null, salesVat: 0, purchasesVat: 0 };
+      acc.set(key, row);
+    }
+    const v = Number(g._sum.vatAmount || 0);
+    if (g.kind === 'SALE') row.salesVat += v; else row.purchasesVat += v;
+  }
+  const byEntity = [...acc.values()].map((r) => {
+    const net = round2(r.salesVat - r.purchasesVat);
+    return { ...r, salesVat: round2(r.salesVat), purchasesVat: round2(r.purchasesVat), vatToPay: net > 0 ? net : 0, vatCredit: net < 0 ? round2(-net) : 0, netVat: net };
+  }).sort((a, b) => b.vatToPay - a.vatToPay);
+
   res.json({
     period: { year, month, label: `${MONTH_LABEL[month - 1]} ${year}` },
     paymentPeriod: { year: pay.year, month: pay.month, label: `${MONTH_LABEL[pay.month - 1]} ${pay.year}` },
@@ -104,7 +130,8 @@ invoicesRouter.get('/vat-summary', async (req, res) => {
     purchases: { net: purchasesNet, vat: purchasesVat, total: purchasesTotal, count: purchasesCount },
     vatToPay: netVat > 0 ? netVat : 0,
     vatCredit: netVat < 0 ? round2(-netVat) : 0,
-    netVat
+    netVat,
+    byEntity
   });
 });
 
@@ -127,6 +154,7 @@ invoicesRouter.post('/', async (req, res) => {
       total,
       description: body.description?.trim() || null,
       accountId: body.accountId || null,
+      entityId: body.entityId || null,
       notes: body.notes?.trim() || null
     }
   });
@@ -154,6 +182,7 @@ invoicesRouter.put('/:id', async (req, res) => {
   if (body.issueDate !== undefined) data.issueDate = body.issueDate;
   if (body.description !== undefined) data.description = body.description?.trim() || null;
   if (body.accountId !== undefined) data.accountId = body.accountId || null;
+  if (body.entityId !== undefined) data.entityId = body.entityId || null;
   if (body.notes !== undefined) data.notes = body.notes?.trim() || null;
 
   // Si cambia el neto o la tarifa, recalculamos IVA y total.
