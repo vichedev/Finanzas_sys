@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue';
 import { http } from '../api/http';
 import { FileText, Image as ImageIcon, Trash2, Eye, Upload, Landmark, Calendar } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
@@ -41,13 +41,44 @@ async function load() {
 }
 onMounted(load);
 
-function onFile(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const f = input.files?.[0] || null;
-  if (f && !ALLOWED.includes(f.type)) { toast.error('Solo PDF o imágenes.'); input.value = ''; return; }
+// Asigna el archivo (de input, pegado o arrastrado) y prefija el título si está vacío.
+let pasteCount = 0;
+function setFile(f: File | null) {
+  if (f && !ALLOWED.includes(f.type)) { toast.error('Solo PDF o imágenes.'); return; }
   form.value.file = f;
   if (f && !form.value.title.trim()) form.value.title = f.name.replace(/\.[^.]+$/, '');
 }
+function onFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  setFile(input.files?.[0] || null);
+}
+function pick() { fileInput.value?.click(); }
+
+// Pegar imagen (Ctrl+V) desde el portapapeles, o arrastrarla a la zona.
+const dropActive = ref(false);
+function onPaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const it of Array.from(items)) {
+    if (it.kind === 'file' && it.type.startsWith('image/')) {
+      const f = it.getAsFile();
+      if (!f) continue;
+      e.preventDefault();
+      const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      const named = f.name && f.name !== 'image.png' ? f : new File([f], `estado-pegado-${++pasteCount}.${ext}`, { type: f.type });
+      setFile(named);
+      toast.success('Imagen pegada. Ponle un título y súbela.');
+      return;
+    }
+  }
+}
+function onDrop(e: DragEvent) {
+  dropActive.value = false;
+  const f = e.dataTransfer?.files?.[0];
+  if (f) setFile(f);
+}
+onMounted(() => window.addEventListener('paste', onPaste));
+onBeforeUnmount(() => window.removeEventListener('paste', onPaste));
 
 function readBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -65,12 +96,16 @@ async function submit() {
   uploading.value = true;
   try {
     const dataBase64 = await readBase64(form.value.file);
+    // El nombre del archivo guardado = el Título (saneado) + la extensión original.
+    const origName = form.value.file.name || 'archivo';
+    const ext = origName.includes('.') ? origName.slice(origName.lastIndexOf('.')) : '';
+    const base = form.value.title.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 100) || 'estado';
     await http.post('/statements', {
       title: form.value.title.trim(),
       periodDate: form.value.periodDate,
       accountId: form.value.accountId || null,
       notes: form.value.notes.trim() || null,
-      filename: form.value.file.name,
+      filename: base + ext,
       mimeType: form.value.file.type,
       dataBase64
     });
@@ -136,7 +171,22 @@ const groupLabel = (key: string) => { const [y, m] = key.split('-').map(Number);
           </div>
           <div class="field st-file-field">
             <label>Archivo (PDF o imagen) <span class="required-mark">*</span></label>
-            <input ref="fileInput" type="file" accept="application/pdf,image/*" @change="onFile" />
+            <input ref="fileInput" type="file" accept="application/pdf,image/*" class="st-file-input" @change="onFile" />
+            <div
+              class="st-drop"
+              :class="{ over: dropActive, has: !!form.file }"
+              @click="pick"
+              @dragover.prevent="dropActive = true"
+              @dragenter.prevent="dropActive = true"
+              @dragleave.prevent="dropActive = false"
+              @drop.prevent="onDrop"
+            >
+              <Upload :size="16" />
+              <span v-if="form.file">{{ form.file.name }} — listo para subir</span>
+              <span v-else-if="dropActive">Suelta el archivo aquí</span>
+              <span v-else>Haz clic para elegir, arrastra, o pega una imagen (Ctrl+V)</span>
+            </div>
+            <small class="hint">El archivo se guardará con el <strong>Título</strong> de arriba (edítalo para renombrarlo).</small>
           </div>
           <div class="st-actions">
             <button type="button" :disabled="uploading" @click="submit"><Upload :size="16" /> {{ uploading ? 'Subiendo…' : 'Subir' }}</button>
@@ -181,6 +231,16 @@ const groupLabel = (key: string) => { const [y, m] = key.split('-').map(Number);
 .st-form label { font-size: 13px; font-weight: 600; color: #334155; }
 .st-form input, .st-form select { padding: 8px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; font: inherit; color: #334155; }
 .st-file-field, .st-actions { grid-column: 1 / -1; }
+.st-file-input { display: none; }
+.st-drop {
+  display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border: 1.5px dashed var(--color-border-strong, #cbd5e1); border-radius: 10px;
+  background: #fff; color: var(--color-text-soft, #475569); font-weight: 600; font-size: 13.5px; cursor: pointer;
+  transition: all .15s ease;
+}
+.st-drop:hover { border-color: #6366f1; color: #4338ca; background: #eef2ff; }
+.st-drop.over { border-color: #4338ca; color: #4338ca; background: #e0e7ff; border-style: solid; }
+.st-drop.has { border-color: #10b981; color: #047857; background: #ecfdf5; border-style: solid; }
 .st-actions button { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border: none; border-radius: 10px; background: var(--color-primary, #2563eb); color: #fff; font-weight: 600; cursor: pointer; }
 .st-actions button:disabled { opacity: .6; cursor: progress; }
 .st-timeline { display: flex; flex-direction: column; gap: 14px; }
