@@ -128,7 +128,7 @@ onMounted(() => Promise.all([load(), entities.ensureCategories(true)]));
           </template>
           <template #cell-pct="{ row }">
             <div class="bud-bar"><div class="bud-fill" :class="`sev-${sev(row.pct)}`" :style="{ width: Math.min(100, row.pct) + '%' }"></div></div>
-            <small class="hint" :class="{ 'over': row.pct >= 100 }">{{ row.pct }}%<template v-if="row.pct >= 100"> · excedido</template></small>
+            <small class="hint" :class="{ 'over': row.pct > 100 }">{{ row.pct }}%<template v-if="row.pct > 100"> · excedido</template><template v-else-if="row.pct >= 100"> · al límite</template></small>
           </template>
           <template #actions="{ row }">
             <AppButton variant="ghost" mini @click="startEdit(row)"><template #icon><Pencil :size="14" /></template></AppButton>
