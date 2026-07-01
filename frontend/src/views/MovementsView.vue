@@ -876,23 +876,9 @@ onMounted(load);
 
       <AppModal :open="formModalOpen" :title="modalTitle" max-width="780px" @close="closeForm">
         <form id="mov-form" class="form mov-form" @submit.prevent="save">
-          <!-- Cambiar de tipo sin cerrar -->
-          <div class="mov-type-switch">
-            <button
-              v-for="t in TYPE_OPTIONS"
-              :key="t.value"
-              type="button"
-              class="mov-type-chip"
-              :class="['tc-' + t.accent, { active: form.type === t.value }]"
-              @click="setType(t.value)"
-            >
-              <component :is="t.icon" :size="15" :stroke-width="2.2" /> {{ t.label }}
-            </button>
-          </div>
-
-          <!-- Paso 2: detalle -->
+          <!-- Paso 1: detalle -->
           <div class="form-section">
-            <p class="form-section-title"><span class="step-num">2</span> Detalle</p>
+            <p class="form-section-title"><span class="step-num">1</span> Detalle</p>
             <div class="form-grid">
               <div class="field">
                 <label for="mv-desc">Detalle<span class="required-mark">*</span></label>
@@ -973,7 +959,7 @@ onMounted(load);
 
           <!-- Paso 3: dinero / pago -->
           <div v-if="showMoneySection" class="form-section">
-            <p class="form-section-title"><span class="step-num">3</span> {{ moneySectionTitle }}</p>
+            <p class="form-section-title"><span class="step-num">2</span> {{ moneySectionTitle }}</p>
 
             <!-- TRANSFERENCIA: cuenta de origen + cuenta de destino -->
             <template v-if="isTransfer">
