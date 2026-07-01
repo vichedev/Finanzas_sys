@@ -43,6 +43,10 @@ export const attachmentsApi = {
   async remove(id: number): Promise<void> {
     await http.delete(`/attachments/${id}`);
   },
+  async rename(id: number, filename: string): Promise<AttachmentMeta> {
+    const { data } = await http.patch<AttachmentMeta>(`/attachments/${id}`, { filename });
+    return data;
+  },
   /** Descarga el archivo (con auth) y lo abre en una pestaña nueva. */
   async openFile(id: number): Promise<void> {
     const { data } = await http.get(`/attachments/${id}/file`, { responseType: 'blob' });

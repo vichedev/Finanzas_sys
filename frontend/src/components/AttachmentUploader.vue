@@ -125,6 +125,7 @@ function splitName(name: string): { base: string; ext: string } {
 }
 const editingExt = computed(() => editingIdx.value != null ? splitName(pending.value[editingIdx.value].filename).ext : '');
 async function startRename(i: number) {
+  cancelRenameServer();
   editingIdx.value = i;
   editValue.value = splitName(pending.value[i].filename).base;
   await nextTick();
@@ -140,6 +141,41 @@ function commitRename() {
   editingIdx.value = null;
 }
 function cancelRename() { editingIdx.value = null; }
+
+// ---- Renombrar un comprobante YA subido (modo edición) ----
+const editingServerId = ref<number | null>(null);
+const editServerValue = ref('');
+const savingName = ref(false);
+const editingServerExt = computed(() => {
+  if (editingServerId.value == null) return '';
+  const a = list.value.find((x) => x.id === editingServerId.value);
+  return a ? splitName(a.filename).ext : '';
+});
+async function startRenameServer(a: AttachmentMeta) {
+  cancelRename();
+  editingServerId.value = a.id;
+  editServerValue.value = splitName(a.filename).base;
+  await nextTick();
+  renameInput.value?.focus();
+  renameInput.value?.select();
+}
+async function commitRenameServer() {
+  if (editingServerId.value == null || savingName.value) return;
+  const a = list.value.find((x) => x.id === editingServerId.value);
+  if (!a) { editingServerId.value = null; return; }
+  const base = editServerValue.value.trim().replace(/[\\/:*?"<>|]/g, '').slice(0, 100);
+  const newName = base ? base + splitName(a.filename).ext : '';
+  if (!newName || newName === a.filename) { editingServerId.value = null; return; }
+  savingName.value = true;
+  try {
+    const updated = await attachmentsApi.rename(a.id, newName);
+    const idx = list.value.findIndex((x) => x.id === a.id);
+    if (idx !== -1) list.value[idx] = updated;
+    toast.success('Nombre actualizado.');
+  } catch { toast.error('No se pudo renombrar el comprobante.'); }
+  finally { savingName.value = false; editingServerId.value = null; }
+}
+function cancelRenameServer() { editingServerId.value = null; }
 
 /** Sube los pendientes tras crear el registro (lo llama el padre con el nuevo id). */
 async function flush(newId: number) {
@@ -173,10 +209,29 @@ defineExpose({ flush, reset, hasPending: () => pending.value.length > 0 });
     <ul v-if="list.length || pending.length" class="att-list">
       <li v-for="a in list" :key="'s' + a.id" class="att-item">
         <span class="att-ic"><component :is="isImg(a.mimeType) ? ImageIcon : FileText" :size="16" /></span>
-        <span class="att-name" :title="a.filename">{{ a.filename }}</span>
-        <span class="att-size">{{ fmtSize(a.size) }}</span>
-        <button type="button" class="att-act" title="Ver" @click="view(a)"><Eye :size="15" /></button>
-        <button type="button" class="att-act danger" title="Eliminar" @click="removeServer(a)"><Trash2 :size="15" /></button>
+        <template v-if="editingServerId === a.id">
+          <span class="att-rename">
+            <input
+              :ref="bindRenameInput"
+              v-model="editServerValue"
+              class="att-rename-input"
+              maxlength="100"
+              placeholder="Nombre del comprobante"
+              @keydown.enter.prevent="commitRenameServer"
+              @keydown.esc.prevent="cancelRenameServer"
+            />
+            <span class="att-ext">{{ editingServerExt }}</span>
+          </span>
+          <button type="button" class="att-act ok" title="Guardar nombre" :disabled="savingName" @click="commitRenameServer"><Check :size="15" /></button>
+          <button type="button" class="att-act" title="Cancelar" @click="cancelRenameServer"><X :size="15" /></button>
+        </template>
+        <template v-else>
+          <span class="att-name" :title="a.filename">{{ a.filename }}</span>
+          <span class="att-size">{{ fmtSize(a.size) }}</span>
+          <button type="button" class="att-act" title="Renombrar" @click="startRenameServer(a)"><Pencil :size="15" /></button>
+          <button type="button" class="att-act" title="Ver" @click="view(a)"><Eye :size="15" /></button>
+          <button type="button" class="att-act danger" title="Eliminar" @click="removeServer(a)"><Trash2 :size="15" /></button>
+        </template>
       </li>
       <li v-for="(p, i) in pending" :key="'p' + i" class="att-item pending">
         <span class="att-ic"><component :is="isImg(p.mimeType) ? ImageIcon : FileText" :size="16" /></span>

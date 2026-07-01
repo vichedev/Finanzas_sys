@@ -101,6 +101,24 @@ attachmentsRouter.post('/', async (req, res) => {
   res.status(201).json(row);
 });
 
+// Renombra un comprobante ya subido (solo el nombre visible; conserva el archivo).
+attachmentsRouter.patch('/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  const { filename } = z.object({ filename: z.string().trim().min(1).max(200) }).strict().parse(req.body);
+  const clean = filename.replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 200);
+  if (!clean) return res.status(400).json({ message: 'Nombre inválido.' });
+  const result = await req.tenantPrisma!.attachment.updateMany({
+    where: { id, userId: req.tenantUserId! },
+    data: { filename: clean }
+  });
+  if (result.count === 0) return res.status(404).json({ message: 'No encontrado' });
+  const row = await req.tenantPrisma!.attachment.findFirst({
+    where: { id, userId: req.tenantUserId! },
+    select: { id: true, filename: true, mimeType: true, size: true, createdAt: true, entityType: true, entityId: true }
+  });
+  res.json(row);
+});
+
 attachmentsRouter.get('/:id/file', async (req, res) => {
   const id = Number(req.params.id);
   const row = await req.tenantPrisma!.attachment.findFirst({ where: { id, userId: req.tenantUserId! } });
