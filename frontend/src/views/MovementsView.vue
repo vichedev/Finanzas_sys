@@ -571,6 +571,24 @@ function setType(t: MovementType) {
   resetTableAccountFilters();
 }
 
+// ---- Modal del formulario de registro ----
+const formModalOpen = ref(false);
+const modalTitle = computed(() =>
+  editingId.value !== null ? 'Editar movimiento' : `Nuevo ${(TYPE_LABEL[form.value.type] || 'movimiento').toLowerCase()}`
+);
+// Abre el modal con un movimiento nuevo del tipo elegido.
+function openForm(t: MovementType) {
+  editingId.value = null;
+  form.value = buildEmptyForm();
+  setType(t);
+  attachRef.value?.reset();
+  formModalOpen.value = true;
+}
+function closeForm() {
+  formModalOpen.value = false;
+  cancelEdit();
+}
+
 // ---- Modal de detalle (click en la fila) ----
 const detailOpen = ref(false);
 const detailItem = ref<Movement | null>(null);
@@ -695,6 +713,7 @@ async function save() {
     const keepType = form.value.type, keepDate = form.value.movementDate, keepPm = form.value.paymentMethod, keepKind = form.value.expenseKind;
     form.value = { type: keepType, expenseKind: keepKind, amount: 0, movementDate: keepDate, description: '', paymentMethod: keepPm, accountId: null, toAccountId: null, cardId: null, walletId: null, categoryId: null, fromBankId: null, toBankId: null, vendor: '', isCredit: false, dueDate: '', commission: 0, familyMember: '', notes: '' };
     editingId.value = null;
+    formModalOpen.value = false;
     await load();
   } catch { toast.error('No se pudo registrar el movimiento.'); }
   finally { saving.value = false; }
@@ -733,7 +752,7 @@ function startEdit(item: Movement) {
     familyMember: item.familyMember || '',
     notes: item.notes || ''
   };
-  if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  formModalOpen.value = true;
 }
 
 function cancelEdit() {
@@ -785,25 +804,39 @@ onMounted(load);
     </PageHeader>
 
     <div class="stack">
-      <PanelCard :title="editingId !== null ? 'Editar movimiento' : 'Nuevo movimiento'">
-        <form class="form mov-form" @submit.prevent="save">
-          <!-- Paso 1: tipo de movimiento (selector visual) -->
-          <div class="form-section">
-            <p class="form-section-title"><span class="step-num">1</span> ¿Qué quieres registrar?</p>
-            <div class="type-picker">
-              <button
-                v-for="t in TYPE_OPTIONS"
-                :key="t.value"
-                type="button"
-                class="type-card"
-                :class="['tc-' + t.accent, { active: form.type === t.value }]"
-                @click="setType(t.value)"
-              >
-                <span class="type-card-icon"><component :is="t.icon" :size="20" :stroke-width="2.2" /></span>
-                <span class="type-card-label">{{ t.label }}</span>
-                <span class="type-card-desc">{{ t.desc }}</span>
-              </button>
-            </div>
+      <!-- Disparador: elegir el tipo abre el modal para completar el detalle -->
+      <PanelCard title="Registrar movimiento">
+        <p class="mov-trigger-hint">Elige qué quieres registrar. Se abrirá una ventana para completar el detalle.</p>
+        <div class="type-picker">
+          <button
+            v-for="t in TYPE_OPTIONS"
+            :key="t.value"
+            type="button"
+            class="type-card"
+            :class="['tc-' + t.accent]"
+            @click="openForm(t.value)"
+          >
+            <span class="type-card-icon"><component :is="t.icon" :size="20" :stroke-width="2.2" /></span>
+            <span class="type-card-label">{{ t.label }}</span>
+            <span class="type-card-desc">{{ t.desc }}</span>
+          </button>
+        </div>
+      </PanelCard>
+
+      <AppModal :open="formModalOpen" :title="modalTitle" max-width="780px" @close="closeForm">
+        <form id="mov-form" class="form mov-form" @submit.prevent="save">
+          <!-- Cambiar de tipo sin cerrar -->
+          <div class="mov-type-switch">
+            <button
+              v-for="t in TYPE_OPTIONS"
+              :key="t.value"
+              type="button"
+              class="mov-type-chip"
+              :class="['tc-' + t.accent, { active: form.type === t.value }]"
+              @click="setType(t.value)"
+            >
+              <component :is="t.icon" :size="15" :stroke-width="2.2" /> {{ t.label }}
+            </button>
           </div>
 
           <!-- Paso 2: detalle -->
@@ -1059,7 +1092,7 @@ onMounted(load);
                   <small class="hint">Valor extra cobrado por transferir entre bancos distintos.</small>
                 </div>
                 <div class="mov-final-actions">
-                  <AppButton v-if="editingId !== null" variant="ghost" @click="cancelEdit">
+                  <AppButton variant="ghost" @click="closeForm">
                     <template #icon><X :size="16" /></template>Cancelar
                   </AppButton>
                   <AppButton type="submit" :loading="saving">
@@ -1071,7 +1104,7 @@ onMounted(load);
             </div>
           </div>
         </form>
-      </PanelCard>
+      </AppModal>
 
       <PanelCard>
         <div class="mov-section-head">
@@ -1378,6 +1411,17 @@ onMounted(load);
 }
 
 /* Selector visual de tipo (tarjetas con icono en chip de color) */
+.mov-trigger-hint { margin: 0 0 12px; font-size: 13px; color: #64748b; }
+/* Switch de tipo dentro del modal */
+.mov-type-switch { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.mov-type-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border: 1.5px solid var(--color-border, #e2e8f0); border-radius: 999px;
+  background: #fff; color: #475569; font-weight: 600; font-size: 13px; cursor: pointer;
+  transition: all .12s ease;
+}
+.mov-type-chip:hover { border-color: #bfdbfe; background: #f8fbff; }
+.mov-type-chip.active { background: var(--color-primary, #2563eb); border-color: var(--color-primary, #2563eb); color: #fff; }
 .type-picker {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
