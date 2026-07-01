@@ -41,8 +41,9 @@ interface Movement {
   fromBankId: number | null; toBankId: number | null;
   vendor: string | null; isCredit: boolean; dueDate: string | null; commission: number | string | null;
   familyMember: string | null; notes: string | null;
+  debtId?: number | null; recurringRuleId?: number | null;
   account?: Account | null; toAccount?: Account | null; card?: Card | null; wallet?: Wallet | null; category?: Category | null;
-  fromBank?: Bank | null; toBank?: Bank | null;
+  fromBank?: Bank | null; toBank?: Bank | null; debt?: { id: number; name: string; kind?: string } | null;
 }
 
 const route = useRoute();
@@ -577,6 +578,17 @@ function accountOrCardLabel(item: Movement) {
   if (item.wallet) return `👛 ${item.wallet.name}`;
   if (item.account) return `🏦 ${item.account.name}`;
   return '—';
+}
+// Resumen legible de "qué se hizo" bajo el concepto: cómo se pagó/recibió y con qué.
+function paidWithLabel(item: Movement): string {
+  if (item.type === 'TRANSFER') return ''; // origen → destino ya se ve en su columna
+  if (item.type === 'WITHDRAWAL') return item.account ? `🏧 Retiro desde ${item.account.name}` : '🏧 Retiro de efectivo';
+  if (item.type === 'PURCHASE' && item.isCredit) return '🕒 Compra fiada · se paga después';
+  const method = PAYMENT_LABEL[item.paymentMethod] || '';
+  const instrument = item.card ? `💳 ${item.card.name}` : item.wallet ? `👛 ${item.wallet.name}` : item.account ? `🏦 ${item.account.name}` : '';
+  const parts = [method, instrument].filter(Boolean);
+  if (!parts.length) return '';
+  return `${item.type === 'INCOME' ? 'Recibido por' : 'Pagado con'} ${parts.join(' · ')}`;
 }
 function setType(t: MovementType) {
   form.value.type = t;
@@ -1333,6 +1345,10 @@ onMounted(load);
                   <span class="cat-pill" style="margin-left:6px" :style="TYPE_PILL[item.type]">{{ TYPE_LABEL[item.type] }}</span>
                   <span v-if="item.type === 'PURCHASE' && item.isCredit" class="cat-pill" style="margin-left:6px;background:#fff7ed;color:#b45309">Fiada</span>
                   <span v-if="item.type === 'EXPENSE' && item.expenseKind" class="cat-pill" style="margin-left:6px;background:#eef2ff;color:#4338ca">{{ EXPENSE_KIND_LABEL[item.expenseKind] }}</span>
+                  <span v-if="item.debt" class="cat-pill" style="margin-left:6px;background:#f5f3ff;color:#7c3aed">🔗 Deuda</span>
+                  <span v-if="item.recurringRuleId" class="cat-pill" style="margin-left:6px;background:#ecfeff;color:#0e7490">🔁 Recurrente</span>
+                  <div v-if="paidWithLabel(item)"><small class="hint">{{ paidWithLabel(item) }}</small></div>
+                  <div v-if="item.debt"><small class="hint">🔗 Abono a deuda: <strong>{{ item.debt.name }}</strong></small></div>
                   <div v-if="item.vendor"><small class="hint">🏪 {{ item.vendor }}{{ item.dueDate ? ' · paga ' + formatDate(item.dueDate) : '' }}</small></div>
                   <div v-if="item.familyMember"><small class="hint">👤 {{ item.familyMember }}</small></div>
                 </td>
@@ -1407,6 +1423,8 @@ onMounted(load);
           <div v-if="detailItem.toBank" class="dl-row"><dt>Banco destino</dt><dd>🏦 {{ fmtBank(detailItem.toBank) }}</dd></div>
           <div v-if="Number(detailItem.commission)" class="dl-row"><dt>Comisión</dt><dd style="color:#b45309">💸 {{ formatMoney(detailItem.commission) }}</dd></div>
 
+          <div v-if="detailItem.debt" class="dl-row"><dt>Pago de deuda</dt><dd>🔗 {{ detailItem.debt.name }}</dd></div>
+          <div v-if="detailItem.recurringRuleId" class="dl-row"><dt>Origen</dt><dd>🔁 Pago recurrente</dd></div>
           <div v-if="detailItem.vendor" class="dl-row"><dt>Proveedor</dt><dd>🏪 {{ detailItem.vendor }}</dd></div>
           <div v-if="detailItem.type === 'PURCHASE'" class="dl-row"><dt>Forma</dt><dd>{{ detailItem.isCredit ? 'Fiada (pago posterior)' : 'Pagada al momento' }}</dd></div>
           <div v-if="detailItem.dueDate" class="dl-row"><dt>Vence / paga</dt><dd>{{ formatDate(detailItem.dueDate) }}</dd></div>

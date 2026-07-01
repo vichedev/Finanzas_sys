@@ -158,6 +158,14 @@ const weeklySeries = computed(() => {
 const topExpenseWeek = computed(() => weeklySeries.value.slice().sort((a, b) => b.expense - a.expense)[0] || null);
 const hasWeeklyData = computed(() => weeklySeries.value.some((w) => w.income > 0 || w.expense > 0));
 
+// Serie mensual visible: nunca antes del inicio del sistema (mayo 2026).
+const visibleMonthlySeries = computed(() =>
+  (data.value?.monthlySeries || []).filter((p) => {
+    const [y, m] = String(p.key).split('-').map(Number);
+    return y > START_YEAR || (y === START_YEAR && m >= START_MONTH);
+  })
+);
+
 const barChartData = computed(() => {
   if (chartMode.value === 'weekly') {
     const w = weeklySeries.value;
@@ -170,10 +178,10 @@ const barChartData = computed(() => {
     };
   }
   return {
-    labels: (data.value?.monthlySeries || []).map((p) => p.label),
+    labels: visibleMonthlySeries.value.map((p) => p.label),
     datasets: [
-      { label: 'Ingresos', data: (data.value?.monthlySeries || []).map((p) => p.income), backgroundColor: '#16a34a', borderRadius: 6 },
-      { label: 'Gastos', data: (data.value?.monthlySeries || []).map((p) => p.expense), backgroundColor: '#ef4444', borderRadius: 6 }
+      { label: 'Ingresos', data: visibleMonthlySeries.value.map((p) => p.income), backgroundColor: '#16a34a', borderRadius: 6 },
+      { label: 'Gastos', data: visibleMonthlySeries.value.map((p) => p.expense), backgroundColor: '#ef4444', borderRadius: 6 }
     ]
   };
 });
@@ -205,19 +213,14 @@ const barChartOptions = {
   }
 };
 
-const hasMonthlyData = computed(() => {
-  const series = data.value?.monthlySeries || [];
-  return series.some((p) => Number(p.income) > 0 || Number(p.expense) > 0);
-});
+const hasMonthlyData = computed(() =>
+  visibleMonthlySeries.value.some((p) => Number(p.income) > 0 || Number(p.expense) > 0)
+);
 
 // --- Comparativa Ingresos vs Gastos (últimos meses de monthlySeries) ---
 // No mostramos meses anteriores al inicio del sistema (mayo 2026): el histórico arranca ahí.
 const comparison = computed(() =>
-  (data.value?.monthlySeries || [])
-    .filter((p) => {
-      const [y, m] = String(p.key).split('-').map(Number);
-      return y > START_YEAR || (y === START_YEAR && m >= START_MONTH);
-    })
+  visibleMonthlySeries.value
     .map((p) => {
       const income = Number(p.income || 0);
       const expense = Number(p.expense || 0);
