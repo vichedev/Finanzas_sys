@@ -591,7 +591,8 @@ function closeForm() {
 
 // ---- Selector de tipo: elegir marca el tipo y muestra debajo el botón para registrar ----
 const selectedType = ref<MovementType | null>(null);
-function pickType(t: MovementType) { selectedType.value = t; }
+// Elegir el tipo lo marca y además filtra la tabla a ese tipo (ingresos, gastos, …).
+function pickType(t: MovementType) { selectedType.value = t; setType(t); }
 function registerSelected() { if (selectedType.value) openForm(selectedType.value); }
 const selectedTypeLabel = computed(() =>
   selectedType.value ? `Registrar ${ADD_LABEL[selectedType.value]}` : ''
@@ -1274,9 +1275,6 @@ onMounted(load);
           <h2>{{ tableTitle }}</h2>
           <div class="panel-header-right">
             <span class="panel-hint">{{ MONTHS.find(m => m.value === month)?.label }} {{ year }} · {{ displayRows.length }} registro{{ displayRows.length === 1 ? '' : 's' }}</span>
-            <AppButton v-if="canAddForTable" mini @click="openForm(tableAddType)">
-              <template #icon><Plus :size="15" /></template>{{ tableAddLabel }}
-            </AppButton>
           </div>
         </div>
 
