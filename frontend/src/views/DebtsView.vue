@@ -6,6 +6,7 @@ import { HandCoins, FileText, UserCheck, Pencil, Trash2, Plus, X, Wallet } from 
 import TabBar from '../components/TabBar.vue';
 import PageHeader from '../components/PageHeader.vue';
 import AppModal from '../components/AppModal.vue';
+import AttachmentUploader from '../components/AttachmentUploader.vue';
 import { useFormat } from '../composables/useFormat';
 import { useToast } from '../composables/useToast';
 import { useConfirm } from '../composables/useConfirm';
@@ -34,6 +35,7 @@ interface DebtRow {
 }
 
 interface AccountRef { id: number; name: string; holder?: string | null; bankName?: string | null; accountNumber?: string | null }
+interface CardRef { id: number; name: string; type?: string | null; bankName?: string | null; last4?: string | null }
 
 const route = useRoute();
 
@@ -68,6 +70,7 @@ const activeTab = computed<DebtTab>({
 
 const rows = ref<DebtRow[]>([]);
 const accounts = ref<AccountRef[]>([]);
+const cards = ref<CardRef[]>([]);
 const toast = useToast();
 const { confirm } = useConfirm();
 const saving = ref(false);
@@ -161,9 +164,10 @@ function resetForm() {
 
 async function load() {
   try {
-    const [debtsRes, accountsRes] = await Promise.all([http.get('/debts'), http.get('/accounts')]);
+    const [debtsRes, accountsRes, cardsRes] = await Promise.all([http.get('/debts'), http.get('/accounts'), http.get('/cards')]);
     rows.value = debtsRes.data;
     accounts.value = accountsRes.data;
+    cards.value = cardsRes.data;
     if (!form.value.name && form.value.principal === 0) form.value.kind = meta.value.defaultKind;
   } catch {
     toast.error('No se pudieron cargar los registros. Intenta nuevamente.');
@@ -249,12 +253,24 @@ async function removeRow(item: DebtRow) {
 const todayYmd = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const payOpen = ref(false);
 const payDebt = ref<DebtRow | null>(null);
-const payForm = ref<{ accountId: number | null; amount: number | null; payDate: string; notes: string }>({ accountId: null, amount: null, payDate: '', notes: '' });
+type PaySource = 'account' | 'card';
+const payForm = ref<{ source: PaySource; accountId: number | null; cardId: number | null; amount: number | null; payDate: string; notes: string }>(
+  { source: 'account', accountId: null, cardId: null, amount: null, payDate: '', notes: '' }
+);
 const paying = ref(false);
+const payAttachRef = ref<{ flush: (id: number) => Promise<void>; reset: () => void; hasPending: () => boolean } | null>(null);
 const payBalance = computed(() => Math.max(0, Number(payDebt.value?.balance ?? 0)));
+function cardLabel(c: CardRef): string {
+  const parts = [c.name];
+  if (c.type) parts.push(c.type === 'CREDIT' ? 'Crédito' : 'Débito');
+  if (c.bankName) parts.push(c.bankName);
+  if (c.last4) parts.push(`****${c.last4}`);
+  return parts.join(' · ');
+}
 function openPay(item: DebtRow) {
   payDebt.value = item;
-  payForm.value = { accountId: accounts.value[0]?.id ?? null, amount: payBalance.value || null, payDate: todayYmd(), notes: '' };
+  payForm.value = { source: 'account', accountId: accounts.value[0]?.id ?? null, cardId: cards.value[0]?.id ?? null, amount: payBalance.value || null, payDate: todayYmd(), notes: '' };
+  payAttachRef.value?.reset();
   payOpen.value = true;
 }
 async function submitPay() {
@@ -262,14 +278,21 @@ async function submitPay() {
   if (!payForm.value.amount || payForm.value.amount <= 0) { toast.error('Ingresa un monto válido.'); return; }
   if (payForm.value.amount > payBalance.value) { toast.error(`No puedes abonar más de lo pendiente (${formatMoney(payBalance.value)}).`); return; }
   if (!payForm.value.payDate) { toast.error('Selecciona la fecha del pago.'); return; }
+  const fromCard = payForm.value.source === 'card';
+  if (fromCard && !payForm.value.cardId) { toast.error('Elige la tarjeta con la que pagas.'); return; }
   paying.value = true;
   try {
-    await http.post(`/debts/${payDebt.value.id}/pay`, {
+    const { data } = await http.post<{ movementId: number }>(`/debts/${payDebt.value.id}/pay`, {
       amount: payForm.value.amount,
-      accountId: payForm.value.accountId || null,
+      accountId: fromCard ? null : (payForm.value.accountId || null),
+      cardId: fromCard ? (payForm.value.cardId || null) : null,
       movementDate: payForm.value.payDate,
       notes: payForm.value.notes.trim() || null
     });
+    // Sube el comprobante adjunto (si lo hay) al gasto generado.
+    if (data?.movementId && payAttachRef.value?.hasPending()) {
+      try { await payAttachRef.value.flush(data.movementId); } catch { /* el pago ya quedó registrado */ }
+    }
     payOpen.value = false;
     toast.success('Pago registrado. Se generó un gasto y se actualizó el saldo.');
     await load();
@@ -601,6 +624,13 @@ onMounted(load);
           <small class="hint">Máximo {{ formatMoney(payBalance) }} (lo pendiente).</small>
         </div>
         <div class="field">
+          <label>¿Con qué pagas?</label>
+          <div class="pay-source">
+            <button type="button" class="pay-source-btn" :class="{ active: payForm.source === 'account' }" @click="payForm.source = 'account'">🏦 Cuenta</button>
+            <button type="button" class="pay-source-btn" :class="{ active: payForm.source === 'card' }" @click="payForm.source = 'card'">💳 Tarjeta</button>
+          </div>
+        </div>
+        <div v-if="payForm.source === 'account'" class="field">
           <label for="dpay-acc">Cuenta de origen</label>
           <select id="dpay-acc" v-model.number="payForm.accountId">
             <option :value="null">Sin cuenta (no afecta saldos)</option>
@@ -608,10 +638,23 @@ onMounted(load);
           </select>
           <small class="hint">Si la eliges, se descuenta de esa cuenta.</small>
         </div>
+        <div v-else class="field">
+          <label for="dpay-card">Tarjeta</label>
+          <select id="dpay-card" v-model.number="payForm.cardId">
+            <option :value="null">— Selecciona la tarjeta —</option>
+            <option v-for="c in cards" :key="c.id" :value="c.id">{{ cardLabel(c) }}</option>
+          </select>
+          <small v-if="cards.length" class="hint">Se registra el gasto usando esta tarjeta.</small>
+          <small v-else class="hint">No tienes tarjetas. Créalas en la sección Tarjetas.</small>
+        </div>
         <div class="field">
           <label for="dpay-date">Fecha del pago <span class="required-mark">*</span></label>
           <input id="dpay-date" v-model="payForm.payDate" type="date" min="2026-05-01" :max="todayYmd()" />
           <small class="hint">Con esta fecha aparece el gasto en Movimientos.</small>
+        </div>
+        <div class="field">
+          <label>Comprobante</label>
+          <AttachmentUploader ref="payAttachRef" entity-type="MOVEMENT" :entity-id="null" />
         </div>
         <div class="field">
           <label for="dpay-notes">Notas</label>
@@ -639,6 +682,11 @@ onMounted(load);
 .pay-body label { font-size: 13px; font-weight: 600; color: #334155; }
 .pay-body input, .pay-body select { padding: 8px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; font: inherit; color: #334155; }
 .pay-body .hint { font-size: 12px; color: #94a3b8; }
+/* Selector de origen del pago: cuenta o tarjeta */
+.pay-source { display: inline-flex; gap: 6px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 10px; padding: 4px; }
+.pay-source-btn { flex: 1; padding: 8px 16px; border: none; background: transparent; border-radius: 7px; font-weight: 600; font-size: 13.5px; color: #64748b; cursor: pointer; transition: all .12s ease; }
+.pay-source-btn:hover:not(.active) { color: #334155; }
+.pay-source-btn.active { background: #fff; color: var(--color-primary, #2563eb); box-shadow: 0 1px 2px rgba(15,23,42,.08); }
 
 .required-mark { color: #ef4444; font-weight: 700; }
 

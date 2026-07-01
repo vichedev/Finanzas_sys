@@ -94,6 +94,7 @@ debtsRouter.put('/:id', async (req, res) => {
 const paySchema = z.object({
   amount: z.coerce.number().finite().gt(0).lte(99_999_999_999.99),
   accountId: z.coerce.number().int().positive().optional().nullable(),
+  cardId: z.coerce.number().int().positive().optional().nullable(),
   movementDate: z.coerce.date().optional(),
   notes: z.string().trim().max(500).optional().nullable()
 }).strict();
@@ -110,8 +111,16 @@ debtsRouter.post('/:id/pay', async (req, res) => {
     if (balance <= 0) throw Object.assign(new Error('Esta deuda no tiene saldo pendiente.'), { status: 400 });
     const pay = Math.min(Number(body.amount), balance); // no se paga más de lo que se debe
 
+    // Origen del pago: una tarjeta (sube su saldo usado) o una cuenta (baja su saldo).
+    // Si se envían ambos, la tarjeta tiene prioridad.
     let account = null as { id: number; name: string } | null;
-    if (body.accountId) {
+    let card = null as { id: number; name: string; type: string } | null;
+    if (body.cardId) {
+      card = await tx.card.findFirst({ where: { id: body.cardId, userId }, select: { id: true, name: true, type: true } });
+      if (!card) throw Object.assign(new Error('Tarjeta no encontrada'), { status: 400 });
+      // Un gasto con tarjeta incrementa su saldo usado (coherente con Movimientos).
+      await tx.card.update({ where: { id: card.id }, data: { currentBalance: { increment: pay } } });
+    } else if (body.accountId) {
       account = await tx.account.findFirst({ where: { id: body.accountId, userId }, select: { id: true, name: true } });
       if (!account) throw Object.assign(new Error('Cuenta no encontrada'), { status: 400 });
       await tx.account.update({ where: { id: account.id }, data: { currentBalance: { decrement: pay } } });
@@ -130,13 +139,14 @@ debtsRouter.post('/:id/pay', async (req, res) => {
         amount: pay,
         movementDate: body.movementDate ?? new Date(),
         description: `Pago de deuda "${debt.name}"`,
-        paymentMethod: 'BANK_TRANSFER',
+        paymentMethod: card ? (card.type === 'CREDIT' ? 'CREDIT_CARD' : 'DEBIT_CARD') : 'BANK_TRANSFER',
         accountId: account?.id ?? null,
+        cardId: card?.id ?? null,
         debtId: debt.id,
         notes: body.notes ?? null
       }
     });
-    return { debt, movement, pay, accountName: account?.name ?? null };
+    return { debt, movement, pay, accountName: account?.name ?? card?.name ?? null };
   });
 
   void auditFromReq(req, 'UPDATE', 'debt', id, `Abono a deuda "${result.debt.name}" · ${fmtMoney(result.pay)}`);
