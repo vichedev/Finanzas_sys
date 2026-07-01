@@ -682,11 +682,22 @@ onMounted(load);
 .pay-body label { font-size: 13px; font-weight: 600; color: #334155; }
 .pay-body input, .pay-body select { padding: 8px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; font: inherit; color: #334155; }
 .pay-body .hint { font-size: 12px; color: #94a3b8; }
-/* Selector de origen del pago: cuenta o tarjeta */
-.pay-source { display: inline-flex; gap: 6px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 10px; padding: 4px; }
-.pay-source-btn { flex: 1; padding: 8px 16px; border: none; background: transparent; border-radius: 7px; font-weight: 600; font-size: 13.5px; color: #64748b; cursor: pointer; transition: all .12s ease; }
-.pay-source-btn:hover:not(.active) { color: #334155; }
-.pay-source-btn.active { background: #fff; color: var(--color-primary, #2563eb); box-shadow: 0 1px 2px rgba(15,23,42,.08); }
+/* Selector de origen del pago: cuenta o tarjeta (control segmentado) */
+.pay-source { display: flex; gap: 4px; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 12px; padding: 4px; }
+.pay-source-btn {
+  flex: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 10px 16px;
+  border: none !important; background: transparent !important; box-shadow: none !important;
+  border-radius: 9px; font-weight: 600; font-size: 14px; color: #64748b !important;
+  cursor: pointer; transition: background .12s ease, color .12s ease;
+}
+.pay-source-btn:hover { color: #334155 !important; }
+.pay-source-btn.active {
+  background: #fff !important;
+  color: var(--color-primary, #2563eb) !important;
+  box-shadow: 0 1px 2px rgba(15,23,42,.12) !important;
+}
 
 .required-mark { color: #ef4444; font-weight: 700; }
 

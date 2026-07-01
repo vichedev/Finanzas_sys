@@ -14,7 +14,7 @@ import {
 import { http } from '../api/http';
 import { useAuthStore } from '../stores/auth';
 import { useFormat } from '../composables/useFormat';
-import { periodOptions as periodOpts, MONTH_NAMES } from '../composables/usePeriod';
+import { periodOptions as periodOpts, MONTH_NAMES, START_YEAR, START_MONTH } from '../composables/usePeriod';
 import OnboardingGuide from '../components/OnboardingGuide.vue';
 import PageHeader from '../components/PageHeader.vue';
 import {
@@ -211,14 +211,20 @@ const hasMonthlyData = computed(() => {
 });
 
 // --- Comparativa Ingresos vs Gastos (últimos meses de monthlySeries) ---
+// No mostramos meses anteriores al inicio del sistema (mayo 2026): el histórico arranca ahí.
 const comparison = computed(() =>
-  (data.value?.monthlySeries || []).map((p) => {
-    const income = Number(p.income || 0);
-    const expense = Number(p.expense || 0);
-    const balance = income - expense;
-    const savings = income > 0 ? (balance / income) * 100 : 0;
-    return { label: p.label, income, expense, balance, savings };
-  })
+  (data.value?.monthlySeries || [])
+    .filter((p) => {
+      const [y, m] = String(p.key).split('-').map(Number);
+      return y > START_YEAR || (y === START_YEAR && m >= START_MONTH);
+    })
+    .map((p) => {
+      const income = Number(p.income || 0);
+      const expense = Number(p.expense || 0);
+      const balance = income - expense;
+      const savings = income > 0 ? (balance / income) * 100 : 0;
+      return { label: p.label, income, expense, balance, savings };
+    })
 );
 const comparisonMax = computed(() =>
   Math.max(1, ...comparison.value.map((r) => Math.max(r.income, r.expense)))
