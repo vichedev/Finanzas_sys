@@ -3,7 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute } from 'vue-router';
 import { http } from '../api/http';
-import { ArrowLeftRight, Pencil, Trash2, Plus, X, Wallet, ShoppingCart, ShoppingBag, Banknote, ChevronLeft, ChevronRight, CalendarDays, Repeat, LayoutGrid, CreditCard, SlidersHorizontal } from 'lucide-vue-next';
+import { ArrowLeftRight, Pencil, Trash2, Plus, X, Wallet, ShoppingCart, ShoppingBag, Banknote, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
 import PanelCard from '../components/PanelCard.vue';
 import AppButton from '../components/AppButton.vue';
@@ -437,6 +437,8 @@ const tableTitle = computed(() => {
   return 'Movimientos del mes';
 });
 
+// Vuelve a la vista "Todos" (no toca el formulario, solo la tabla).
+function viewAll() { typeFilter.value = 'ALL'; activeTab.value = 'ALL'; resetTableAccountFilters(); }
 // Vista dedicada a los pagos de tarjeta (se registran desde Tarjetas; aquí se ven y se eliminan).
 function viewCardPayments() { typeFilter.value = 'CARD_PAYMENT'; activeTab.value = 'ALL'; resetTableAccountFilters(); }
 
@@ -456,40 +458,21 @@ const monthTotals = computed(() => {
   return { income, expense, balance: income - expense };
 });
 
-// ---- Barra segmentada de tipos: el ÚNICO selector que dirige tabla, resumen y filtros ----
-const TYPE_SEGMENTS: { value: 'ALL' | MovementType; label: string; icon: Component }[] = [
-  { value: 'ALL', label: 'Todos', icon: LayoutGrid },
-  { value: 'INCOME', label: 'Ingresos', icon: Wallet },
-  { value: 'EXPENSE', label: 'Gastos', icon: ShoppingCart },
-  { value: 'PURCHASE', label: 'Compras', icon: ShoppingBag },
-  { value: 'TRANSFER', label: 'Transferencias', icon: Repeat },
-  { value: 'WITHDRAWAL', label: 'Retiros', icon: Banknote }
-];
-function segCount(v: 'ALL' | MovementType): number {
-  return v === 'ALL' ? rows.value.length : rows.value.filter((r) => r.type === v).length;
-}
-// Cambia el tipo en vista y reinicia subfiltros para que la tabla quede coherente.
-function selectType(v: 'ALL' | MovementType) {
-  typeFilter.value = v;
-  activeTab.value = 'ALL';
-  resetTableAccountFilters();
-}
-
-// ---- Resumen contextual (solo lectura) según el tipo en vista ----
-interface Stat { key: string; label: string; value: string; accent?: 'pos' | 'neg' | '' }
-const contextStats = computed<Stat[]>(() => {
+interface SumCard { key: string; label: string; value: string; badge?: number; clickable?: boolean; active?: boolean; accent?: 'pos' | 'neg' | ''; onClick?: () => void }
+const summaryCards = computed<SumCard[]>(() => {
   const tf = typeFilter.value;
+  if (tf === 'EXPENSE') {
+    return TABS.map((t) => ({
+      key: t.key, label: t.label, badge: tabCount(t.key),
+      value: formatMoney(tabSum(t.key)),
+      clickable: true, active: activeTab.value === t.key, accent: 'neg',
+      onClick: () => setTab(t.key)
+    }));
+  }
   if (tf === 'INCOME') {
     const r = rowsOfType('INCOME');
     return [
       { key: 'sum', label: 'Ingresos del mes', value: formatMoney(sumOf(r)), accent: 'pos' },
-      { key: 'cnt', label: 'Registros', value: String(r.length) }
-    ];
-  }
-  if (tf === 'EXPENSE') {
-    const r = rowsOfType('EXPENSE');
-    return [
-      { key: 'sum', label: 'Gastos del mes', value: formatMoney(sumOf(r)), accent: 'neg' },
       { key: 'cnt', label: 'Registros', value: String(r.length) }
     ];
   }
@@ -499,7 +482,7 @@ const contextStats = computed<Stat[]>(() => {
     return [
       { key: 'tot', label: 'Compras del mes', value: formatMoney(sumOf(r)) },
       { key: 'paid', label: 'Pagadas', value: formatMoney(sumOf(paid)), accent: 'neg' },
-      { key: 'fiada', label: 'Fiadas (por pagar)', value: formatMoney(sumOf(fiada)) }
+      { key: 'fiada', label: 'Fiadas (por pagar)', value: formatMoney(sumOf(fiada)), accent: '' }
     ];
   }
   if (tf === 'TRANSFER') {
@@ -526,15 +509,12 @@ const contextStats = computed<Stat[]>(() => {
   }
   // ALL → panorama del mes
   return [
+    { key: 'all', label: 'Movimientos', value: 'registros', badge: rows.value.length },
     { key: 'inc', label: 'Ingresos', value: formatMoney(monthTotals.value.income), accent: 'pos' },
     { key: 'exp', label: 'Gastos', value: formatMoney(monthTotals.value.expense), accent: 'neg' },
-    { key: 'bal', label: 'Balance', value: formatMoney(monthTotals.value.balance), accent: monthTotals.value.balance >= 0 ? 'pos' : 'neg' },
-    { key: 'cnt', label: 'Registros', value: String(rows.value.length) }
+    { key: 'bal', label: 'Balance', value: formatMoney(monthTotals.value.balance), accent: monthTotals.value.balance >= 0 ? 'pos' : 'neg' }
   ];
 });
-
-// Panel de filtros colapsable (se abre solo si hay filtros activos).
-const showFilters = ref(false);
 
 // Cuentas filtradas por el banco del retiro: solo cuentas de ESE banco.
 const withdrawalAccountOptions = computed<PickOpt[]>(() => {
@@ -609,6 +589,14 @@ function closeForm() {
   cancelEdit();
 }
 
+// ---- Selector de tipo: elegir marca el tipo y muestra debajo el botón para registrar ----
+const selectedType = ref<MovementType | null>(null);
+function pickType(t: MovementType) { selectedType.value = t; }
+function registerSelected() { if (selectedType.value) openForm(selectedType.value); }
+const selectedTypeLabel = computed(() =>
+  selectedType.value ? `Registrar ${ADD_LABEL[selectedType.value]}` : ''
+);
+
 // ---- Botón contextual "Agregar nuevo …" en la zona de la tabla ----
 // El texto y el tipo que abre el modal siguen al tipo que se está viendo en la tabla.
 const ADD_LABEL: Record<MovementType, string> = {
@@ -630,6 +618,21 @@ const tableAddLabel = computed(() =>
   typeFilter.value === 'ALL' ? 'Registrar movimiento' : `Agregar ${ADD_LABEL[tableAddType.value]}`
 );
 
+// ---- Selector de tipo dentro de los filtros (filtros inteligentes) ----
+// Cambiar el tipo aquí reconfigura los filtros: p. ej. Transferencia muestra origen y destino.
+const TYPE_FILTER_OPTIONS: { value: 'ALL' | MovementType; label: string }[] = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'INCOME', label: 'Ingresos' },
+  { value: 'EXPENSE', label: 'Gastos' },
+  { value: 'PURCHASE', label: 'Compras' },
+  { value: 'TRANSFER', label: 'Transferencias' },
+  { value: 'WITHDRAWAL', label: 'Retiros' },
+  { value: 'CARD_PAYMENT', label: 'Pagos de tarjeta' }
+];
+function onTypeFilterChange() {
+  activeTab.value = 'ALL';
+  resetTableAccountFilters();
+}
 
 // ---- Modal de detalle (click en la fila) ----
 const detailOpen = ref(false);
@@ -822,9 +825,6 @@ onMounted(load);
   <section class="dashboard">
     <PageHeader title="Movimientos" subtitle="Ingresos, gastos y transferencias del mes.">
       <template #actions>
-        <AppButton class="mov-register-cta" @click="openForm('INCOME')">
-          <template #icon><Plus :size="16" /></template>Registrar
-        </AppButton>
         <div class="period-nav" role="group" aria-label="Mes a consultar">
           <button type="button" class="icon-btn period-arrow" title="Mes anterior" aria-label="Mes anterior" :disabled="atStartPeriod" @click="prevMonth">
             <ChevronLeft :size="18" :stroke-width="2.4" />
@@ -849,6 +849,30 @@ onMounted(load);
     </PageHeader>
 
     <div class="stack">
+      <!-- Disparador: elegir el tipo lo marca y muestra debajo el botón para registrar -->
+      <PanelCard title="Registrar movimiento">
+        <p class="mov-trigger-hint">Elige qué quieres registrar y pulsa el botón para completar el detalle.</p>
+        <div class="type-picker">
+          <button
+            v-for="t in TYPE_OPTIONS"
+            :key="t.value"
+            type="button"
+            class="type-card"
+            :class="['tc-' + t.accent, { active: selectedType === t.value }]"
+            @click="pickType(t.value)"
+          >
+            <span class="type-card-icon"><component :is="t.icon" :size="20" :stroke-width="2.2" /></span>
+            <span class="type-card-label">{{ t.label }}</span>
+            <span class="type-card-desc">{{ t.desc }}</span>
+          </button>
+        </div>
+        <div v-if="selectedType" class="type-picker-cta">
+          <AppButton @click="registerSelected">
+            <template #icon><Plus :size="16" /></template>{{ selectedTypeLabel }}
+          </AppButton>
+        </div>
+      </PanelCard>
+
       <AppModal :open="formModalOpen" :title="modalTitle" max-width="780px" @close="closeForm">
         <form id="mov-form" class="form mov-form" @submit.prevent="save">
           <!-- Cambiar de tipo sin cerrar -->
@@ -1133,75 +1157,47 @@ onMounted(load);
       </AppModal>
 
       <PanelCard>
-        <!-- 1. Barra segmentada: el ÚNICO selector de tipo. Dirige tabla, resumen y filtros. -->
-        <div class="mov-typebar" role="tablist" aria-label="Tipo de movimiento">
-          <button
-            v-for="s in TYPE_SEGMENTS"
-            :key="s.value"
-            type="button"
-            class="mov-seg"
-            :class="{ active: typeFilter === s.value }"
-            role="tab"
-            :aria-selected="typeFilter === s.value"
-            @click="selectType(s.value)"
-          >
-            <component :is="s.icon" :size="16" :stroke-width="2.2" />
-            <span class="mov-seg-label">{{ s.label }}</span>
-            <span class="mov-seg-count">{{ segCount(s.value) }}</span>
-          </button>
-          <button
-            type="button"
-            class="mov-seg mov-seg-cards"
-            :class="{ active: typeFilter === 'CARD_PAYMENT' }"
-            @click="viewCardPayments"
-          >
-            <CreditCard :size="16" :stroke-width="2.2" />
-            <span class="mov-seg-label">Pagos de tarjeta</span>
-            <span class="mov-seg-count">{{ segCount('CARD_PAYMENT') }}</span>
-          </button>
-        </div>
-
-        <!-- 2. Resumen contextual del tipo en vista (solo lectura) -->
-        <div class="mov-stats">
-          <div v-for="c in contextStats" :key="c.key" class="mov-stat">
-            <span class="mov-stat-label">{{ c.label }}</span>
-            <span class="mov-stat-value" :class="c.accent">{{ c.value }}</span>
+        <div class="mov-section-head">
+          <span class="mov-section-title">{{ typeFilter === 'ALL' ? 'Resumen del mes' : TYPE_FILTER_LABEL[typeFilter] || 'Resumen' }}</span>
+          <div class="mov-section-actions">
+            <button v-if="typeFilter !== 'CARD_PAYMENT'" type="button" class="ghost mini" @click="viewCardPayments">
+              💳 Pagos de tarjeta
+            </button>
+            <button v-if="typeFilter !== 'ALL'" type="button" class="ghost mini view-all" @click="viewAll">
+              ← Ver todos
+            </button>
           </div>
         </div>
-
-        <!-- 2b. Subtipo de gasto: solo cuando se ven Gastos -->
-        <div v-if="typeFilter === 'EXPENSE'" class="mov-subfilter" role="tablist" aria-label="Subtipo de gasto">
+        <div class="mov-tabs" :class="{ 'is-static': typeFilter !== 'EXPENSE' }" role="tablist">
           <button
-            v-for="t in TABS"
-            :key="t.key"
+            v-for="c in summaryCards"
+            :key="c.key"
             type="button"
-            class="mov-sub-chip"
-            :class="{ active: activeTab === t.key }"
+            class="mov-tab"
+            :class="{ active: c.active, 'is-readonly': !c.clickable }"
             role="tab"
-            :aria-selected="activeTab === t.key"
-            @click="setTab(t.key)"
-          >{{ t.label }}<span class="mov-sub-count">{{ tabCount(t.key) }}</span></button>
-        </div>
-
-        <!-- 3. Barra de filtros (colapsable) -->
-        <div class="mov-filterbar">
-          <button
-            type="button"
-            class="mov-filter-toggle"
-            :class="{ open: showFilters, dirty: hasActiveFilters }"
-            @click="showFilters = !showFilters"
+            :aria-selected="!!c.active"
+            :disabled="!c.clickable"
+            @click="c.onClick && c.onClick()"
           >
-            <SlidersHorizontal :size="15" /> Filtros
-            <span v-if="hasActiveFilters" class="mov-filter-dot" aria-hidden="true"></span>
-          </button>
-          <span class="mov-filter-period"><CalendarDays :size="13" /> {{ periodLabel }}</span>
-          <button v-if="hasActiveFilters" type="button" class="ghost mini clear-filters" @click="clearFilters">
-            <X :size="13" /> Limpiar
+            <span class="mov-tab-top">
+              <span class="mov-tab-label">{{ c.label }}</span>
+              <span v-if="c.badge != null" class="mov-tab-count">{{ c.badge }}</span>
+            </span>
+            <span class="mov-tab-sum" :class="c.accent">{{ c.value }}</span>
           </button>
         </div>
 
-        <div v-if="showFilters" class="mov-filters">
+        <!-- Filtros de la tabla (la tabla muestra el tipo seleccionado arriba) -->
+        <div class="mov-filters">
           <div class="mov-filter-row">
+            <!-- Tipo: reconfigura los demás filtros (transferencia → origen/destino, retiro → banco/cuenta) -->
+            <label class="acc-filter acc-filter-type">
+              <span>Tipo:</span>
+              <select v-model="typeFilter" @change="onTypeFilterChange">
+                <option v-for="t in TYPE_FILTER_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
+              </select>
+            </label>
             <!-- Transferencias: origen + destino -->
             <template v-if="typeFilter === 'TRANSFER'">
               <label class="acc-filter">
@@ -1269,6 +1265,9 @@ onMounted(load);
               <X :size="13" /> Limpiar
             </button>
           </div>
+          <p class="mov-filter-hint">
+            Mostrando <strong>{{ periodLabel }}</strong>. Para ver otro mes usa el selector de arriba ◀ ▶.
+          </p>
         </div>
 
         <div class="panel-header">
@@ -1530,6 +1529,13 @@ onMounted(load);
 @media (max-width: 720px) {
   .type-picker { grid-template-columns: repeat(2, 1fr); }
 }
+/* Botón para registrar el tipo elegido (aparece bajo el selector) */
+.type-picker-cta { display: flex; justify-content: flex-end; margin-top: var(--space-4); }
+.type-picker-cta :deep(button) { font-weight: 700; }
+@media (max-width: 720px) {
+  .type-picker-cta { justify-content: stretch; }
+  .type-picker-cta :deep(button) { width: 100%; justify-content: center; }
+}
 
 .field-wide { grid-column: 1 / -1; }
 .amount-field input { font-size: var(--text-xl); font-weight: 700; height: 48px; }
@@ -1542,88 +1548,9 @@ onMounted(load);
 .acc-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #64748b; font-weight: 600; }
 .acc-filter select { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; max-width: 220px; }
 .acc-filter input[type="date"] { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; }
-/* CTA de registro en la cabecera */
-.mov-register-cta { font-weight: 700; }
-
-/* ---- Barra segmentada de tipos (selector principal) ---- */
-.mov-typebar {
-  display: flex; flex-wrap: wrap; gap: 8px;
-  margin-bottom: 16px;
-}
-.mov-seg {
-  display: inline-flex; align-items: center; gap: 8px;
-  padding: 9px 14px;
-  border: 1.5px solid var(--color-border, #e2e8f0);
-  background: var(--color-surface, #fff);
-  border-radius: 999px;
-  color: var(--color-text-soft, #475569);
-  font-weight: 600; font-size: 14px; cursor: pointer;
-  transition: border-color .15s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
-}
-.mov-seg:hover { border-color: var(--color-border-strong, #cbd5e1); background: var(--color-surface-2, #f8fafc); }
-.mov-seg.active {
-  border-color: var(--color-primary, #2563eb);
-  background: var(--color-primary-soft, #eff6ff);
-  color: var(--color-primary-active, #1d4ed8);
-  box-shadow: var(--shadow-focus, 0 0 0 3px rgba(37,99,235,.12));
-}
-.mov-seg-count {
-  min-width: 22px; height: 20px; padding: 0 7px;
-  display: inline-flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700;
-  color: #64748b; background: #f1f5f9; border-radius: 999px;
-}
-.mov-seg.active .mov-seg-count { color: #fff; background: var(--color-primary, #2563eb); }
-/* Pagos de tarjeta: segmento secundario, algo más discreto */
-.mov-seg-cards { margin-left: auto; color: #64748b; }
-@media (max-width: 720px) { .mov-seg-cards { margin-left: 0; } .mov-seg-label { display: none; } .mov-seg-cards .mov-seg-label { display: inline; } }
-
-/* ---- Resumen contextual (solo lectura) ---- */
-.mov-stats { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-.mov-stat {
-  flex: 1 1 150px; min-width: 130px;
-  display: flex; flex-direction: column; gap: 3px;
-  padding: 12px 14px;
-  background: var(--color-surface-2, #f8fafc);
-  border: 1px solid var(--color-border-soft, #eef0f4);
-  border-radius: 12px;
-}
-.mov-stat-label { font-size: 12px; font-weight: 600; color: #64748b; }
-.mov-stat-value { font-size: 19px; font-weight: 800; color: #1f2937; letter-spacing: -0.02em; }
-.mov-stat-value.pos { color: var(--color-success-text, #047857); }
-.mov-stat-value.neg { color: var(--color-danger-text, #b91c1c); }
-
-/* ---- Subtipo de gasto (chips) ---- */
-.mov-subfilter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
-.mov-sub-chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--color-border, #e2e8f0); background: #fff;
-  border-radius: 999px; color: #475569; font-weight: 600; font-size: 13px; cursor: pointer;
-  transition: all .12s ease;
-}
-.mov-sub-chip:hover { background: #f8fafc; }
-.mov-sub-chip.active { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
-.mov-sub-count { font-size: 11px; font-weight: 700; color: #94a3b8; }
-.mov-sub-chip.active .mov-sub-count { color: #6366f1; }
-
-/* ---- Barra de filtros (toggle) ---- */
-.mov-filterbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
-.mov-filter-toggle {
-  position: relative;
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 8px 14px;
-  border: 1px solid var(--color-border, #e2e8f0); background: #fff;
-  border-radius: 10px; color: #475569; font-weight: 600; font-size: 13.5px; cursor: pointer;
-  transition: all .12s ease;
-}
-.mov-filter-toggle:hover { border-color: #cbd5e1; background: #f8fafc; }
-.mov-filter-toggle.open { border-color: var(--color-primary, #2563eb); color: var(--color-primary-active, #1d4ed8); background: var(--color-primary-soft, #eff6ff); }
-.mov-filter-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-primary, #2563eb); }
-.mov-filter-period {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 13px; font-weight: 700; color: #475569; text-transform: capitalize;
-}
+/* El selector de Tipo dirige el resto de filtros → algo más marcado. */
+.acc-filter-type span { color: var(--color-text, #1f2937); }
+.acc-filter-type select { font-weight: 600; color: #1f2937; border-color: #cbd5e1; }
 
 /* Navegador de período (mes/año) en la cabecera */
 .period-nav {

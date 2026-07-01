@@ -51,7 +51,10 @@
       "PowerShell(cd frontend && npm run build 2>&1 | Select-Object -Last 12; \"B=$LASTEXITCODE\")",
       "PowerShell(npm run build 2>&1 | Select-Object -Last 12; \"B=$LASTEXITCODE\")",
       "PowerShell(npx vue-tsc --noEmit 2>&1 | Select-Object -Last 30; \"TC=$LASTEXITCODE\")",
-      "PowerShell(npm run build 2>&1 | Select-Object -Last 8; \"B=$LASTEXITCODE\")"
+      "PowerShell(npm run build 2>&1 | Select-Object -Last 8; \"B=$LASTEXITCODE\")",
+      "Bash(git checkout *)",
+      "PowerShell(cd frontend; npx vue-tsc --noEmit 2>&1 | Select-Object -Last 20; \"TC=$LASTEXITCODE\")",
+      "PowerShell(npm run build 2>&1 | Select-Object -Last 6; \"B=$LASTEXITCODE\")"
     ]
   }
 }
