@@ -369,6 +369,8 @@ const destFilter = ref<number | null>(null);       // cuenta de destino (transfe
 const filterBankId = ref<number | null>(null);     // banco del retiro (retiros)
 const categoryFilter = ref<number | null>(null);   // categoría (ingreso/gasto/compra)
 const paymentFilter = ref<string>('');             // método de pago ('' = todos)
+const fromBankFilter = ref<number | null>(null);   // banco origen (método transferencia/depósito)
+const toBankFilter = ref<number | null>(null);     // banco destino (método transferencia/depósito)
 const dateFrom = ref('');
 const dateTo = ref('');
 const ymd = (v: unknown) => String(v).slice(0, 10);
@@ -382,16 +384,27 @@ const filterAccounts = computed<Account[]>(() =>
 const filterCategories = computed(() => categories.value as Array<{ id: number; name: string; icon?: string | null }>);
 // Tipos que muestran filtros de categoría y método de pago.
 const showCatPayFilters = computed(() => ['INCOME', 'EXPENSE', 'PURCHASE'].includes(typeFilter.value));
+// Con método Transferencia bancaria o Depósito, el movimiento tiene banco origen y destino:
+// mostramos filtros extra coherentes con la columna "Bancos" (Desde / Hacia).
+const showBankOriginDest = computed(() =>
+  showCatPayFilters.value && ['BANK_TRANSFER', 'DEPOSIT'].includes(paymentFilter.value)
+);
 
 function resetTableAccountFilters() {
   accountFilter.value = null; originFilter.value = null; destFilter.value = null; filterBankId.value = null;
   categoryFilter.value = null; paymentFilter.value = '';
+  fromBankFilter.value = null; toBankFilter.value = null;
 }
 const hasActiveFilters = computed(() =>
   accountFilter.value != null || originFilter.value != null || destFilter.value != null ||
   filterBankId.value != null || categoryFilter.value != null || !!paymentFilter.value ||
+  fromBankFilter.value != null || toBankFilter.value != null ||
   !!dateFrom.value || !!dateTo.value
 );
+// Si el método deja de ser transferencia/depósito, los filtros de banco origen/destino no aplican.
+watch(paymentFilter, () => {
+  if (!showBankOriginDest.value) { fromBankFilter.value = null; toBankFilter.value = null; }
+});
 function clearFilters() {
   resetTableAccountFilters();
   dateFrom.value = ''; dateTo.value = '';
@@ -425,6 +438,8 @@ const displayRows = computed(() => {
   }
   if (categoryFilter.value != null) list = list.filter((r) => r.categoryId === categoryFilter.value);
   if (paymentFilter.value) list = list.filter((r) => r.paymentMethod === paymentFilter.value);
+  if (fromBankFilter.value != null) list = list.filter((r) => r.fromBankId === fromBankFilter.value);
+  if (toBankFilter.value != null) list = list.filter((r) => r.toBankId === toBankFilter.value);
   if (dateFrom.value) list = list.filter((r) => ymd(r.movementDate) >= dateFrom.value);
   if (dateTo.value) list = list.filter((r) => ymd(r.movementDate) <= dateTo.value);
   return list;
@@ -1243,6 +1258,23 @@ onMounted(load);
                   <option v-for="(label, key) in PAYMENT_LABEL" :key="key" :value="key">{{ label }}</option>
                 </select>
               </label>
+              <!-- Transferencia bancaria / Depósito: banco origen y destino -->
+              <template v-if="showBankOriginDest">
+                <label class="acc-filter">
+                  <span>🏦 Banco origen:</span>
+                  <select v-model.number="fromBankFilter">
+                    <option :value="null">Cualquiera</option>
+                    <option v-for="b in activeBanks" :key="b.id" :value="b.id">{{ b.name }}</option>
+                  </select>
+                </label>
+                <label class="acc-filter">
+                  <span>🏦 Banco destino:</span>
+                  <select v-model.number="toBankFilter">
+                    <option :value="null">Cualquiera</option>
+                    <option v-for="b in activeBanks" :key="b.id" :value="b.id">{{ b.name }}</option>
+                  </select>
+                </label>
+              </template>
             </template>
             <span class="filter-sep" aria-hidden="true"></span>
             <span class="filter-range-tag">Dentro del mes:</span>
