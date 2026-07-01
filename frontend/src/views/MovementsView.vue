@@ -589,6 +589,43 @@ function closeForm() {
   cancelEdit();
 }
 
+// ---- Botón contextual "Agregar nuevo …" en la zona de la tabla ----
+// El texto y el tipo que abre el modal siguen al tipo que se está viendo en la tabla.
+const ADD_LABEL: Record<MovementType, string> = {
+  INCOME: 'nuevo ingreso', EXPENSE: 'nuevo gasto', PURCHASE: 'nueva compra',
+  TRANSFER: 'nueva transferencia', WITHDRAWAL: 'nuevo retiro',
+  CARD_PAYMENT: 'movimiento', ADJUSTMENT: 'movimiento'
+};
+// Si la tabla muestra un tipo editable, ese; si es "Todos" u otro no editable, ingreso por defecto.
+const tableAddType = computed<MovementType>(() =>
+  typeFilter.value !== 'ALL' && FORM_TYPES.includes(typeFilter.value as MovementType)
+    ? (typeFilter.value as MovementType)
+    : 'INCOME'
+);
+// Los pagos de tarjeta/ajustes no se registran aquí → sin botón de agregar.
+const canAddForTable = computed(() =>
+  typeFilter.value === 'ALL' || FORM_TYPES.includes(typeFilter.value as MovementType)
+);
+const tableAddLabel = computed(() =>
+  typeFilter.value === 'ALL' ? 'Registrar movimiento' : `Agregar ${ADD_LABEL[tableAddType.value]}`
+);
+
+// ---- Selector de tipo dentro de los filtros (filtros inteligentes) ----
+// Cambiar el tipo aquí reconfigura los filtros: p. ej. Transferencia muestra origen y destino.
+const TYPE_FILTER_OPTIONS: { value: 'ALL' | MovementType; label: string }[] = [
+  { value: 'ALL', label: 'Todos' },
+  { value: 'INCOME', label: 'Ingresos' },
+  { value: 'EXPENSE', label: 'Gastos' },
+  { value: 'PURCHASE', label: 'Compras' },
+  { value: 'TRANSFER', label: 'Transferencias' },
+  { value: 'WITHDRAWAL', label: 'Retiros' },
+  { value: 'CARD_PAYMENT', label: 'Pagos de tarjeta' }
+];
+function onTypeFilterChange() {
+  activeTab.value = 'ALL';
+  resetTableAccountFilters();
+}
+
 // ---- Modal de detalle (click en la fila) ----
 const detailOpen = ref(false);
 const detailItem = ref<Movement | null>(null);
@@ -1141,6 +1178,13 @@ onMounted(load);
         <!-- Filtros de la tabla (la tabla muestra el tipo seleccionado arriba) -->
         <div class="mov-filters">
           <div class="mov-filter-row">
+            <!-- Tipo: reconfigura los demás filtros (transferencia → origen/destino, retiro → banco/cuenta) -->
+            <label class="acc-filter acc-filter-type">
+              <span>Tipo:</span>
+              <select v-model="typeFilter" @change="onTypeFilterChange">
+                <option v-for="t in TYPE_FILTER_OPTIONS" :key="t.value" :value="t.value">{{ t.label }}</option>
+              </select>
+            </label>
             <!-- Transferencias: origen + destino -->
             <template v-if="typeFilter === 'TRANSFER'">
               <label class="acc-filter">
@@ -1217,6 +1261,9 @@ onMounted(load);
           <h2>{{ tableTitle }}</h2>
           <div class="panel-header-right">
             <span class="panel-hint">{{ MONTHS.find(m => m.value === month)?.label }} {{ year }} · {{ displayRows.length }} registro{{ displayRows.length === 1 ? '' : 's' }}</span>
+            <AppButton v-if="canAddForTable" mini @click="openForm(tableAddType)">
+              <template #icon><Plus :size="15" /></template>{{ tableAddLabel }}
+            </AppButton>
           </div>
         </div>
 
@@ -1227,7 +1274,10 @@ onMounted(load);
           <strong v-else>Aún no hay movimientos en {{ periodLabel }}</strong>
           <p v-if="hasActiveFilters">Cambia o limpia los filtros para ver más.</p>
           <p v-else-if="typeFilter === 'CARD_PAYMENT'">Los pagos de tarjeta se registran desde <strong>Tarjetas → Pagar tarjeta</strong>. Aquí los verás y podrás eliminarlos (se revierte el saldo). Prueba con otro mes con el selector ◀ ▶.</p>
-          <p v-else>Prueba con otro mes (selector ◀ ▶ arriba), registra el primero desde el formulario, o usa "Ver todos".</p>
+          <p v-else>Prueba con otro mes (selector ◀ ▶ arriba), o registra el primero con el botón de abajo.</p>
+          <AppButton v-if="canAddForTable" @click="openForm(tableAddType)">
+            <template #icon><Plus :size="16" /></template>{{ tableAddLabel }}
+          </AppButton>
         </div>
 
         <div v-else class="table-scroll">
@@ -1478,6 +1528,9 @@ onMounted(load);
 .acc-filter { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #64748b; font-weight: 600; }
 .acc-filter select { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; max-width: 220px; }
 .acc-filter input[type="date"] { padding: 6px 10px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 8px; background: #fff; font-weight: 500; color: #334155; }
+/* El selector de Tipo dirige el resto de filtros → algo más marcado. */
+.acc-filter-type span { color: var(--color-text, #1f2937); }
+.acc-filter-type select { font-weight: 600; color: #1f2937; border-color: #cbd5e1; }
 
 /* Navegador de período (mes/año) en la cabecera */
 .period-nav {

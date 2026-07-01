@@ -46,7 +46,10 @@
       "Bash(taskkill //PID 4680 //F)",
       "Bash(grep -rn \"dbName\\\\|finanzas_t_\\\\|t_\\\\${\\\\|_t_\\\\|dbName =\" backend/src/lib/tenantProvisioning.ts)",
       "Bash(netstat -ano)",
-      "Bash(grep -n \"import { http }\\\\|from '../api/http'\" frontend/src/views/InvoicesView.vue)"
+      "Bash(grep -n \"import { http }\\\\|from '../api/http'\" frontend/src/views/InvoicesView.vue)",
+      "PowerShell(cd frontend && npx vue-tsc --noEmit 2>&1 | Select-Object -Last 30; \"TC=$LASTEXITCODE\")",
+      "PowerShell(cd frontend && npm run build 2>&1 | Select-Object -Last 12; \"B=$LASTEXITCODE\")",
+      "PowerShell(npm run build 2>&1 | Select-Object -Last 12; \"B=$LASTEXITCODE\")"
     ]
   }
 }
