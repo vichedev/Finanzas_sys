@@ -110,6 +110,19 @@ const saving = ref(false);
 const editingId = ref<number | null>(null);
 const attachRef = ref<{ flush: (id: number) => Promise<void>; reset: () => void; hasPending: () => boolean } | null>(null);
 
+// ---- Edición de "Pago de tarjeta" (modal dedicado) ----
+// Un pago de tarjeta no cabe en el formulario genérico (se maneja por método de
+// pago). Se edita aparte: cuenta de origen, tarjeta, monto, fecha, notas y
+// comprobantes. El backend revierte y reaplica los saldos al guardar.
+const cpEditOpen = ref(false);
+const cpSaving = ref(false);
+const cpErr = ref('');
+const cpForm = ref<{ id: number; accountId: number | null; cardId: number | null; amount: number | null; movementDate: string; notes: string; description: string; paymentMethod: PaymentMethod }>(
+  { id: 0, accountId: null, cardId: null, amount: null, movementDate: todayStr, notes: '', description: '', paymentMethod: 'BANK_TRANSFER' }
+);
+// Tarjetas de crédito (las únicas que se pagan). Se incluye la del movimiento aunque esté inactiva.
+const creditCards = computed<Card[]>(() => cards.value.filter((c) => (c.type || '').toUpperCase() === 'CREDIT' || c.id === cpForm.value.cardId));
+
 const buildEmptyForm = () => ({
   type: 'INCOME' as MovementType,
   expenseKind: (filterExpenseKind.value ?? 'VARIABLE') as ExpenseKind,
@@ -259,6 +272,14 @@ function cardSubLabel(c: Card): string | undefined {
   if (c.last4) parts.push(`****${c.last4}`);
   return parts.join(' · ') || undefined;
 }
+// Opciones para el modal de edición de pago de tarjeta (cuenta obligatoria → sin "Sin cuenta").
+const cpAccountOptions = computed<PickOpt[]>(() =>
+  accounts.value.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }))
+);
+const cpCardOptions = computed<PickOpt[]>(() =>
+  creditCards.value.map((c) => ({ value: c.id, label: c.name, sublabel: cardSubLabel(c), icon: '💳' }))
+);
+
 // Solo las tarjetas del tipo elegido: débito → DEBIT, crédito → CREDIT.
 const wantedCardType = computed<string | null>(() =>
   form.value.paymentMethod === 'CREDIT_CARD' ? 'CREDIT'
@@ -797,10 +818,13 @@ async function save() {
 // perdería el vínculo con la tarjeta y descuadraría los saldos. Se corrigen borrándolos.
 const FORM_TYPES: MovementType[] = ['INCOME', 'EXPENSE', 'TRANSFER', 'WITHDRAWAL', 'PURCHASE'];
 const canEditInForm = (item: Movement) => FORM_TYPES.includes(item.type);
+// Editable en la vista: los del formulario genérico + los pagos de tarjeta (modal aparte).
+const canEditRow = (item: Movement) => canEditInForm(item) || item.type === 'CARD_PAYMENT';
 
 function startEdit(item: Movement) {
+  if (item.type === 'CARD_PAYMENT') { openCardPayEdit(item); return; }
   if (!canEditInForm(item)) {
-    toast.error('Un pago de tarjeta no se edita aquí. Para corregirlo, elimínalo (se revierte el saldo) y vuelve a registrarlo desde Tarjetas.');
+    toast.error('Este movimiento no se edita aquí. Para corregirlo, elimínalo (se revierte el saldo) y vuelve a registrarlo.');
     return;
   }
   editingId.value = item.id;
@@ -831,6 +855,51 @@ function startEdit(item: Movement) {
 function cancelEdit() {
   editingId.value = null;
   form.value = buildEmptyForm();
+}
+
+// Abre el modal de edición de un pago de tarjeta con sus valores actuales.
+function openCardPayEdit(item: Movement) {
+  cpErr.value = '';
+  cpForm.value = {
+    id: item.id,
+    accountId: item.accountId,
+    cardId: item.cardId,
+    amount: Number(item.amount),
+    movementDate: String(item.movementDate).slice(0, 10),
+    notes: item.notes || '',
+    description: item.description,
+    paymentMethod: item.paymentMethod
+  };
+  cpEditOpen.value = true;
+}
+
+async function saveCardPayEdit() {
+  cpErr.value = '';
+  const f = cpForm.value;
+  if (!f.accountId) { cpErr.value = 'Selecciona la cuenta de origen.'; return; }
+  if (!f.cardId) { cpErr.value = 'Falta la tarjeta a pagar.'; return; }
+  if (!(Number(f.amount) > 0)) { cpErr.value = 'El monto debe ser mayor a 0.'; return; }
+  if (!f.movementDate) { cpErr.value = 'Selecciona la fecha del pago.'; return; }
+  cpSaving.value = true;
+  try {
+    // El backend revierte los saldos previos y aplica los nuevos en una transacción.
+    await http.put(`/movements/${f.id}`, {
+      type: 'CARD_PAYMENT',
+      amount: Number(f.amount),
+      movementDate: f.movementDate,
+      description: f.description,
+      paymentMethod: f.paymentMethod,
+      accountId: f.accountId,
+      cardId: f.cardId,
+      notes: f.notes.trim() || null
+    });
+    cpEditOpen.value = false;
+    toast.success('Pago de tarjeta actualizado. Saldos recalculados.');
+    await load();
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    cpErr.value = err?.response?.data?.message ?? 'No se pudo actualizar el pago.';
+  } finally { cpSaving.value = false; }
 }
 
 async function removeRow(item: Movement) {
@@ -1371,8 +1440,8 @@ onMounted(load);
                     <button
                       type="button"
                       class="ghost mini"
-                      :disabled="editingId === item.id || !canEditInForm(item)"
-                      :title="canEditInForm(item) ? 'Editar' : 'Para corregir un pago de tarjeta, elimínalo y vuelve a registrarlo'"
+                      :disabled="editingId === item.id || !canEditRow(item)"
+                      :title="canEditRow(item) ? 'Editar' : 'Este movimiento no se edita aquí; elimínalo y vuelve a registrarlo'"
                       @click.stop="startEdit(item)"
                     >
                       <Pencil :size="14" />
@@ -1451,10 +1520,62 @@ onMounted(load);
       </div>
       <template #footer>
         <AppButton variant="ghost" @click="detailOpen = false"><template #icon><X :size="16" /></template>Cerrar</AppButton>
-        <small v-if="detailItem && !canEditInForm(detailItem)" class="hint" style="align-self:center">
-          Para corregir un pago de tarjeta, ciérralo y elimínalo desde la tabla (se revierte el saldo).
+        <small v-if="detailItem && !canEditRow(detailItem)" class="hint" style="align-self:center">
+          Este movimiento no se edita aquí; ciérralo y elimínalo desde la tabla (se revierte el saldo).
         </small>
-        <AppButton v-if="detailItem && canEditInForm(detailItem)" @click="editFromDetail"><template #icon><Pencil :size="16" /></template>Editar</AppButton>
+        <AppButton v-if="detailItem && canEditRow(detailItem)" @click="editFromDetail"><template #icon><Pencil :size="16" /></template>Editar</AppButton>
+      </template>
+    </AppModal>
+
+    <!-- Editar pago de tarjeta (modal dedicado; saldos recalculados por el backend) -->
+    <AppModal :open="cpEditOpen" title="Editar pago de tarjeta" @close="cpEditOpen = false">
+      <div class="cp-body">
+        <p class="cp-hint">
+          Al guardar, se revierte el saldo del pago anterior y se aplica el nuevo,
+          tanto en la cuenta de origen como en la tarjeta.
+        </p>
+        <div class="field">
+          <label>Cuenta de origen <span class="required-mark">*</span></label>
+          <PickerField
+            v-model="cpForm.accountId"
+            :options="cpAccountOptions"
+            title="Selecciona la cuenta"
+            placeholder="Elige la cuenta de origen"
+            empty-text="No tienes cuentas. Créalas en la sección Cuentas."
+          />
+          <small class="hint">De aquí sale el dinero del pago.</small>
+        </div>
+        <div class="field">
+          <label>Tarjeta a pagar <span class="required-mark">*</span></label>
+          <PickerField
+            v-model="cpForm.cardId"
+            :options="cpCardOptions"
+            title="Selecciona la tarjeta"
+            placeholder="Elige la tarjeta"
+            empty-text="No tienes tarjetas de crédito."
+          />
+        </div>
+        <div class="field">
+          <label for="cp-amt">Monto a pagar (USD) <span class="required-mark">*</span></label>
+          <input id="cp-amt" v-model.number="cpForm.amount" type="number" step="0.01" min="0" placeholder="0.00" />
+        </div>
+        <div class="field">
+          <label for="cp-date">Fecha del pago <span class="required-mark">*</span></label>
+          <input id="cp-date" v-model="cpForm.movementDate" type="date" min="2026-05-01" :max="todayStr" />
+        </div>
+        <div class="field">
+          <label>Comprobante</label>
+          <AttachmentUploader entity-type="MOVEMENT" :entity-id="cpForm.id || null" />
+        </div>
+        <div class="field">
+          <label for="cp-notes">Notas</label>
+          <input id="cp-notes" v-model="cpForm.notes" type="text" maxlength="500" placeholder="Opcional" />
+        </div>
+        <p v-if="cpErr" class="error">{{ cpErr }}</p>
+      </div>
+      <template #footer>
+        <AppButton variant="ghost" @click="cpEditOpen = false"><template #icon><X :size="16" /></template>Cancelar</AppButton>
+        <AppButton :disabled="cpSaving" @click="saveCardPayEdit"><template #icon><Pencil :size="16" /></template>{{ cpSaving ? 'Guardando…' : 'Guardar cambios' }}</AppButton>
       </template>
     </AppModal>
 
@@ -1835,4 +1956,10 @@ onMounted(load);
 .row-actions button.mini:disabled { opacity: 0.4; cursor: not-allowed; }
 .row-actions button.mini.danger { color: #dc2626; border-color: #fecaca; }
 .row-actions button.mini.danger:hover { background: #fef2f2; }
+
+/* Modal: editar pago de tarjeta */
+.cp-body { display: flex; flex-direction: column; gap: 12px; }
+.cp-body .field { display: flex; flex-direction: column; gap: 4px; }
+.cp-hint { font-size: 13px; color: #6b7280; margin: 0; }
+.cp-body .error { color: var(--color-danger-text, #b91c1c); font-size: 13px; margin: 0; }
 </style>
