@@ -8,6 +8,7 @@ import { useToast } from '../composables/useToast';
 import { useConfirm } from '../composables/useConfirm';
 import PageHeader from '../components/PageHeader.vue';
 import AppModal from '../components/AppModal.vue';
+import AttachmentUploader from '../components/AttachmentUploader.vue';
 
 const { formatMoney } = useFormat();
 const toast = useToast();
@@ -203,6 +204,7 @@ const payForm = ref<{ accountId: number | null; amount: number | null; payDate: 
 const todayYmd = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const payErr = ref('');
 const paying = ref(false);
+const payAttachRef = ref<{ flush: (id: number) => Promise<void>; reset: () => void; hasPending: () => boolean } | null>(null);
 
 // Saldo adeudado de la tarjeta (nunca negativo).
 const payOwed = computed(() => Math.max(0, toNumber(payCardRef.value?.currentBalance)));
@@ -211,6 +213,7 @@ function openPay(card: Card) {
   const owed = Math.max(0, toNumber(card.currentBalance));
   payForm.value = { accountId: activeAccounts.value[0]?.id ?? null, amount: owed || null, payDate: todayYmd(), notes: '' };
   payErr.value = '';
+  payAttachRef.value?.reset();
   payOpen.value = true;
 }
 
@@ -224,12 +227,16 @@ async function submitPay() {
   if (!payForm.value.payDate) { payErr.value = 'Selecciona la fecha del pago.'; return; }
   paying.value = true;
   try {
-    await http.post(`/cards/${payCardRef.value.id}/pay`, {
+    const { data } = await http.post<{ id: number }>(`/cards/${payCardRef.value.id}/pay`, {
       accountId: payForm.value.accountId,
       amount: payForm.value.amount,
       movementDate: payForm.value.payDate,
       notes: payForm.value.notes.trim() || null
     });
+    // Sube el comprobante adjunto (si lo hay) al movimiento generado por el pago.
+    if (data?.id && payAttachRef.value?.hasPending()) {
+      try { await payAttachRef.value.flush(data.id); } catch { /* el pago ya quedó registrado */ }
+    }
     payOpen.value = false;
     toast.success('Pago registrado. Saldos de tarjeta y cuenta actualizados.');
     await Promise.all([load(), entities.ensureAccounts(true)]);
@@ -436,6 +443,10 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
           <label for="pay-date">Fecha del pago <span class="required-mark">*</span></label>
           <input id="pay-date" v-model="payForm.payDate" type="date" min="2026-05-01" :max="todayYmd()" />
           <small class="hint">Con esta fecha aparecerá el pago en Movimientos.</small>
+        </div>
+        <div class="field">
+          <label>Comprobante</label>
+          <AttachmentUploader ref="payAttachRef" entity-type="MOVEMENT" :entity-id="null" />
         </div>
         <div class="field">
           <label for="pay-notes">Notas</label>
