@@ -264,6 +264,15 @@ const accountOptions = computed<PickOpt[]>(() => [
   { value: null, label: 'Sin cuenta', icon: '∅' },
   ...accounts.value.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }))
 ]);
+// Etiqueta de la tarjeta pagada priorizando el banco (para identificarlo rápido).
+// Ej. "Banco Guayaquil · ****1200"; si no hay banco, cae al nombre de la tarjeta.
+function cardPayLabel(c?: Card | null): string {
+  if (!c) return '';
+  const parts: string[] = [];
+  if (c.bankName) parts.push(c.bankName);
+  if (c.last4) parts.push(`****${c.last4}`);
+  return parts.length ? parts.join(' · ') : c.name;
+}
 const CARD_TYPE_LABEL: Record<string, string> = { CREDIT: 'Crédito', DEBIT: 'Débito' };
 function cardSubLabel(c: Card): string | undefined {
   const parts: string[] = [];
@@ -595,6 +604,9 @@ function signedAmount(item: Movement) {
 }
 function accountOrCardLabel(item: Movement) {
   if (item.type === 'TRANSFER' && (item.account || item.toAccount)) return `${item.account?.name || '?'} → ${item.toAccount?.name || '?'}`;
+  // En un pago de tarjeta, la columna muestra la cuenta de origen (el dinero sale de aquí);
+  // la tarjeta pagada se resalta aparte, en el concepto.
+  if (item.type === 'CARD_PAYMENT') return item.account ? `🏦 ${item.account.name}` : '—';
   if (item.card) return `💳 ${item.card.name}`;
   if (item.wallet) return `👛 ${item.wallet.name}`;
   if (item.account) return `🏦 ${item.account.name}`;
@@ -603,6 +615,8 @@ function accountOrCardLabel(item: Movement) {
 // Resumen legible de "qué se hizo" bajo el concepto: cómo se pagó/recibió y con qué.
 function paidWithLabel(item: Movement): string {
   if (item.type === 'TRANSFER') return ''; // origen → destino ya se ve en su columna
+  // Pago de tarjeta: la tarjeta pagada se muestra en su propia línea; aquí solo la cuenta de origen.
+  if (item.type === 'CARD_PAYMENT') return item.account ? `🏦 Pagado desde ${item.account.name}` : '';
   if (item.type === 'WITHDRAWAL') return item.account ? `🏧 Retiro desde ${item.account.name}` : '🏧 Retiro de efectivo';
   if (item.type === 'PURCHASE' && item.isCredit) return '🕒 Compra fiada · se paga después';
   const method = PAYMENT_LABEL[item.paymentMethod] || '';
@@ -1415,7 +1429,9 @@ onMounted(load);
                   <span v-if="item.type === 'PURCHASE' && item.isCredit" class="cat-pill" style="margin-left:6px;background:#fff7ed;color:#b45309">Fiada</span>
                   <span v-if="item.type === 'EXPENSE' && item.expenseKind" class="cat-pill" style="margin-left:6px;background:#eef2ff;color:#4338ca">{{ EXPENSE_KIND_LABEL[item.expenseKind] }}</span>
                   <span v-if="item.debt" class="cat-pill" style="margin-left:6px;background:#f5f3ff;color:#7c3aed">🔗 Deuda</span>
+                  <span v-if="item.type === 'CARD_PAYMENT' && item.card" class="cat-pill" style="margin-left:6px;background:#ecfeff;color:#0e7490">💳 Tarjeta</span>
                   <span v-if="item.recurringRuleId" class="cat-pill" style="margin-left:6px;background:#ecfeff;color:#0e7490">🔁 Recurrente</span>
+                  <div v-if="item.type === 'CARD_PAYMENT' && item.card"><small class="hint">💳 Pago de tarjeta: <strong>{{ cardPayLabel(item.card) }}</strong></small></div>
                   <div v-if="paidWithLabel(item)"><small class="hint">{{ paidWithLabel(item) }}</small></div>
                   <div v-if="item.debt"><small class="hint">🔗 Abono a deuda: <strong>{{ item.debt.name }}</strong></small></div>
                   <div v-if="item.vendor"><small class="hint">🏪 {{ item.vendor }}{{ item.dueDate ? ' · paga ' + formatDate(item.dueDate) : '' }}</small></div>
@@ -1484,9 +1500,9 @@ onMounted(load);
 
           <div v-if="detailItem.type === 'TRANSFER'" class="dl-row"><dt>Cuenta origen</dt><dd>🏦 {{ fmtAccount(detailItem.account) || '—' }}</dd></div>
           <div v-if="detailItem.type === 'TRANSFER'" class="dl-row"><dt>Cuenta destino</dt><dd>🏦 {{ fmtAccount(detailItem.toAccount) || '—' }}</dd></div>
-          <div v-else-if="detailItem.account" class="dl-row"><dt>Cuenta afectada</dt><dd>🏦 {{ fmtAccount(detailItem.account) }}</dd></div>
+          <div v-else-if="detailItem.account" class="dl-row"><dt>{{ detailItem.type === 'CARD_PAYMENT' ? 'Cuenta de origen' : 'Cuenta afectada' }}</dt><dd>🏦 {{ fmtAccount(detailItem.account) }}</dd></div>
 
-          <div v-if="detailItem.card" class="dl-row"><dt>Tarjeta</dt><dd>💳 {{ detailItem.card.name }}</dd></div>
+          <div v-if="detailItem.card" class="dl-row"><dt>{{ detailItem.type === 'CARD_PAYMENT' ? 'Tarjeta pagada' : 'Tarjeta' }}</dt><dd>💳 {{ detailItem.type === 'CARD_PAYMENT' ? cardPayLabel(detailItem.card) : detailItem.card.name }}</dd></div>
           <div v-if="detailItem.wallet" class="dl-row"><dt>Billetera</dt><dd>👛 {{ detailItem.wallet.name }}</dd></div>
           <div v-if="detailItem.fromBank" class="dl-row"><dt>Banco origen</dt><dd>🏦 {{ fmtBank(detailItem.fromBank) }}</dd></div>
           <div v-if="detailItem.toBank" class="dl-row"><dt>Banco destino</dt><dd>🏦 {{ fmtBank(detailItem.toBank) }}</dd></div>
