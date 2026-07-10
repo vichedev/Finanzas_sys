@@ -225,6 +225,9 @@ model Card {
   creditLimit    Decimal?  @db.Decimal(14, 2)
   cutoffDay      Int?
   paymentDueDay  Int?
+  // CRÉDITO: saldo usado (deuda). DÉBITO: NO se usa — el saldo se deriva sumando
+  // las cuentas del mismo banco y titular (razón social), porque la tarjeta de
+  // débito es solo un acceso a esas cuentas, no un dinero aparte.
   currentBalance Decimal   @db.Decimal(14, 2) @default(0)
   color          String?                          // color personalizado (hex) del fondo
   logoMime       String?                          // tipo del logo subido

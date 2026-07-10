@@ -4,6 +4,7 @@ import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { auditFromReq } from '../../lib/tenantAudit';
 import { createNotification } from '../../lib/notifications';
+import { accountBelongsToDebitCard } from '../../lib/debitCard';
 
 const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
 
@@ -37,10 +38,49 @@ function parseLogo(dataUrl?: string | null): { mime: string; buffer: Uint8Array<
   return { mime: m[1], buffer: new Uint8Array(ab) };
 }
 
-// Aplana la tarjeta para la respuesta: logo como data URL, sin los bytes crudos.
-function shapeCard<T extends { logoData?: Buffer | Uint8Array | null; logoMime?: string | null }>(c: T) {
+type CardShape = {
+  id: number; type: string; name: string; bankId: number | null; currentBalance: unknown;
+  logoData?: Buffer | Uint8Array | null; logoMime?: string | null;
+};
+
+/**
+ * Aplana la tarjeta para la respuesta: logo como data URL, sin los bytes crudos.
+ *
+ * En las de DÉBITO, el saldo mostrado (currentBalance) y las cuentas que la
+ * componen (linkedAccounts) se derivan de las cuentas del mismo banco y titular
+ * — la tarjeta es un acceso a esas cuentas, no dinero aparte. `accountsByCard`
+ * trae esas cuentas ya agrupadas por id de tarjeta.
+ */
+function shapeCard(c: CardShape, accountsByCard?: Map<number, DerivedAccount[]>) {
   const { logoData, logoMime, ...rest } = c;
-  return { ...rest, logo: logoData && logoMime ? `data:${logoMime};base64,${Buffer.from(logoData).toString('base64')}` : null };
+  const linked = c.type === 'DEBIT' ? (accountsByCard?.get(c.id) ?? []) : [];
+  const derived = c.type === 'DEBIT'
+    ? linked.reduce((sum, a) => sum + Number(a.currentBalance ?? 0), 0)
+    : undefined;
+  return {
+    ...rest,
+    ...(derived !== undefined ? { currentBalance: derived } : {}),
+    linkedAccounts: linked,
+    logo: logoData && logoMime ? `data:${logoMime};base64,${Buffer.from(logoData).toString('base64')}` : null
+  };
+}
+
+type DerivedAccount = { id: number; name: string; accountNumber: string | null; accountKind: string | null; currentBalance: unknown };
+
+/** Para cada tarjeta de débito, sus cuentas (mismo banco y titular). Una query total. */
+async function accountsForDebitCards(prisma: any, userId: number, cards: CardShape[]): Promise<Map<number, DerivedAccount[]>> {
+  const map = new Map<number, DerivedAccount[]>();
+  const debit = cards.filter((c) => c.type === 'DEBIT' && c.bankId != null);
+  if (!debit.length) return map;
+  const accounts: (DerivedAccount & { bankId: number | null })[] =
+    await prisma.account.findMany({
+      where: { userId, isActive: true },
+      select: { id: true, name: true, accountNumber: true, accountKind: true, currentBalance: true, bankId: true }
+    });
+  for (const c of debit) {
+    map.set(c.id, accounts.filter((a) => accountBelongsToDebitCard(c, a)));
+  }
+  return map;
 }
 
 /** Resuelve el nombre del banco a partir del bankId (denormalizado para mostrar). */
@@ -53,24 +93,28 @@ async function resolveBankName(prisma: any, userId: number, bankId?: number | nu
 cardsRouter.get('/', async (req, res) => {
   // ?all=1 incluye inactivas (para gestionarlas/reactivarlas en la vista de Tarjetas).
   const includeInactive = req.query.all === '1' || req.query.all === 'true';
+  const userId = req.tenantUserId!;
   const rows = await req.tenantPrisma!.card.findMany({
-    where: { userId: req.tenantUserId!, ...(includeInactive ? {} : { isActive: true }) },
+    where: { userId, ...(includeInactive ? {} : { isActive: true }) },
     include: { bank: { select: { id: true, name: true } }, entity: true },
     orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }]
   });
-  res.json(rows.map(shapeCard));
+  const byCard = await accountsForDebitCards(req.tenantPrisma!, userId, rows);
+  res.json(rows.map((c) => shapeCard(c, byCard)));
 });
 
 cardsRouter.post('/', async (req, res) => {
   const { logoDataUrl, ...body } = cardSchema.parse(req.body);
   const userId = req.tenantUserId!;
-  const bankName = body.bankId ? await resolveBankName(req.tenantPrisma!, userId, body.bankId) : (body.bankName ?? null);
+  const prisma = req.tenantPrisma!;
+  const bankName = body.bankId ? await resolveBankName(prisma, userId, body.bankId) : (body.bankName ?? null);
   const logo = parseLogo(logoDataUrl);
-  const row = await req.tenantPrisma!.card.create({
+  const row = await prisma.card.create({
     data: { ...body, bankName, userId, logoMime: logo?.mime ?? null, logoData: logo?.buffer ?? null }
   });
   void auditFromReq(req, 'CREATE', 'card', row.id, `Tarjeta "${row.name}"`);
-  res.status(201).json(shapeCard(row));
+  const byCard = await accountsForDebitCards(prisma, userId, [row]);
+  res.status(201).json(shapeCard(row, byCard));
 });
 
 cardsRouter.put('/:id', async (req, res) => {
@@ -88,7 +132,8 @@ cardsRouter.put('/:id', async (req, res) => {
   if (has('creditLimit')) data.creditLimit = body.creditLimit ?? null;
   if (has('cutoffDay')) data.cutoffDay = body.cutoffDay ?? null;
   if (has('paymentDueDay')) data.paymentDueDay = body.paymentDueDay ?? null;
-  // El saldo SÍ es editable (saldo de débito / saldo usado de crédito).
+  // Saldo editable solo en CRÉDITO (saldo usado). En débito se deriva de las cuentas
+  // del banco+titular, así que un valor manual se ignoraría y solo sembraría confusión.
   if (has('currentBalance')) data.currentBalance = body.currentBalance ?? 0;
   if (has('bankId')) {
     data.bankId = body.bankId ?? null;
@@ -101,9 +146,11 @@ cardsRouter.put('/:id', async (req, res) => {
     data.logoMime = logo?.mime ?? null;
     data.logoData = logo?.buffer ?? null;
   }
-  const row = await req.tenantPrisma!.card.update({ where: { id, userId }, data });
+  const prisma = req.tenantPrisma!;
+  const row = await prisma.card.update({ where: { id, userId }, data });
   void auditFromReq(req, 'UPDATE', 'card', id, `Tarjeta "${row.name}"`);
-  res.json(shapeCard(row));
+  const byCard = await accountsForDebitCards(prisma, userId, [row]);
+  res.json(shapeCard(row, byCard));
 });
 
 cardsRouter.delete('/:id', async (req, res) => {

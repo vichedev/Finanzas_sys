@@ -22,7 +22,11 @@ type ExpenseKind = 'FIXED' | 'VARIABLE' | 'NON_ACCOUNTABLE';
 type PaymentMethod = 'CASH' | 'BANK_TRANSFER' | 'DEPOSIT' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'WALLET' | 'OTHER';
 
 interface Account { id: number; name: string; type?: string; holder?: string | null; accountKind?: string | null; bankId?: number | null; bankName?: string | null; accountNumber?: string | null }
-interface Card { id: number; name: string; type?: string | null; bankName?: string | null; last4?: string | null }
+interface Card {
+  id: number; name: string; type?: string | null; bankName?: string | null; last4?: string | null;
+  // Solo débito: cuentas del mismo banco y titular (derivadas por el backend).
+  linkedAccounts?: { id: number; name: string }[];
+}
 interface Wallet { id: number; name: string; provider?: string | null; isActive?: boolean; accountIds?: number[] }
 interface Category { id: number; name: string; color?: string | null; icon?: string | null }
 type BankAccountKind = 'SAVINGS' | 'CHECKING';
@@ -242,6 +246,12 @@ const showWallet = computed(() => {
   if (isCreditPurchase.value) return false;
   return form.value.paymentMethod === 'WALLET';
 });
+// Tarjeta de débito: el dinero sale de una cuenta bancaria, no de la tarjeta.
+// Por eso la cuenta es obligatoria; sin ella el gasto no se descontaría de nada.
+const isDebitCardPayment = computed(() => showCard.value && form.value.paymentMethod === 'DEBIT_CARD');
+const selectedCard = computed<Card | null>(() =>
+  form.value.cardId != null ? cards.value.find((c) => c.id === form.value.cardId) ?? null : null
+);
 const showFromBank = computed(() => {
   if (isWithdrawal.value) return true;
   if (isCreditPurchase.value) return false;
@@ -281,6 +291,23 @@ function cardSubLabel(c: Card): string | undefined {
   if (c.last4) parts.push(`****${c.last4}`);
   return parts.join(' · ') || undefined;
 }
+// Cuentas elegibles al pagar con tarjeta de débito: las enlazadas a esa tarjeta.
+// Si aún no tiene enlaces configurados, se permiten todas (no bloquear el registro).
+const debitCardAccountOptions = computed<PickOpt[]>(() => {
+  const linked = selectedCard.value?.linkedAccounts ?? [];
+  const list = linked.length ? accounts.value.filter((a) => linked.some((l) => l.id === a.id)) : accounts.value;
+  return list.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }));
+});
+
+// Al elegir una tarjeta de débito: si cubre una sola cuenta, la selecciona;
+// si cubre varias, el usuario elige (limpia una selección que ya no aplique).
+watch(selectedCard, (card) => {
+  if (!isDebitCardPayment.value || !card) return;
+  const linked = card.linkedAccounts ?? [];
+  const stillValid = form.value.accountId != null && linked.some((l) => l.id === form.value.accountId);
+  if (!stillValid) form.value.accountId = linked.length === 1 ? linked[0].id : null;
+});
+
 // Opciones para el modal de edición de pago de tarjeta (cuenta obligatoria → sin "Sin cuenta").
 const cpAccountOptions = computed<PickOpt[]>(() =>
   accounts.value.map((a) => ({ value: a.id, label: a.name, sublabel: accountSubLabel(a), icon: accountIcon(a.type) }))
@@ -786,6 +813,7 @@ async function save() {
     if (form.value.accountId === form.value.toAccountId) { toast.error('La cuenta de origen y la de destino deben ser distintas.'); return; }
   }
   if (isWithdrawal.value && !form.value.accountId) { toast.error('Elige la cuenta de la que sale el efectivo.'); return; }
+  if (isDebitCardPayment.value && !form.value.accountId) { toast.error('Elige la cuenta de la que sale el dinero: una tarjeta de débito no guarda saldo propio.'); return; }
   saving.value = true;
   try {
     let effectivePaymentMethod: PaymentMethod = form.value.paymentMethod;
@@ -796,7 +824,7 @@ async function save() {
       expenseKind: form.value.type === 'EXPENSE' ? form.value.expenseKind : null,
       amount: Number(form.value.amount), movementDate: form.value.movementDate,
       description: form.value.description.trim(), paymentMethod: effectivePaymentMethod,
-      accountId: isTransfer.value ? (form.value.accountId || null) : ((showAccount.value || showOptionalAccount.value || showWalletAccount.value) ? form.value.accountId || null : null),
+      accountId: isTransfer.value ? (form.value.accountId || null) : ((showAccount.value || showOptionalAccount.value || showWalletAccount.value || isDebitCardPayment.value) ? form.value.accountId || null : null),
       toAccountId: isTransfer.value ? (form.value.toAccountId || null) : null,
       cardId: !isTransfer.value && showCard.value ? form.value.cardId || null : null,
       walletId: !isTransfer.value && showWallet.value ? form.value.walletId || null : null,
@@ -1209,6 +1237,21 @@ onMounted(load);
                     placeholder="Elige una tarjeta"
                     :empty-text="cardEmptyText"
                   />
+                </div>
+                <div v-if="isDebitCardPayment" class="field">
+                  <label>🏦 Cuenta de la que sale el dinero <span class="required-mark">*</span></label>
+                  <PickerField
+                    v-model="form.accountId"
+                    :options="debitCardAccountOptions"
+                    title="Selecciona la cuenta"
+                    placeholder="Elige la cuenta"
+                    empty-text="Esa tarjeta no tiene cuentas enlazadas. Enlázalas en la sección Tarjetas."
+                  />
+                  <small class="hint">
+                    {{ selectedCard?.linkedAccounts?.length
+                      ? 'Una tarjeta de débito no guarda saldo: el movimiento afecta a esta cuenta.'
+                      : 'Enlaza las cuentas de esta tarjeta en Tarjetas para filtrar esta lista.' }}
+                  </small>
                 </div>
               </div>
               <p v-if="(showFromBank || showToBank) && activeBanks.length === 0" class="hint warn-hint">

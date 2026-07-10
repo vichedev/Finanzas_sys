@@ -1,5 +1,6 @@
 import { PrismaClient, Prisma } from '.prisma/tenant';
 import { logger } from './logger';
+import { accountBelongsToDebitCard } from './debitCard';
 
 type TenantPrisma = PrismaClient;
 
@@ -38,8 +39,8 @@ export async function buildFinancialSnapshot(prisma: TenantPrisma, userId: numbe
         AND ("type" = 'EXPENSE' OR ("type" = 'PURCHASE' AND "isCredit" = false))
       GROUP BY "categoryId" ORDER BY amount DESC LIMIT 8
     `),
-    prisma.account.findMany({ where: { userId, isActive: true }, select: { name: true, type: true, currentBalance: true } }),
-    prisma.card.findMany({ where: { userId, isActive: true }, select: { name: true, type: true, creditLimit: true, currentBalance: true, paymentDueDay: true } }),
+    prisma.account.findMany({ where: { userId, isActive: true }, select: { name: true, type: true, currentBalance: true, bankId: true } }),
+    prisma.card.findMany({ where: { userId, isActive: true }, select: { name: true, type: true, bankId: true, creditLimit: true, currentBalance: true, paymentDueDay: true } }),
     prisma.debt.findMany({ where: { userId, status: { in: ['OPEN', 'PARTIAL'] } }, select: { name: true, kind: true, balance: true, dueDate: true } }),
     prisma.budget.findMany({ where: { userId, isActive: true }, include: { category: true } }),
     prisma.movement.count({ where: { userId, movementDate: { gte: start, lt: end } } }),
@@ -61,13 +62,22 @@ export async function buildFinancialSnapshot(prisma: TenantPrisma, userId: numbe
     balance: income - expense,
     movementsThisMonth: recentCount,
     accounts: accounts.map((a) => ({ name: a.name, type: a.type, balance: Number(a.currentBalance) })),
-    cards: cards.map((c) => ({
-      name: c.name, type: c.type,
-      limit: c.creditLimit ? Number(c.creditLimit) : null,
-      used: Number(c.currentBalance),
-      available: c.creditLimit ? Number(c.creditLimit) - Number(c.currentBalance) : null,
-      paymentDueDay: c.paymentDueDay
-    })),
+    cards: cards.map((c) => {
+      // Débito: no hay "usado"; el saldo es la suma de sus cuentas (mismo banco y titular).
+      const debitBalance = c.type === 'DEBIT'
+        ? accounts
+            .filter((a) => accountBelongsToDebitCard(c, a))
+            .reduce((sum, a) => sum + Number(a.currentBalance ?? 0), 0)
+        : null;
+      return {
+        name: c.name, type: c.type,
+        limit: c.creditLimit ? Number(c.creditLimit) : null,
+        used: c.type === 'DEBIT' ? null : Number(c.currentBalance),
+        balance: debitBalance,
+        available: c.creditLimit ? Number(c.creditLimit) - Number(c.currentBalance) : null,
+        paymentDueDay: c.paymentDueDay
+      };
+    }),
     debts: debts.map((d) => ({ name: d.name, kind: d.kind, balance: Number(d.balance), dueDate: d.dueDate })),
     topExpenseCategories: byCatRaw.map((r) => ({ category: r.categoryId ? (catName.get(r.categoryId) || 'Sin categoría') : 'Sin categoría', amount: Number(r.amount || 0) })),
     budgets: budgets.map((b) => {
@@ -82,7 +92,9 @@ export async function buildFinancialSnapshot(prisma: TenantPrisma, userId: numbe
   lines.push(`Periodo: ${snapshot.period}`);
   lines.push(`Ingresos del mes: ${fmt(income)} | Gastos: ${fmt(expense)} | Balance: ${fmt(snapshot.balance)} | Movimientos: ${recentCount}`);
   if (snapshot.accounts.length) lines.push(`Cuentas: ${snapshot.accounts.map((a) => `${a.name} (${a.type}) ${fmt(a.balance)}`).join('; ')}`);
-  if (snapshot.cards.length) lines.push(`Tarjetas: ${snapshot.cards.map((c) => `${c.name} usado ${fmt(c.used)}${c.limit ? ` de ${fmt(c.limit)} (disp. ${fmt(c.available)})` : ''}`).join('; ')}`);
+  if (snapshot.cards.length) lines.push(`Tarjetas: ${snapshot.cards.map((c) => c.type === 'DEBIT'
+    ? `${c.name} (débito) saldo ${fmt(c.balance ?? 0)}`
+    : `${c.name} usado ${fmt(c.used ?? 0)}${c.limit ? ` de ${fmt(c.limit)} (disp. ${fmt(c.available)})` : ''}`).join('; ')}`);
   if (snapshot.debts.length) lines.push(`Deudas/cobros activos: ${snapshot.debts.map((d) => `${d.name} [${d.kind}] ${fmt(d.balance)}`).join('; ')}`);
   if (snapshot.topExpenseCategories.length) lines.push(`Gasto por categoría: ${snapshot.topExpenseCategories.map((c) => `${c.category} ${fmt(c.amount)}`).join('; ')}`);
   if (snapshot.budgets.length) lines.push(`Presupuestos: ${snapshot.budgets.map((b) => `${b.category} ${fmt(b.spent)}/${fmt(b.limit)} (${b.pct}%)`).join('; ')}`);

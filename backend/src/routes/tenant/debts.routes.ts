@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { auditFromReq } from '../../lib/tenantAudit';
+import { accountBelongsToDebitCard } from '../../lib/debitCard';
 import type { TenantPrisma } from '../../lib/tenantPrisma';
 
 export const debtsRouter = Router();
@@ -111,15 +112,44 @@ debtsRouter.post('/:id/pay', async (req, res) => {
     if (balance <= 0) throw Object.assign(new Error('Esta deuda no tiene saldo pendiente.'), { status: 400 });
     const pay = Math.min(Number(body.amount), balance); // no se paga más de lo que se debe
 
-    // Origen del pago: una tarjeta (sube su saldo usado) o una cuenta (baja su saldo).
-    // Si se envían ambos, la tarjeta tiene prioridad.
-    let account = null as { id: number; name: string } | null;
+    // Origen del pago: una tarjeta o una cuenta. Si se envían ambos, la tarjeta manda.
+    let account = null as { id: number; name: string; bankId?: number | null } | null;
     let card = null as { id: number; name: string; type: string } | null;
     if (body.cardId) {
-      card = await tx.card.findFirst({ where: { id: body.cardId, userId }, select: { id: true, name: true, type: true } });
-      if (!card) throw Object.assign(new Error('Tarjeta no encontrada'), { status: 400 });
-      // Un gasto con tarjeta incrementa su saldo usado (coherente con Movimientos).
-      await tx.card.update({ where: { id: card.id }, data: { currentBalance: { increment: pay } } });
+      const found = await tx.card.findFirst({
+        where: { id: body.cardId, userId },
+        select: { id: true, name: true, type: true, bankId: true }
+      });
+      if (!found) throw Object.assign(new Error('Tarjeta no encontrada'), { status: 400 });
+      card = { id: found.id, name: found.name, type: found.type };
+      if (found.type === 'CREDIT') {
+        // Crédito: el gasto incrementa el saldo usado (la deuda con el banco).
+        await tx.card.update({ where: { id: found.id }, data: { currentBalance: { increment: pay } } });
+      } else {
+        // Débito: la tarjeta no guarda saldo; el dinero sale de una cuenta suya
+        // (mismo banco y titular). Si solo hay una, se toma esa.
+        let accId = body.accountId ?? null;
+        if (!accId) {
+          const bankAccounts = await tx.account.findMany({
+            where: { userId, isActive: true, bankId: found.bankId ?? -1 },
+            select: { id: true, bankId: true, name: true }
+          });
+          const matches = bankAccounts.filter((a) => accountBelongsToDebitCard(found, a));
+          if (matches.length === 1) accId = matches[0].id;
+        }
+        if (!accId) {
+          throw Object.assign(
+            new Error(`Elige la cuenta de la que sale el pago: la tarjeta de débito "${found.name}" cubre varias cuentas.`),
+            { status: 400 }
+          );
+        }
+        account = await tx.account.findFirst({ where: { id: accId, userId }, select: { id: true, name: true, bankId: true } });
+        if (!account) throw Object.assign(new Error('Cuenta no encontrada'), { status: 400 });
+        if (!accountBelongsToDebitCard(found, account)) {
+          throw Object.assign(new Error('La cuenta elegida no pertenece a esa tarjeta (debe ser del mismo banco y titular).'), { status: 400 });
+        }
+        await tx.account.update({ where: { id: account.id }, data: { currentBalance: { decrement: pay } } });
+      }
     } else if (body.accountId) {
       account = await tx.account.findFirst({ where: { id: body.accountId, userId }, select: { id: true, name: true } });
       if (!account) throw Object.assign(new Error('Cuenta no encontrada'), { status: 400 });

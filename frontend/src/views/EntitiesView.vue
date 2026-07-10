@@ -55,8 +55,9 @@ const groups = computed<Group[]>(() => {
     let liquid = 0, cardDebt = 0;
     for (const a of accs) liquid += num(a.currentBalance);
     for (const c of crds) {
+      // Solo crédito es deuda. El saldo de una tarjeta de DÉBITO es la suma de sus
+      // cuentas, ya contadas arriba: sumarlo otra vez duplicaría la liquidez.
       if (c.type === 'CREDIT') cardDebt += Math.max(0, num(c.currentBalance));
-      else liquid += num(c.currentBalance);
     }
     return { entity, accounts: accs, cards: crds, liquid, cardDebt, net: liquid - cardDebt };
   }).filter((g) => g.accounts.length || g.cards.length);

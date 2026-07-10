@@ -17,6 +17,10 @@ const entities = useEntitiesStore();
 const activeBanks = computed(() => entities.activeBanks);
 const activeAccounts = computed(() => entities.accounts.filter((a) => a.isActive !== false));
 
+interface LinkedAccount {
+  id: number; name: string; accountNumber?: string | null; accountKind?: string | null; currentBalance?: number | string | null;
+}
+
 interface Card {
   id: number | string;
   name: string;
@@ -29,7 +33,9 @@ interface Card {
   creditLimit?: number | string | null;
   cutoffDay?: number | null;
   paymentDueDay?: number | null;
+  // En DÉBITO el backend lo deriva: suma de las cuentas del mismo banco y titular.
   currentBalance?: number | string | null;
+  linkedAccounts?: LinkedAccount[];  // solo lectura: cuentas que componen ese saldo
   color?: string | null;
   logo?: string | null;
   isActive?: boolean;
@@ -70,6 +76,27 @@ const balanceHint = computed(() => isCredit.value
   : 'Saldo disponible en la cuenta.');
 
 function toNumber(v: number | string | null | undefined) { const n = Number(v ?? 0); return Number.isFinite(n) ? n : 0; }
+
+// ---- Tarjeta de débito: saldo automático ----
+// El saldo es la suma de las cuentas del MISMO banco y MISMO titular (el nombre de
+// la tarjeta = nombre de la cuenta). No se configura: cualquier movimiento en esas
+// cuentas se refleja aquí.
+const normName = (s: string | null | undefined) => (s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+const debitAccounts = computed(() => {
+  if (form.value.type !== 'DEBIT' || !form.value.bankId) return [];
+  const titular = normName(form.value.name);
+  if (!titular) return [];
+  return activeAccounts.value.filter((a) => a.bankId === form.value.bankId && normName(a.name) === titular);
+});
+const debitBalancePreview = computed(() =>
+  debitAccounts.value.reduce((sum, a) => sum + toNumber(a.currentBalance as number | string | null | undefined), 0)
+);
+function accountLabel(a: { name: string; accountKind?: string | null; accountNumber?: string | null }) {
+  const parts = [a.name];
+  if (a.accountKind) parts.push(a.accountKind === 'SAVINGS' ? 'Ahorros' : 'Corriente');
+  if (a.accountNumber) parts.push(`****${a.accountNumber.slice(-4)}`);
+  return parts.join(' · ');
+}
 function availableCredit(item: Card) { return Math.max(0, toNumber(item.creditLimit) - toNumber(item.currentBalance)); }
 function usedPct(item: Card) { const limit = toNumber(item.creditLimit); if (limit <= 0) return 0; return Math.min(100, Math.max(0, Math.round((toNumber(item.currentBalance) / limit) * 100))); }
 function pctSeverity(pct: number) { if (pct >= 80) return 'high'; if (pct >= 50) return 'mid'; return 'low'; }
@@ -124,8 +151,7 @@ async function save() {
     entityId: form.value.entityId || null,
     bankId: form.value.bankId ?? null,
     last4: form.value.last4 || null,
-    color: form.value.color || null,
-    currentBalance: toNumber(form.value.currentBalance)
+    color: form.value.color || null
   };
   // El logo solo se envía al crear o si cambió (evita re-subir la imagen en cada guardado).
   if (editingId.value === null || logoTouched.value) payload.logoDataUrl = form.value.logo;
@@ -133,8 +159,11 @@ async function save() {
     payload.creditLimit = form.value.creditLimit !== null ? toNumber(form.value.creditLimit) : null;
     payload.cutoffDay = form.value.cutoffDay ?? null;
     payload.paymentDueDay = form.value.paymentDueDay ?? null;
+    // Crédito: el saldo usado sí se almacena y es editable.
+    payload.currentBalance = toNumber(form.value.currentBalance);
   } else {
     payload.creditLimit = null; payload.cutoffDay = null; payload.paymentDueDay = null;
+    // Débito: el saldo se deriva automáticamente de las cuentas del banco+titular; no se envía.
   }
   saving.value = true;
   try {
@@ -337,6 +366,26 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
             </template>
           </div>
 
+          <!-- Débito: la tarjeta no guarda dinero, su saldo es la suma de las cuentas del banco+titular. -->
+          <div v-if="!isCredit" class="link-accounts">
+            <div class="link-head">
+              <strong>Cuentas que componen su saldo</strong>
+              <small class="hint">
+                Automático: las cuentas del mismo banco cuyo titular coincide con el nombre de la tarjeta
+                (<strong>{{ form.name || '—' }}</strong>). Al gastar con la tarjeta se descuenta de la cuenta que elijas en Movimientos.
+              </small>
+            </div>
+            <p v-if="!form.bankId" class="hint warn-hint">Elige el banco de la tarjeta para ver sus cuentas.</p>
+            <p v-else-if="!form.name.trim()" class="hint warn-hint">Escribe el nombre/titular de la tarjeta para vincular sus cuentas.</p>
+            <p v-else-if="!debitAccounts.length" class="hint warn-hint">Ninguna cuenta de ese banco tiene por titular "{{ form.name }}". Revisa el titular en <strong>Cuentas</strong>.</p>
+            <ul v-else class="link-list">
+              <li v-for="a in debitAccounts" :key="a.id" class="link-item on">
+                <span class="link-name">{{ accountLabel(a) }}</span>
+                <span class="link-bal">{{ formatMoney(a.currentBalance) }}</span>
+              </li>
+            </ul>
+          </div>
+
           <div class="form-footer">
             <div class="field field-narrow">
               <template v-if="isCredit">
@@ -345,9 +394,13 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
                 <small class="hint">Cupo asignado por el banco.</small>
               </template>
               <template v-else>
-                <label for="card-balance">Saldo actual (USD)</label>
-                <input id="card-balance" v-model.number="form.currentBalance" type="number" step="0.01" placeholder="0.00" />
-                <small class="hint">{{ balanceHint }}</small>
+                <label>Saldo de la tarjeta</label>
+                <output class="derived-balance">{{ formatMoney(debitBalancePreview) }}</output>
+                <small class="hint">
+                  {{ form.bankId
+                    ? 'Automático: suma de las cuentas del mismo banco cuyo titular es el nombre de la tarjeta.'
+                    : 'Elige el banco para calcular el saldo desde sus cuentas.' }}
+                </small>
               </template>
             </div>
             <div v-if="isCredit && editingId !== null" class="field field-narrow">
@@ -401,7 +454,14 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
                 <div class="rcard-stat"><small>Corte / Pago</small><strong>{{ item.cutoffDay ?? '—' }} / {{ item.paymentDueDay ?? '—' }}</strong></div>
               </template>
               <template v-else>
-                <div class="rcard-stat"><small>Saldo</small><strong>{{ formatMoney(item.currentBalance) }}</strong></div>
+                <div class="rcard-stat">
+                  <small>Saldo{{ item.linkedAccounts?.length ? ` · ${item.linkedAccounts.length} cuenta${item.linkedAccounts.length === 1 ? '' : 's'}` : '' }}</small>
+                  <strong>{{ formatMoney(item.currentBalance) }}</strong>
+                </div>
+                <div v-if="!item.linkedAccounts?.length" class="rcard-stat rcard-warn">
+                  <small>Sin cuentas enlazadas</small>
+                  <strong>Edita la tarjeta</strong>
+                </div>
               </template>
             </div>
             <div v-if="item.type === 'CREDIT' && toNumber(item.creditLimit) > 0" class="rcard-progress">
@@ -466,6 +526,25 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureBanks(true),
 <style scoped>
 .required-mark { color: #ef4444; font-weight: 700; }
 .warn-hint { color: var(--color-warning-text, #b45309); }
+
+/* Débito: saldo derivado + enlace a cuentas */
+.derived-balance {
+  display: block; padding: 9px 12px; border-radius: 9px;
+  background: #f8fafc; border: 1px dashed #cbd5e1;
+  font-size: 18px; font-weight: 800; color: #0f172a;
+}
+.link-accounts { border-top: 1px solid var(--color-border-soft, #eef0f4); margin-top: 14px; padding-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+.link-head { display: flex; flex-direction: column; gap: 2px; }
+.link-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.link-item {
+  display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+  border: 1px solid var(--color-border, #e2e8f0); border-radius: 9px; background: #fff;
+}
+.link-item.on { border-color: #a5b4fc; background: #f5f7ff; }
+.link-name { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-bal { font-size: 13px; font-weight: 700; color: #047857; white-space: nowrap; }
+.rcard-warn small { color: #fde68a; }
+.rcard-warn strong { font-size: 12px; font-weight: 600; }
 .row-actions button.mini.pay { color: #047857; border-color: #a7f3d0; }
 .row-actions button.mini.pay:hover { background: #ecfdf5; }
 .pay-body { display: flex; flex-direction: column; gap: 12px; }

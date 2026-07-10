@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Prisma } from '.prisma/tenant';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
+import { accountBelongsToDebitCard } from '../../lib/debitCard';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(requireAuth, requirePermission('reports', 'read'));
@@ -58,6 +59,7 @@ dashboardRouter.get('/', async (req, res) => {
     recentMovements,
     accounts,
     cards,
+    debitAccounts,
     debtAggregates,
     debtCounts,
     activeRecurrings
@@ -104,6 +106,8 @@ dashboardRouter.get('/', async (req, res) => {
       where: { userId, isActive: true },
       orderBy: { name: 'asc' }
     }),
+    // Cuentas activas: para derivar el saldo de las tarjetas de débito (banco+titular).
+    req.tenantPrisma!.account.findMany({ where: { userId, isActive: true }, select: { bankId: true, name: true, currentBalance: true } }),
     req.tenantPrisma!.debt.groupBy({
       by: ['kind'],
       where: { userId, status: { in: ['OPEN', 'PARTIAL'] } },
@@ -216,18 +220,26 @@ dashboardRouter.get('/', async (req, res) => {
       bankName: a.bankName,
       currentBalance: Number(a.currentBalance)
     })),
-    cards: cards.map((c) => ({
-      id: c.id,
-      name: c.name,
-      type: c.type,
-      bankName: c.bankName,
-      last4: c.last4,
-      creditLimit: c.creditLimit ? Number(c.creditLimit) : null,
-      currentBalance: Number(c.currentBalance),
-      cutoffDay: c.cutoffDay,
-      paymentDueDay: c.paymentDueDay,
-      available: c.creditLimit ? Number(c.creditLimit) - Number(c.currentBalance) : null
-    })),
+    cards: cards.map((c) => {
+      // Débito: saldo = suma de las cuentas del mismo banco y titular. Resto: valor guardado.
+      const balance = c.type === 'DEBIT'
+        ? debitAccounts
+            .filter((a) => accountBelongsToDebitCard(c, a))
+            .reduce((sum, a) => sum + Number(a.currentBalance ?? 0), 0)
+        : Number(c.currentBalance);
+      return {
+        id: c.id,
+        name: c.name,
+        type: c.type,
+        bankName: c.bankName,
+        last4: c.last4,
+        creditLimit: c.creditLimit ? Number(c.creditLimit) : null,
+        currentBalance: balance,
+        cutoffDay: c.cutoffDay,
+        paymentDueDay: c.paymentDueDay,
+        available: c.creditLimit ? Number(c.creditLimit) - balance : null
+      };
+    }),
     debts,
     recurring: {
       monthlyEstimated: recurringMonthly,

@@ -5,6 +5,7 @@ import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { createNotification } from '../../lib/notifications';
 import { auditFromReq } from '../../lib/tenantAudit';
+import { accountBelongsToDebitCard } from '../../lib/debitCard';
 
 const MOVE_LABEL: Record<string, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra' };
 const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
@@ -84,10 +85,48 @@ function accountDelta(type: string, amount: number, isCredit?: boolean) {
   return 0;
 }
 
+// OJO: solo aplica a tarjetas de CRÉDITO, donde currentBalance = deuda usada.
+// Una tarjeta de DÉBITO no guarda saldo: es un acceso a sus cuentas enlazadas,
+// y el movimiento ya lo absorbe la cuenta vía accountDelta().
 function cardDelta(type: string, amount: number, isCredit?: boolean) {
   if (type === 'EXPENSE') return amount;
   if (type === 'PURCHASE' && !isCredit) return amount;
   return 0;
+}
+
+/** Tipo de la tarjeta ('CREDIT' | 'DEBIT'), o null si no existe. */
+async function cardTypeOf(tx: Prisma.TransactionClient, userId: number, cardId: number): Promise<string | null> {
+  const c = await tx.card.findFirst({ where: { id: cardId, userId }, select: { type: true } });
+  return c?.type ?? null;
+}
+
+/**
+ * Un movimiento con tarjeta de DÉBITO debe decir de qué cuenta sale el dinero:
+ * la tarjeta no guarda saldo, es un acceso a las cuentas del mismo banco y titular.
+ * La cuenta elegida debe ser una de ellas (mismo banco y, si la tarjeta tiene
+ * titular, mismo titular).
+ */
+async function assertDebitCardHasAccount(
+  tx: Prisma.TransactionClient,
+  userId: number,
+  body: { type: string; cardId?: number | null; accountId?: number | null }
+) {
+  if (!body.cardId || body.type === 'CARD_PAYMENT') return;
+  const card = await tx.card.findFirst({ where: { id: body.cardId, userId }, select: { type: true, bankId: true, name: true } });
+  if (!card || card.type !== 'DEBIT') return;
+  if (!body.accountId) {
+    throw Object.assign(
+      new Error('Un movimiento con tarjeta de débito requiere la cuenta bancaria de la que sale el dinero.'),
+      { status: 400 }
+    );
+  }
+  const account = await tx.account.findFirst({ where: { id: body.accountId, userId }, select: { bankId: true, name: true } });
+  if (!account || !accountBelongsToDebitCard(card, account)) {
+    throw Object.assign(
+      new Error('La cuenta elegida no pertenece a esa tarjeta (debe ser del mismo banco y titular).'),
+      { status: 400 }
+    );
+  }
 }
 
 function debtDelta(type: string, amount: number) {
@@ -143,7 +182,9 @@ async function applyDeltas(
     if (d !== 0) await tx.account.update({ where: { id: body.accountId, userId }, data: { currentBalance: { increment: d } } });
   }
   if (body.cardId) {
-    const d = cardDelta(body.type, amt, ic);
+    // Débito: sin saldo propio (lo absorbe la cuenta enlazada, ya descontada arriba).
+    const isCreditCard = (await cardTypeOf(tx, userId, body.cardId)) === 'CREDIT';
+    const d = isCreditCard ? cardDelta(body.type, amt, ic) : 0;
     if (d !== 0) await tx.card.update({ where: { id: body.cardId, userId }, data: { currentBalance: { increment: d } } });
   }
   if (body.debtId) {
@@ -179,7 +220,9 @@ async function revertDeltas(
     if (d !== 0) await tx.account.update({ where: { id: prev.accountId, userId }, data: { currentBalance: { increment: d } } });
   }
   if (prev.cardId) {
-    const d = -cardDelta(prev.type, amt, ic);
+    // Debe espejar exactamente la regla de applyDeltas, o editar/borrar descuadraría.
+    const isCreditCard = (await cardTypeOf(tx, userId, prev.cardId)) === 'CREDIT';
+    const d = isCreditCard ? -cardDelta(prev.type, amt, ic) : 0;
     if (d !== 0) await tx.card.update({ where: { id: prev.cardId, userId }, data: { currentBalance: { increment: d } } });
   }
   if (prev.debtId) {
@@ -220,6 +263,7 @@ movementsRouter.post('/', async (req, res) => {
 
   const row = await req.tenantPrisma!.$transaction(async (tx) => {
     await assertOwnership(tx, userId, body);
+    await assertDebitCardHasAccount(tx, userId, body);
     const movement = await tx.movement.create({
       data: { ...body, userId, attachmentMeta: body.attachmentMeta ?? Prisma.JsonNull }
     });
@@ -265,6 +309,7 @@ movementsRouter.put('/:id', async (req, res) => {
     const prev = await tx.movement.findUnique({ where: { id } });
     if (!prev || prev.userId !== userId) throw Object.assign(new Error('Not found'), { code: 'P2025' });
     await assertOwnership(tx, userId, body);
+    await assertDebitCardHasAccount(tx, userId, body);
     await revertDeltas(tx, userId, prev);
     const updated = await tx.movement.update({
       where: { id },
