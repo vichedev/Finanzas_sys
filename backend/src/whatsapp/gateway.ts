@@ -215,12 +215,13 @@ async function handleMessage(m: any, downloadMediaMessage: any, waLogger: any, u
   const chatNum = jidNumber(jid);
   const isSelfChat = (!!ownJid && chatNum === jidNumber(ownJid)) || (!!ownLid && chatNum === jidNumber(ownLid));
 
-  logger.info({
-    type: upsertType, jid, fromMe: m.key.fromMe, isSelfChat,
-    hasAudio: !!audioMsg, hasImage: !!imageMsg, hasText: !!text, ts, startedAtSec, ownJid, ownLid
-  }, 'wa: mensaje recibido');
+  // Los mensajes de grupos/otros chats se ignoran sin llenar el log (solo debug).
+  if (!isSelfChat) { logger.debug({ jid }, 'wa: mensaje ignorado (no es self-chat)'); return; }
 
-  if (!isSelfChat) return;
+  logger.info({
+    type: upsertType, jid, fromMe: m.key.fromMe,
+    hasAudio: !!audioMsg, hasImage: !!imageMsg, hasText: !!text
+  }, 'wa: mensaje recibido (self-chat)');
   if (m.key.id && sentIds.has(m.key.id)) return;           // no reprocesar nuestras respuestas
   if (ts && ts < startedAtSec - 5) { logger.info('wa: ignorado por antigüedad'); return; }
   if (!incomingHandler) { logger.warn('wa: sin handler registrado'); return; }

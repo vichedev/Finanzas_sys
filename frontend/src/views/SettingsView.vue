@@ -844,8 +844,18 @@ async function exportBackup() {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
     backupMsg.value = 'Respaldo descargado correctamente.';
-  } catch {
-    backupErr.value = 'No se pudo generar el respaldo.';
+  } catch (e: unknown) {
+    // Al ser responseType blob, el error del backend viene como Blob: lo leemos.
+    const err = e as { response?: { data?: unknown; status?: number }; message?: string };
+    let msg = 'No se pudo generar el respaldo.';
+    try {
+      const d = err?.response?.data;
+      if (d instanceof Blob) { const j = JSON.parse(await d.text()); if (j?.message) msg = j.message; }
+      else if (d && typeof d === 'object' && 'message' in d) { const m = (d as { message?: string }).message; if (m) msg = m; }
+      else if (err?.message) msg = err.message;
+      if (err?.response?.status) msg += ` (HTTP ${err.response.status})`;
+    } catch { /* deja el mensaje genérico */ }
+    backupErr.value = msg;
   } finally { backupBusy.value = false; }
 }
 

@@ -57,7 +57,14 @@ app.use(helmet({
   frameguard: { action: 'deny' },
   noSniff: true,
 }));
-app.use(compression());
+app.use(compression({
+  filter: (req, res) => {
+    // Respaldos: sin comprimir. El contenido es base64 de imágenes (ya comprimidas),
+    // así que gzip/brotli apenas ayuda y sí añade CPU y latencia al streaming.
+    if (req.path.startsWith('/api/backup')) return false;
+    return compression.filter(req, res);
+  }
+}));
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) return callback(null, true);
