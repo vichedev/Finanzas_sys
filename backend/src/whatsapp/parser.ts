@@ -38,6 +38,15 @@ function todayYmd(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/** Extrae un objeto JSON de la respuesta de la IA, tolerando ```json, texto extra, etc. */
+function extractJson(raw: string): ParsedMovement | null {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  try { return JSON.parse(cleaned) as ParsedMovement; } catch { /* intenta extraer */ }
+  const m = cleaned.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]) as ParsedMovement; } catch { /* nada */ } }
+  return null;
+}
+
 export async function parseMovement(prisma: any, userId: number, text: string): Promise<ParsedMovement | { error: string }> {
   const creds = await getGroqCreds(prisma);
   if (!creds) return { error: 'Falta la clave de IA. Configúrala en Ajustes → FinancIA.' };
@@ -84,36 +93,38 @@ Reglas (solo si intent="register"):
 Catálogos del usuario:
 ${JSON.stringify(catalogo)}`;
 
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds.apiKey}` },
-    body: JSON.stringify({
-      model: creds.model,
-      temperature: 0.1,
-      max_tokens: 500,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: text }
-      ]
-    })
-  });
+  // Llama a Groq de forma tolerante: prueba el modelo configurado; si falla (p. ej.
+  // modelo desactualizado o sin soporte de JSON), reintenta con un modelo conocido
+  // y sin "response_format". Extrae el JSON aunque venga con texto/fences alrededor.
+  const FALLBACK_MODEL = 'llama-3.3-70b-versatile';
+  const messages = [{ role: 'system', content: system }, { role: 'user', content: text }];
 
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    logger.error({ status: res.status, t: t.slice(0, 300) }, 'wa: parser Groq error');
-    if (res.status === 401) return { error: 'Clave de IA inválida.' };
-    if (res.status === 429) return { error: 'Groq: límite de uso alcanzado, intenta en un momento.' };
-    return { error: 'No pude interpretar el mensaje.' };
+  async function callGroq(model: string, useJsonMode: boolean): Promise<{ status: number; content: string | null; err?: string }> {
+    const res = await fetch(GROQ_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds!.apiKey}` },
+      body: JSON.stringify({ model, temperature: 0.1, max_tokens: 500, ...(useJsonMode ? { response_format: { type: 'json_object' } } : {}), messages })
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      logger.error({ status: res.status, model, useJsonMode, t: t.slice(0, 300) }, 'wa: parser Groq error');
+      return { status: res.status, content: null, err: t.slice(0, 200) };
+    }
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    return { status: 200, content: data.choices?.[0]?.message?.content ?? null };
   }
 
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const raw = data.choices?.[0]?.message?.content?.trim();
-  if (!raw) return { error: 'No obtuve respuesta de la IA.' };
+  // Intento 1: modelo del usuario con modo JSON. Fallbacks ante error.
+  let r = await callGroq(creds.model, true);
+  if (r.status === 401) return { error: 'Clave de IA inválida. Revísala en Ajustes → FinancIA.' };
+  if (r.status === 429) return { error: 'Groq: límite de uso alcanzado, intenta en un momento.' };
+  if (!r.content) r = await callGroq(creds.model, false);                 // sin modo JSON
+  if (!r.content && creds.model !== FALLBACK_MODEL) r = await callGroq(FALLBACK_MODEL, true); // modelo conocido
+  if (!r.content) return { error: 'No pude interpretar el mensaje (falló la IA). Revisa el modelo en Ajustes → FinancIA.' };
 
-  let p: ParsedMovement;
-  try { p = JSON.parse(raw); }
-  catch { logger.error({ raw: raw.slice(0, 300) }, 'wa: JSON inválido del parser'); return { error: 'No pude interpretar el mensaje.' }; }
+  // Extrae el objeto JSON aunque venga con ```json, texto extra, etc.
+  const p = extractJson(r.content);
+  if (!p) { logger.error({ raw: r.content.slice(0, 300) }, 'wa: JSON inválido del parser'); return { error: 'No entendí bien; intenta de nuevo con el tipo y el monto.' }; }
 
   p.intent = p.intent === 'query' ? 'query' : 'register';
 
