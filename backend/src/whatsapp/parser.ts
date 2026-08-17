@@ -17,6 +17,7 @@ export interface ParsedMovement {
   type: MovType | null;
   amount: number | null;
   description: string | null;
+  bankHint: string | null; // banco mencionado (ej. "Pichincha") para acotar las cuentas
   accountId: number | null;
   toAccountId: number | null;
   cardId: number | null;
@@ -25,6 +26,8 @@ export interface ParsedMovement {
   date: string | null;
   isCredit: boolean;
   vendor: string | null;
+  familyMember: string | null; // "quién paga" / persona involucrada
+  notes: string | null;        // notas adicionales
   clarification: string | null;
   // Nombres resueltos (para el resumen legible)
   accountName?: string | null;
@@ -69,7 +72,7 @@ export async function parseMovement(prisma: any, userId: number, text: string): 
   const system = `Eres un asistente que convierte una instrucción (en español, Ecuador, moneda USD) en UN movimiento financiero en JSON.
 Hoy es ${todayYmd()}.
 Devuelve SOLO un objeto JSON válido con EXACTAMENTE estas claves:
-{"understood":bool,"intent":"register|query","type":"INCOME|EXPENSE|PURCHASE|TRANSFER|WITHDRAWAL|null","amount":number|null,"description":string,"accountId":number|null,"toAccountId":number|null,"cardId":number|null,"categoryId":number|null,"paymentMethod":"CASH|BANK_TRANSFER|DEPOSIT|DEBIT_CARD|CREDIT_CARD|WALLET|OTHER|null","date":"YYYY-MM-DD|null","isCredit":bool,"vendor":string|null,"clarification":string|null}
+{"understood":bool,"intent":"register|query","type":"INCOME|EXPENSE|PURCHASE|TRANSFER|WITHDRAWAL|null","amount":number|null,"description":string,"bankHint":string|null,"accountId":number|null,"toAccountId":number|null,"cardId":number|null,"categoryId":number|null,"paymentMethod":"CASH|BANK_TRANSFER|DEPOSIT|DEBIT_CARD|CREDIT_CARD|WALLET|OTHER|null","date":"YYYY-MM-DD|null","isCredit":bool,"vendor":string|null,"familyMember":string|null,"notes":string|null,"clarification":string|null}
 
 Primero decide la intención:
 - intent="register": el usuario quiere REGISTRAR un movimiento (ej. "gasté 20 en el súper", "ingreso de 800").
@@ -78,10 +81,14 @@ Primero decide la intención:
 Reglas (solo si intent="register"):
 - type: INCOME=entra dinero (sueldo, cobro); EXPENSE=gasto/pago que sale (servicios, comida, salud); PURCHASE=compra de un bien/producto; TRANSFER=mover dinero entre DOS cuentas propias; WITHDRAWAL=retirar efectivo de una cuenta.
 - amount: solo el número en USD (ej. "veinte dólares" -> 20).
+- bankHint: si el usuario menciona un banco o cuenta (ej. "Pichincha", "Guayaquil", "la cuenta de ahorros"), pon ese texto corto; si no menciona, null. NO inventes.
 - accountId, toAccountId, cardId, categoryId: ELIGE únicamente por "id" de los catálogos dados. Si no se menciona o no calza con seguridad, usa null. NO inventes ids.
+- paymentMethod: SOLO si el usuario menciona explícitamente CÓMO pagó/recibió (efectivo, transferencia, depósito, tarjeta de débito, tarjeta de crédito, billetera). Si NO lo menciona, null (el sistema lo preguntará).
 - Pago con TARJETA DE CRÉDITO -> cardId = id de la tarjeta de crédito, paymentMethod="CREDIT_CARD", accountId=null.
 - Pago con CUENTA o TARJETA DE DÉBITO -> accountId = id de la cuenta correspondiente, paymentMethod="DEBIT_CARD" (si dijo "débito") o "BANK_TRANSFER" (si dijo transferencia/cuenta). cardId=null.
 - Efectivo -> paymentMethod="CASH", sin cuenta ni tarjeta.
+- familyMember: nombre de la persona si el usuario dice "quién paga" o menciona una persona involucrada; si no, null.
+- notes: cualquier nota o número de factura extra que mencione; si no, null.
 - TRANSFER: accountId=cuenta origen, toAccountId=cuenta destino (ambas de "cuentas", distintas).
 - WITHDRAWAL: accountId=cuenta de la que sale el efectivo.
 - date: fecha del movimiento en formato YYYY-MM-DD; resuelve "hoy", "ayer", "el 5", "el lunes". Si no se menciona, usa hoy.
