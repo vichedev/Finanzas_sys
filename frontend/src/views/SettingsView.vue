@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette, Sparkles, RefreshCw } from 'lucide-vue-next';
+import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette, Sparkles, RefreshCw, MessageCircle } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
 import { useBrandingStore } from '../stores/branding';
 import { useEntitiesStore } from '../stores/entities';
 import { http } from '../api/http';
 import { backupApi } from '../api/backup';
 import { aiApi } from '../api/ai';
+import { whatsappApi, type WhatsappStatus } from '../api/whatsapp';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
 import AppModal from '../components/AppModal.vue';
@@ -85,6 +86,54 @@ async function runAnalysis() {
     const err = e as { response?: { data?: { message?: string } } };
     aiErr.value = err?.response?.data?.message || 'No se pudo generar el análisis.';
   } finally { aiAnalyzing.value = false; }
+}
+
+// ---- Asistente por WhatsApp (Baileys) ----
+const wa = ref<WhatsappStatus>({ state: 'idle', qr: null, linkedNumber: null, enabled: false, coachEnabled: true, userId: null, hasAiKey: false });
+const waBusy = ref(false);
+const waErr = ref('');
+let waPollTimer: ReturnType<typeof setInterval> | null = null;
+
+const WA_STATE_LABEL: Record<string, string> = {
+  idle: 'Sin vincular',
+  connecting: 'Conectando…',
+  qr: 'Escanea el código QR',
+  connected: 'Conectado',
+  logged_out: 'Sesión cerrada — vuelve a vincular'
+};
+
+async function loadWaStatus() {
+  try { wa.value = await whatsappApi.status(); } catch { /* ignora */ }
+}
+// Mientras esté conectando o mostrando QR, refresca cada 2.5s para ver el cambio de estado.
+function ensureWaPolling() {
+  const active = wa.value.state === 'qr' || wa.value.state === 'connecting';
+  if (active && !waPollTimer) {
+    waPollTimer = setInterval(loadWaStatus, 2500);
+  } else if (!active && waPollTimer) {
+    clearInterval(waPollTimer); waPollTimer = null;
+  }
+}
+watch(() => wa.value.state, ensureWaPolling);
+
+async function waConnect() {
+  waErr.value = ''; waBusy.value = true;
+  try { wa.value = await whatsappApi.connect(); ensureWaPolling(); }
+  catch (e: unknown) { const err = e as { response?: { data?: { message?: string } } }; waErr.value = err?.response?.data?.message || 'No se pudo iniciar la vinculación.'; }
+  finally { waBusy.value = false; }
+}
+async function waDisconnect(logout: boolean) {
+  if (logout && !(await confirm({ message: '¿Desvincular WhatsApp? Tendrás que escanear el QR de nuevo para volver a usarlo.', danger: true, confirmText: 'Desvincular' }))) return;
+  waErr.value = ''; waBusy.value = true;
+  try { wa.value = await whatsappApi.disconnect(logout); ensureWaPolling(); }
+  catch (e: unknown) { const err = e as { response?: { data?: { message?: string } } }; waErr.value = err?.response?.data?.message || 'No se pudo desconectar.'; }
+  finally { waBusy.value = false; }
+}
+async function waSetCoach(val: boolean) {
+  const prev = wa.value.coachEnabled;
+  wa.value.coachEnabled = val;
+  try { wa.value = await whatsappApi.setCoach(val); }
+  catch { wa.value.coachEnabled = prev; waErr.value = 'No se pudo cambiar los avisos.'; }
 }
 
 // Markdown mínimo y seguro (escapa HTML, luego aplica negritas, títulos y viñetas).
@@ -244,9 +293,9 @@ const profile = ref<Profile | null>(null);
 const profileForm = ref({ name: '', email: '', currency: 'USD', currentPassword: '', newPassword: '' });
 const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = ref(false);
 
-type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
-const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
-const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users'];
+type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
+const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
+const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users', 'whatsapp'];
 const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
 
 const route = useRoute();
@@ -1062,6 +1111,7 @@ const SECTIONS = computed<SectionCard[]>(() => {
     base.push({ key: 'smtp', title: 'Servidor de correo', description: 'Configura el SMTP para enviar emails (bienvenida, avisos).', icon: Mail, accent: 'cyan' });
     base.push({ key: 'backups', title: 'Respaldos', description: 'Exporta e importa todos tus datos para migrar o restaurar.', icon: Archive, accent: 'green' });
     base.push({ key: 'financia', title: 'FinancIA', description: 'Asistente de IA (Groq) que analiza tus datos y da recomendaciones.', icon: Sparkles, accent: 'indigo' });
+    base.push({ key: 'whatsapp', title: 'Asistente WhatsApp', description: 'Registra movimientos enviando un audio de WhatsApp a tu propio chat.', icon: MessageCircle, accent: 'green' });
   }
   return base;
 });
@@ -1115,9 +1165,13 @@ onMounted(async () => {
     loadProfile(),
     auth.isAdmin ? loadSmtp() : Promise.resolve(),
     auth.isAdmin ? loadIdentity() : Promise.resolve(),
-    auth.isAdmin ? loadAiConfig() : Promise.resolve()
+    auth.isAdmin ? loadAiConfig() : Promise.resolve(),
+    auth.isAdmin ? loadWaStatus() : Promise.resolve()
   ]);
+  ensureWaPolling();
 });
+
+onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
 </script>
 
 <template>
@@ -1831,6 +1885,82 @@ onMounted(async () => {
           <div v-else-if="!aiAnalyzing" class="financia-empty">
             <Sparkles :size="28" />
             <p>El análisis aparecerá aquí. FinancIA revisará tus datos del mes y te dará recomendaciones.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="activeSection === 'whatsapp' && auth.isAdmin" class="panel wa-panel">
+      <div class="wa-banner">
+        <div class="wa-ic"><MessageCircle :size="22" /></div>
+        <div>
+          <h3>Asistente por WhatsApp</h3>
+          <p>Vincula tu WhatsApp y envíate un <strong>audio a tu propio chat</strong> ("Mensajes contigo mismo"). El asistente lo transcribe y —en las próximas versiones— registrará el movimiento tras confirmarlo.</p>
+        </div>
+      </div>
+
+      <p v-if="!wa.hasAiKey" class="wa-warn">
+        ⚠️ Primero configura tu clave de IA (Groq) en <strong>Ajustes → FinancIA</strong>: el asistente la usa para transcribir tus audios.
+      </p>
+
+      <div class="wa-grid">
+        <!-- Estado + acciones -->
+        <div class="wa-col">
+          <div class="wa-status" :class="wa.state">
+            <span class="wa-dot"></span>
+            <div>
+              <strong>{{ WA_STATE_LABEL[wa.state] || wa.state }}</strong>
+              <small v-if="wa.state === 'connected' && wa.linkedNumber">Número vinculado: +{{ wa.linkedNumber }}</small>
+              <small v-else-if="wa.state === 'qr'">Abre WhatsApp → Dispositivos vinculados → Vincular dispositivo</small>
+            </div>
+          </div>
+
+          <div class="wa-actions">
+            <button v-if="wa.state !== 'connected'" type="button" @click="waConnect" :disabled="waBusy || !wa.hasAiKey">
+              <component :is="waBusy ? RefreshCw : Smartphone" :size="16" :class="{ spin: waBusy }" />
+              {{ wa.state === 'qr' || wa.state === 'connecting' ? 'Reintentar' : 'Vincular WhatsApp' }}
+            </button>
+            <button v-if="wa.state === 'connected' || wa.state === 'qr' || wa.state === 'connecting'" type="button" class="ghost" @click="waDisconnect(false)" :disabled="waBusy">
+              <Pause :size="16" /> Pausar
+            </button>
+            <button v-if="wa.linkedNumber || wa.state === 'connected' || wa.state === 'logged_out'" type="button" class="ghost danger" @click="waDisconnect(true)" :disabled="waBusy">
+              <X :size="16" /> Desvincular
+            </button>
+          </div>
+          <p v-if="waErr" class="error">{{ waErr }}</p>
+
+          <div v-if="wa.state === 'connected'" class="wa-howto">
+            <strong>¿Cómo lo uso?</strong>
+            <ol>
+              <li>Abre tu chat <em>"Mensajes contigo mismo"</em> en WhatsApp.</li>
+              <li><strong>Registra:</strong> audio o texto — <em>"gasté 20 en el súper con Pichincha"</em> → confirmas con <em>SÍ</em>.</li>
+              <li><strong>Consulta:</strong> <em>"¿en qué gasto más?"</em>, <em>"dame consejos"</em> → te responde con recomendaciones.</li>
+              <li><strong>Comprobante:</strong> envía la foto y la adjunta al movimiento.</li>
+            </ol>
+          </div>
+          <label v-if="wa.state === 'connected'" class="wa-coach">
+            <input type="checkbox" :checked="wa.coachEnabled" @change="waSetCoach(($event.target as HTMLInputElement).checked)" />
+            <span>📊 Avisos proactivos de gasto <small>(el asistente te escribe si detecta gastos altos)</small></span>
+          </label>
+        </div>
+
+        <!-- QR -->
+        <div class="wa-col wa-qr-col">
+          <div v-if="wa.state === 'qr' && wa.qr" class="wa-qr">
+            <img :src="wa.qr" alt="Código QR de WhatsApp" />
+            <small>Escanéalo con tu teléfono para vincular</small>
+          </div>
+          <div v-else-if="wa.state === 'connecting'" class="wa-qr placeholder">
+            <RefreshCw :size="34" class="spin" />
+            <small>Conectando…</small>
+          </div>
+          <div v-else-if="wa.state === 'connected'" class="wa-qr placeholder ok">
+            <Check :size="34" />
+            <small>Vinculado y listo</small>
+          </div>
+          <div v-else class="wa-qr placeholder">
+            <MessageCircle :size="34" />
+            <small>Pulsa "Vincular WhatsApp" para generar el código</small>
           </div>
         </div>
       </div>
@@ -2663,6 +2793,36 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .financia-empty { text-align: center; color: #9ca3af; padding: 28px 16px; border: 1px dashed #e2e8f0; border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .financia-empty p { margin: 0; font-size: 13px; max-width: 320px; }
 @media (max-width: 880px) { .financia-grid { grid-template-columns: 1fr; } }
+
+/* Asistente WhatsApp */
+.wa-banner { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 16px; }
+.wa-ic { flex-shrink: 0; width: 44px; height: 44px; border-radius: 12px; background: #dcfce7; color: #16a34a; display: grid; place-items: center; }
+.wa-banner h3 { margin: 0 0 4px; font-size: 17px; color: #0f172a; }
+.wa-banner p { margin: 0; font-size: 13.5px; color: #64748b; line-height: 1.5; }
+.wa-warn { font-size: 13px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a; padding: 10px 12px; border-radius: 8px; margin: 0 0 16px; }
+.wa-grid { display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }
+.wa-col { display: flex; flex-direction: column; gap: 12px; }
+.wa-status { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid #e2e8f0; background: #f8fafc; }
+.wa-status strong { display: block; font-size: 14px; color: #0f172a; }
+.wa-status small { display: block; font-size: 12px; color: #64748b; margin-top: 2px; }
+.wa-dot { width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; flex-shrink: 0; }
+.wa-status.connected { background: #ecfdf5; border-color: #a7f3d0; } .wa-status.connected .wa-dot { background: #16a34a; }
+.wa-status.qr, .wa-status.connecting { background: #eff6ff; border-color: #bfdbfe; } .wa-status.qr .wa-dot, .wa-status.connecting .wa-dot { background: #2563eb; }
+.wa-status.logged_out { background: #fef2f2; border-color: #fecaca; } .wa-status.logged_out .wa-dot { background: #dc2626; }
+.wa-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.wa-actions .spin { animation: financia-spin 1s linear infinite; }
+.wa-howto { font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; }
+.wa-howto strong { color: #0f172a; } .wa-howto ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.wa-coach { display: flex; align-items: center; gap: 9px; font-size: 13px; color: #334155; cursor: pointer; padding: 4px 2px; }
+.wa-coach small { color: #94a3b8; }
+.wa-qr-col { align-items: center; }
+.wa-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.wa-qr img { width: 260px; height: 260px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 8px; background: #fff; }
+.wa-qr small { font-size: 12px; color: #64748b; max-width: 240px; }
+.wa-qr.placeholder { width: 260px; height: 260px; justify-content: center; border: 1px dashed #cbd5e1; border-radius: 12px; color: #94a3b8; }
+.wa-qr.placeholder.ok { border-style: solid; border-color: #a7f3d0; color: #16a34a; background: #ecfdf5; }
+.wa-qr.placeholder .spin { animation: financia-spin 1s linear infinite; }
+@media (max-width: 880px) { .wa-grid { grid-template-columns: 1fr; } .wa-qr-col { justify-self: center; } }
 
 /* Cuentas de respaldo de una billetera: botón + modal */
 .wallet-acc-trigger {

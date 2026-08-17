@@ -6,8 +6,9 @@ import { requirePermission } from '../../middleware/permissions';
 import { createNotification } from '../../lib/notifications';
 import { auditFromReq } from '../../lib/tenantAudit';
 import { accountBelongsToDebitCard } from '../../lib/debitCard';
+import type { TenantPrisma } from '../../lib/tenantPrisma';
 
-const MOVE_LABEL: Record<string, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra' };
+export const MOVE_LABEL: Record<string, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra', CARD_PAYMENT: 'Pago de tarjeta', ADJUSTMENT: 'Ajuste' };
 const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
 
 export const movementsRouter = Router();
@@ -257,11 +258,15 @@ movementsRouter.get('/', async (req, res) => {
   res.json(rows);
 });
 
-movementsRouter.post('/', async (req, res) => {
-  const body = movementSchema.parse(req.body);
-  const userId = req.tenantUserId!;
-
-  const row = await req.tenantPrisma!.$transaction(async (tx) => {
+/**
+ * Crea un movimiento aplicando validaciones y saldos, en una transacción.
+ * Reutilizable fuera de HTTP (p. ej. el bot de WhatsApp): valida el payload con
+ * movementSchema, comprueba propiedad + coherencia de tarjeta de débito, crea la
+ * fila y aplica los deltas de saldo. Devuelve el movimiento creado.
+ */
+export async function createMovement(prisma: TenantPrisma, userId: number, input: unknown) {
+  const body = movementSchema.parse(input);
+  return prisma.$transaction(async (tx) => {
     await assertOwnership(tx, userId, body);
     await assertDebitCardHasAccount(tx, userId, body);
     const movement = await tx.movement.create({
@@ -270,6 +275,11 @@ movementsRouter.post('/', async (req, res) => {
     await applyDeltas(tx, userId, body);
     return movement;
   });
+}
+
+movementsRouter.post('/', async (req, res) => {
+  const userId = req.tenantUserId!;
+  const row = await createMovement(req.tenantPrisma!, userId, req.body);
 
   void auditFromReq(req, 'CREATE', 'movement', row.id, `${MOVE_LABEL[row.type] || row.type}: "${row.description}" · ${fmtMoney(row.amount)}`);
 

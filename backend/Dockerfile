@@ -25,6 +25,9 @@ COPY --from=build /app/tsconfig.json ./tsconfig.json
 COPY --from=build /app/docker-entrypoint.sh ./docker-entrypoint.sh
 RUN chmod +x ./docker-entrypoint.sh
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Carpeta de la sesión de WhatsApp (Baileys) propiedad de appuser: al montar el
+# volumen wa_session sobre ella, hereda estos permisos (el FS raíz es read-only).
+RUN mkdir -p /app/.wa-session && chown -R appuser:appgroup /app/.wa-session
 USER appuser
 EXPOSE 4000
 ENTRYPOINT ["./docker-entrypoint.sh"]

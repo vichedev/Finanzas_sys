@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { optimizeImage } from '../../lib/imageOptimize';
 
 // Comprobantes (imagen/PDF) asociados a una entidad (movimiento, factura, deuda).
 // Se suben como base64 en JSON (sin multer). auth + tenantContext vienen del montaje.
@@ -86,15 +87,18 @@ attachmentsRouter.post('/', async (req, res) => {
   if (buf.length === 0) return res.status(400).json({ message: 'El archivo está vacío.' });
   if (buf.length > MAX_BYTES) return res.status(413).json({ message: 'Archivo demasiado grande (máximo 8 MB).' });
 
+  // Optimiza si es imagen (ahorra espacio en la BD); PDFs y demás quedan igual.
+  const opt = await optimizeImage(buf, body.mimeType);
+
   const row = await req.tenantPrisma!.attachment.create({
     data: {
       userId: req.tenantUserId!,
       entityType: body.entityType,
       entityId: body.entityId,
       filename: body.filename,
-      mimeType: body.mimeType,
-      size: buf.length,
-      data: buf
+      mimeType: opt.mimeType,
+      size: opt.buffer.length,
+      data: new Uint8Array(opt.buffer)
     },
     select: { id: true, filename: true, mimeType: true, size: true, createdAt: true, entityType: true, entityId: true }
   });

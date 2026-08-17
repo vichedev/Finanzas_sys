@@ -502,6 +502,20 @@ model AiConfig {
   updatedAt   DateTime @updatedAt @default(now())
 }
 
+// Asistente por WhatsApp (Baileys). Singleton por empresa, como AiConfig.
+// La sesión de Baileys NO se guarda aquí (va en el volumen del contenedor);
+// esto solo lleva el estado configurable: a qué usuario se imputan los
+// movimientos, si está activo, y el número vinculado (para mostrar).
+model WhatsappConfig {
+  id            Int       @id @default(1) // singleton por empresa
+  enabled       Boolean   @default(false) // procesar mensajes entrantes
+  userId        Int?                       // User local al que se imputan los movimientos (sin FK: singleton)
+  linkedNumber  String?                    // número vinculado (E.164) para mostrar
+  coachEnabled  Boolean   @default(true)   // enviar avisos proactivos de gastos
+  lastCoachAt   DateTime?                  // último aviso proactivo enviado (para no spamear)
+  updatedAt     DateTime  @updatedAt @default(now())
+}
+
 model AuditLog {
   id        Int      @id @default(autoincrement())
   userId    Int?     // quién hizo el cambio (sin FK: el log sobrevive al borrado del usuario)

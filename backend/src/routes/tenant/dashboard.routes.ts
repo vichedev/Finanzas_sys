@@ -62,7 +62,8 @@ dashboardRouter.get('/', async (req, res) => {
     debitAccounts,
     debtAggregates,
     debtCounts,
-    activeRecurrings
+    activeRecurrings,
+    weeklyRows
   ] = await Promise.all([
     req.tenantPrisma!.$queryRaw<Array<{ income: number; expense: number }>>(Prisma.sql`
       SELECT ${sumExpr} FROM "Movement"
@@ -94,16 +95,28 @@ dashboardRouter.get('/', async (req, res) => {
     req.tenantPrisma!.category.findMany({ where: { userId } }),
     req.tenantPrisma!.movement.findMany({
       where: { userId, movementDate: { gte: start, lt: end } },
-      include: { category: true, account: true, card: true },
+      // select en vez de include: evita traer el logo (Bytes) de la tarjeta relacionada.
+      select: {
+        id: true, movementDate: true, description: true, type: true, paymentMethod: true, isCredit: true, amount: true,
+        category: { select: { id: true, name: true, color: true } },
+        account: { select: { id: true, name: true, type: true } },
+        card: { select: { id: true, name: true, type: true } }
+      },
       orderBy: { movementDate: 'desc' },
       take: 5
     }),
     req.tenantPrisma!.account.findMany({
       where: { userId, isActive: true },
+      select: { id: true, name: true, type: true, bankName: true, currentBalance: true },
       orderBy: { name: 'asc' }
     }),
     req.tenantPrisma!.card.findMany({
       where: { userId, isActive: true },
+      // Sin logoData/logoMime (Bytes del logo): el dashboard no los usa y pesan mucho.
+      select: {
+        id: true, name: true, type: true, bankId: true, bankName: true, last4: true,
+        creditLimit: true, currentBalance: true, cutoffDay: true, paymentDueDay: true
+      },
       orderBy: { name: 'asc' }
     }),
     // Cuentas activas: para derivar el saldo de las tarjetas de débito (banco+titular).
@@ -118,7 +131,20 @@ dashboardRouter.get('/', async (req, res) => {
     req.tenantPrisma!.recurringRule.findMany({
       where: { userId, status: 'ACTIVE' },
       select: { amount: true, frequency: true, type: true }
-    })
+    }),
+    // Desglose por semana del mes (1-7, 8-14, 15-21, 22-28, 29+) para el gráfico
+    // semanal. Evita traer los 500 movimientos completos al frontend solo para esto.
+    req.tenantPrisma!.$queryRaw<Array<{ week: number; income: number; expense: number }>>(Prisma.sql`
+      SELECT LEAST(4, (EXTRACT(DAY FROM "movementDate")::int - 1) / 7) AS week,
+             SUM(CASE WHEN "type" = 'INCOME' THEN "amount" ELSE 0 END)::float8 AS income,
+             SUM(CASE
+                   WHEN "type" IN ('EXPENSE', 'WITHDRAWAL') THEN "amount"
+                   WHEN "type" = 'PURCHASE' AND "isCredit" = false THEN "amount"
+                   ELSE 0 END)::float8 AS expense
+      FROM "Movement"
+      WHERE "userId" = ${userId} AND "movementDate" >= ${start} AND "movementDate" < ${end}
+      GROUP BY 1
+    `)
   ]);
 
   const income = Number(totals[0]?.income || 0);
@@ -177,6 +203,20 @@ dashboardRouter.get('/', async (req, res) => {
     if (row.kind === 'LOAN') debts.loan = { total, count };
   }
 
+  // Semanas 1..5 del mes con income/expense (para el gráfico semanal del frontend).
+  const weeklySeries = [
+    { label: 'Sem 1', sub: '1–7', income: 0, expense: 0 },
+    { label: 'Sem 2', sub: '8–14', income: 0, expense: 0 },
+    { label: 'Sem 3', sub: '15–21', income: 0, expense: 0 },
+    { label: 'Sem 4', sub: '22–28', income: 0, expense: 0 },
+    { label: 'Sem 5', sub: '29–31', income: 0, expense: 0 }
+  ];
+  for (const row of weeklyRows) {
+    const i = Math.min(4, Math.max(0, Number(row.week)));
+    weeklySeries[i].income = Number(row.income || 0);
+    weeklySeries[i].expense = Number(row.expense || 0);
+  }
+
   const recurringMonthly = activeRecurrings.reduce((sum, rule) => {
     const amount = Number(rule.amount || 0);
     let monthly = 0;
@@ -200,6 +240,7 @@ dashboardRouter.get('/', async (req, res) => {
       debtCount: debts.activeCount
     },
     monthlySeries,
+    weeklySeries,
     expenseByCategory,
     recentMovements: recentMovements.map((m) => ({
       id: m.id,

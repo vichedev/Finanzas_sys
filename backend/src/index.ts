@@ -35,6 +35,9 @@ import { reportsRouter } from './routes/tenant/reports.routes';
 import { budgetsRouter } from './routes/tenant/budgets.routes';
 import { auditRouter } from './routes/tenant/audit.routes';
 import { aiRouter } from './routes/tenant/ai.routes';
+import { whatsappRouter } from './routes/tenant/whatsapp.routes';
+import { bootWhatsapp } from './whatsapp/boot';
+import { runCoachScan } from './whatsapp/alerts';
 import { requireAuth } from './middleware/auth';
 import { tenantContext } from './middleware/tenantContext';
 
@@ -130,6 +133,7 @@ app.use('/api/reports',    tenantScope, reportsRouter);
 app.use('/api/budgets',    tenantScope, budgetsRouter);
 app.use('/api/audit',      tenantScope, auditRouter);
 app.use('/api/ai',         tenantScope, aiRouter);
+app.use('/api/whatsapp',   tenantScope, whatsappRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) {
@@ -159,3 +163,13 @@ const REMINDER_INTERVAL_MS = 12 * 60 * 60 * 1000;
 setTimeout(() => { runReminderScan().catch(() => {}); }, 30_000);
 const reminderTimer = setInterval(() => { runReminderScan().catch(() => {}); }, REMINDER_INTERVAL_MS);
 reminderTimer.unref();
+
+// Bot de WhatsApp (Baileys): reconecta el socket del tenant habilitado, si lo hay.
+// Fire-and-forget: si falla, no debe tumbar la API.
+setTimeout(() => { bootWhatsapp().catch((err) => logger.error({ err }, 'whatsapp boot failed')); }, 5_000);
+
+// Coach proactivo de gastos: primer chequeo a los 3 min, luego cada hora.
+// El intervalo real entre avisos lo controla lastCoachAt (~1/día).
+setTimeout(() => { runCoachScan().catch(() => {}); }, 3 * 60_000);
+const coachTimer = setInterval(() => { runCoachScan().catch(() => {}); }, 60 * 60_000);
+coachTimer.unref();

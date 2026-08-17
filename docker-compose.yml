@@ -52,6 +52,8 @@ services:
       - ./backend/.env
     environment:
       NODE_ENV: production
+      # Sesión de Baileys (WhatsApp): se persiste en el volumen wa_session.
+      WA_SESSION_DIR: /app/.wa-session
     ports:
       - "127.0.0.1:4000:4000"
     depends_on:
@@ -69,6 +71,10 @@ services:
     tmpfs:
       - /tmp:size=64m
       - /app/.npm:size=64m
+    # Volumen persistente para la sesión de WhatsApp (Baileys): sobrevive reinicios,
+    # así el QR se escanea una sola vez. El resto del FS es de solo lectura.
+    volumes:
+      - wa_session:/app/.wa-session
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -116,3 +122,4 @@ services:
 
 volumes:
   postgres_data:
+  wa_session:

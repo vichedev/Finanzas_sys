@@ -49,6 +49,7 @@ type Kpis = {
 };
 
 type SeriesPoint = { key: string; label: string; income: number; expense: number };
+type WeekPoint = { label: string; sub: string; income: number; expense: number };
 
 type CategoryRow = { categoryId: number | null; name: string; color: string; amount: number };
 
@@ -74,6 +75,7 @@ type DashboardPayload = {
   period: { year: number; month: number; label: string };
   kpis: Kpis;
   monthlySeries: SeriesPoint[];
+  weeklySeries: WeekPoint[];
   expenseByCategory: CategoryRow[];
   recentMovements: Movement[];
   accounts: AccountRow[];
@@ -134,27 +136,10 @@ const totalExpenseCategoryAmount = computed(() => (data.value?.expenseByCategory
 
 // --- Vista del gráfico: mensual (últimos meses) o semanal (mes en curso) ---
 const chartMode = ref<'monthly' | 'weekly'>('monthly');
-const monthMovements = ref<{ date: string; type: string; amount: number; isCredit?: boolean }[]>([]);
 
-// Desglose semanal del mes seleccionado (semanas por día: 1-7, 8-14, 15-21, 22-28, 29+).
-const weeklySeries = computed(() => {
-  const weeks = [
-    { label: 'Sem 1', sub: '1–7', income: 0, expense: 0 },
-    { label: 'Sem 2', sub: '8–14', income: 0, expense: 0 },
-    { label: 'Sem 3', sub: '15–21', income: 0, expense: 0 },
-    { label: 'Sem 4', sub: '22–28', income: 0, expense: 0 },
-    { label: 'Sem 5', sub: '29–31', income: 0, expense: 0 }
-  ];
-  for (const m of monthMovements.value) {
-    const day = new Date(m.date).getUTCDate();
-    const idx = Math.min(4, Math.floor((day - 1) / 7));
-    const amt = Number(m.amount || 0);
-    if (m.type === 'INCOME') weeks[idx].income += amt;
-    else if (m.type === 'EXPENSE' || m.type === 'WITHDRAWAL') weeks[idx].expense += amt;
-    else if (m.type === 'PURCHASE' && !m.isCredit) weeks[idx].expense += amt;
-  }
-  return weeks;
-});
+// Desglose semanal del mes (1-7, 8-14, 15-21, 22-28, 29+). Lo calcula el backend
+// y viene en el payload, evitando descargar todos los movimientos del mes.
+const weeklySeries = computed<WeekPoint[]>(() => data.value?.weeklySeries || []);
 const topExpenseWeek = computed(() => weeklySeries.value.slice().sort((a, b) => b.expense - a.expense)[0] || null);
 const hasWeeklyData = computed(() => weeklySeries.value.some((w) => w.income > 0 || w.expense > 0));
 
@@ -263,12 +248,8 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const [{ data: payload }, mv] = await Promise.all([
-      http.get<DashboardPayload>('/dashboard', { params: { year: year.value, month: month.value } }),
-      http.get<{ movementDate: string; type: string; amount: number | string; isCredit?: boolean }[]>('/movements', { params: { year: year.value, month: month.value } })
-    ]);
+    const { data: payload } = await http.get<DashboardPayload>('/dashboard', { params: { year: year.value, month: month.value } });
     data.value = payload;
-    monthMovements.value = (mv.data || []).map((m) => ({ date: m.movementDate, type: m.type, amount: Number(m.amount || 0), isCredit: m.isCredit }));
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Error cargando el dashboard';
   } finally {
