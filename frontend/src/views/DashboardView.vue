@@ -351,8 +351,10 @@ function accountIcon(type: string) {
 
     <OnboardingGuide />
 
-    <p v-if="loading" class="dash-loading">Cargando dashboard...</p>
-    <p v-else-if="error" class="error">{{ error }}</p>
+    <!-- El loader solo en la PRIMERA carga (sin datos aún). Los refrescos
+         posteriores no ocultan el contenido → sin parpadeo. -->
+    <p v-if="loading && !data" class="dash-loading">Cargando dashboard...</p>
+    <p v-else-if="error && !data" class="error">{{ error }}</p>
 
     <template v-else-if="data">
       <div class="quick-grid">

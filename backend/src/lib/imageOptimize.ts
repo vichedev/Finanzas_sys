@@ -4,7 +4,6 @@
 // de paso, en los respaldos. Es defensiva: si no es una imagen soportada o algo
 // falla, devuelve el archivo original sin tocar (nunca rompe la subida).
 // =====================================================
-import sharp from 'sharp';
 import { logger } from './logger';
 
 const MAX_DIM = 1800;       // lado máximo (px): legible para leer montos/detalles
@@ -15,9 +14,24 @@ const OPTIMIZABLE = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
 
 export interface OptimizedFile { buffer: Buffer; mimeType: string; optimized: boolean }
 
+// Carga sharp de forma perezosa y DEFENSIVA: si su binario nativo no está
+// disponible (p. ej. arquitectura sin prebuild), NO se cae el backend — solo se
+// omite la optimización y se guarda el original.
+let sharpLib: any = null;
+let sharpTried = false;
+function getSharp(): any {
+  if (sharpTried) return sharpLib;
+  sharpTried = true;
+  try { sharpLib = require('sharp'); }
+  catch (e: any) { logger.error({ e: e?.message }, 'sharp no disponible: se omitirá la optimización de imágenes'); sharpLib = null; }
+  return sharpLib;
+}
+
 export async function optimizeImage(buffer: Buffer, mimeType: string): Promise<OptimizedFile> {
   const mime = (mimeType || '').split(';')[0].trim().toLowerCase();
   if (!buffer?.length || !OPTIMIZABLE.includes(mime)) return { buffer, mimeType, optimized: false };
+  const sharp = getSharp();
+  if (!sharp) return { buffer, mimeType, optimized: false };
   try {
     const hasAlpha = mime === 'image/png' || mime === 'image/webp';
     const pipe = sharp(buffer, { failOn: 'none' })

@@ -1,4 +1,5 @@
-import { Router } from 'express';
+import { Router, Response } from 'express';
+import { logger } from '../../lib/logger';
 
 // Respaldos: exporta TODOS los datos del usuario a JSON y los reimporta
 // (remapeando IDs) para migrar entre empresas o restaurar. auth + tenantContext
@@ -10,11 +11,23 @@ const remap = (m: IdMap, id: number | null | undefined): number | null =>
   id != null && m[id] != null ? m[id] : null;
 const toDate = (v: unknown): Date | null => (v ? new Date(v as string) : null);
 
+// Escritura con backpressure: si el buffer de salida se llena, espera a 'drain'.
+// Así el export NO acumula todo en memoria (evita que el backend se quede sin RAM).
+function write(res: Response, chunk: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (res.write(chunk)) resolve();
+    else res.once('drain', () => resolve());
+  });
+}
+
 backupRouter.get('/export', async (req, res) => {
   const userId = req.tenantUserId!;
   const p = req.tenantPrisma!;
 
-  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, attachments, budgets, branding, aiConfig, walletAccounts, notifications, auditLogs, entities, statements] =
+  // Datos NO binarios (livianos): se pueden cargar juntos sin problema de memoria.
+  // Los comprobantes y extractos (binarios) NO se cargan aquí; se transmiten por
+  // lotes más abajo para no reventar la RAM del contenedor.
+  const [banks, accounts, cards, wallets, categories, debts, recurrings, movements, invoices, budgets, branding, aiConfig, walletAccounts, notifications, auditLogs, entities, attCount, stCount] =
     await Promise.all([
       p.bank.findMany({ where: { userId } }),
       p.account.findMany({ where: { userId } }),
@@ -25,49 +38,98 @@ backupRouter.get('/export', async (req, res) => {
       p.recurringRule.findMany({ where: { userId } }),
       p.movement.findMany({ where: { userId } }),
       p.invoice.findMany({ where: { userId } }),
-      p.attachment.findMany({ where: { userId } }),
       p.budget.findMany({ where: { userId } }),
       p.branding.findUnique({ where: { id: 1 } }).catch(() => null),
       p.aiConfig.findUnique({ where: { id: 1 } }).catch(() => null),
-      // Enlaces billetera–cuenta (solo de billeteras del usuario).
       p.walletAccount.findMany({ where: { wallet: { userId } }, select: { walletId: true, accountId: true } }),
       p.notification.findMany({ where: { userId } }),
       p.auditLog.findMany({}),
       p.entity.findMany({ where: { userId } }),
-      p.bankStatement.findMany({ where: { userId } })
+      p.attachment.count({ where: { userId } }),
+      p.bankStatement.count({ where: { userId } })
     ]);
-
-  const data = {
-    format: 'finanzas-backup',
-    version: 3,
-    exportedAt: new Date().toISOString(),
-    counts: {
-      banks: banks.length, accounts: accounts.length, cards: cards.length, wallets: wallets.length,
-      categories: categories.length, debts: debts.length, recurrings: recurrings.length,
-      movements: movements.length, invoices: invoices.length, attachments: attachments.length,
-      budgets: budgets.length, notifications: notifications.length, auditLogs: auditLogs.length
-    },
-    banks, accounts, wallets, walletAccounts, entities, categories, debts, recurrings, movements, invoices, budgets,
-    notifications, auditLogs,
-    // El logo de la tarjeta va en base64 (los bytes crudos no serializan bien en JSON).
-    cards: cards.map((c) => { const { logoData, ...rest } = c; return { ...rest, logoData: undefined, logoBase64: logoData ? Buffer.from(logoData).toString('base64') : null }; }),
-    attachments: attachments.map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') })),
-    statements: statements.map((s) => ({ ...s, data: Buffer.from(s.data).toString('base64') })),
-    // Identidad de la empresa (logo en base64) — singleton por empresa.
-    branding: branding ? {
-      systemTitle: branding.systemTitle, subtitle: branding.subtitle,
-      primaryColor: branding.primaryColor, accentColor: branding.accentColor,
-      logoMime: branding.logoMime,
-      logoData: branding.logoData ? Buffer.from(branding.logoData).toString('base64') : null
-    } : null,
-    // Config de FinancIA (sin la clave de API: va cifrada y atada a este servidor).
-    aiConfig: aiConfig ? { provider: aiConfig.provider, model: aiConfig.model, enabled: aiConfig.enabled } : null
-  };
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="respaldo-finanzas-${new Date().toISOString().slice(0, 10)}.json"`);
-  res.send(JSON.stringify(data));
+
+  const cardsOut = cards.map((c) => { const { logoData, ...rest } = c; return { ...rest, logoData: undefined, logoBase64: logoData ? Buffer.from(logoData).toString('base64') : null }; });
+  const brandingOut = branding ? {
+    systemTitle: branding.systemTitle, subtitle: branding.subtitle,
+    primaryColor: branding.primaryColor, accentColor: branding.accentColor,
+    logoMime: branding.logoMime,
+    logoData: branding.logoData ? Buffer.from(branding.logoData).toString('base64') : null
+  } : null;
+  const aiOut = aiConfig ? { provider: aiConfig.provider, model: aiConfig.model, enabled: aiConfig.enabled } : null;
+
+  try {
+    // Cabecera + colecciones livianas (una sola serialización de cada una).
+    await write(res, '{');
+    await write(res, `"format":"finanzas-backup","version":3,"exportedAt":${JSON.stringify(new Date().toISOString())}`);
+    await write(res, `,"counts":${JSON.stringify({
+      banks: banks.length, accounts: accounts.length, cards: cards.length, wallets: wallets.length,
+      categories: categories.length, debts: debts.length, recurrings: recurrings.length,
+      movements: movements.length, invoices: invoices.length, attachments: attCount,
+      budgets: budgets.length, notifications: notifications.length, auditLogs: auditLogs.length
+    })}`);
+    const put = async (key: string, value: unknown) => { await write(res, `,${JSON.stringify(key)}:${JSON.stringify(value)}`); };
+    await put('banks', banks);
+    await put('accounts', accounts);
+    await put('wallets', wallets);
+    await put('walletAccounts', walletAccounts);
+    await put('entities', entities);
+    await put('categories', categories);
+    await put('debts', debts);
+    await put('recurrings', recurrings);
+    await put('movements', movements);
+    await put('invoices', invoices);
+    await put('budgets', budgets);
+    await put('notifications', notifications);
+    await put('auditLogs', auditLogs);
+    await put('cards', cardsOut);
+    await put('branding', brandingOut);
+    await put('aiConfig', aiOut);
+
+    // Comprobantes: por lotes, un puñado a la vez (memoria acotada).
+    await streamBinaryArray(res, 'attachments', attCount, async (skip, take) =>
+      (await p.attachment.findMany({ where: { userId }, orderBy: { id: 'asc' }, skip, take }))
+        .map((a) => ({ ...a, data: Buffer.from(a.data).toString('base64') }))
+    );
+    // Extractos bancarios: igual.
+    await streamBinaryArray(res, 'statements', stCount, async (skip, take) =>
+      (await p.bankStatement.findMany({ where: { userId }, orderBy: { id: 'asc' }, skip, take }))
+        .map((s) => ({ ...s, data: Buffer.from(s.data).toString('base64') }))
+    );
+
+    await write(res, '}');
+    res.end();
+  } catch (err) {
+    logger.error({ err: err instanceof Error ? err.message : String(err) }, 'backup export falló');
+    // Si ya empezamos a enviar, no podemos mandar un JSON de error: cortamos la conexión
+    // para que el cliente detecte la descarga incompleta y reintente.
+    if (res.headersSent) res.destroy();
+    else res.status(500).json({ message: 'No se pudo generar el respaldo.' });
+  }
 });
+
+/** Escribe `,"key":[ ... ]` transmitiendo los elementos por lotes de `BATCH`. */
+async function streamBinaryArray(
+  res: Response,
+  key: string,
+  total: number,
+  fetchBatch: (skip: number, take: number) => Promise<unknown[]>
+): Promise<void> {
+  const BATCH = 8; // pocos a la vez → poca RAM aunque haya miles de comprobantes
+  await write(res, `,${JSON.stringify(key)}:[`);
+  let written = 0;
+  for (let skip = 0; skip < total; skip += BATCH) {
+    const rows = await fetchBatch(skip, BATCH);
+    for (const row of rows) {
+      await write(res, (written > 0 ? ',' : '') + JSON.stringify(row));
+      written++;
+    }
+  }
+  await write(res, ']');
+}
 
 backupRouter.post('/import', async (req, res) => {
   const data = req.body;
