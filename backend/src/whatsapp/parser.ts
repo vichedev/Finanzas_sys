@@ -96,7 +96,8 @@ ${JSON.stringify(catalogo)}`;
   // Llama a Groq de forma tolerante: prueba el modelo configurado; si falla (p. ej.
   // modelo desactualizado o sin soporte de JSON), reintenta con un modelo conocido
   // y sin "response_format". Extrae el JSON aunque venga con texto/fences alrededor.
-  const FALLBACK_MODEL = 'llama-3.3-70b-versatile';
+  // Modelo vigente en Groq para el fallback (por si el configurado fue dado de baja).
+  const FALLBACK_MODEL = 'openai/gpt-oss-120b';
   const messages = [{ role: 'system', content: system }, { role: 'user', content: text }];
 
   async function callGroq(model: string, useJsonMode: boolean): Promise<{ status: number; content: string | null; err?: string }> {

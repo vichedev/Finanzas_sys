@@ -30,23 +30,26 @@ const entities = useEntitiesStore();
 const { confirm, alert } = useConfirm();
 
 // ---- FinancIA (IA de análisis con Groq) ----
-const aiCfg = ref<{ model: string; enabled: boolean; hasKey: boolean }>({ model: 'llama-3.3-70b-versatile', enabled: false, hasKey: false });
+const aiCfg = ref<{ model: string; enabled: boolean; hasKey: boolean }>({ model: 'openai/gpt-oss-120b', enabled: false, hasKey: false });
 const aiKeyInput = ref('');
 const aiMsg = ref(''); const aiErr = ref(''); const aiSaving = ref(false);
 const aiAnalyzing = ref(false);
 const aiResult = ref(''); const aiGeneratedAt = ref('');
 const aiQuestion = ref('');
+// Modelos VIGENTES en Groq. Los Llama 3.x y Qwen3-32B fueron dados de baja
+// (decommissioned) por Groq en 2026, por eso ya no aparecen.
 const AI_MODELS = [
-  { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (recomendado)' },
-  { value: 'llama-3.1-8b-instant', label: 'Llama 3.1 8B (rápido)' },
-  { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
-  { value: 'qwen/qwen3-32b', label: 'Qwen3 32B' }
+  { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (recomendado)' },
+  { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B (rápido)' }
 ];
 
 async function loadAiConfig() {
   try {
     const cfg = await aiApi.getConfig();
-    aiCfg.value = { model: cfg.model, enabled: cfg.enabled, hasKey: cfg.hasKey };
+    // Si el modelo guardado ya no existe en Groq (dado de baja), muestra el recomendado
+    // vigente para que al guardar quede corregido.
+    const model = AI_MODELS.some((m) => m.value === cfg.model) ? cfg.model : 'openai/gpt-oss-120b';
+    aiCfg.value = { model, enabled: cfg.enabled, hasKey: cfg.hasKey };
   } catch { /* ignora */ }
 }
 async function saveAiConfig() {

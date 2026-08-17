@@ -4,6 +4,7 @@ import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { encryptString, decryptString } from '../../lib/tenantCrypto';
 import { buildFinancialSnapshot, callFinancIA } from '../../lib/financia';
+import { resolveModel, DEFAULT_GROQ_MODEL } from '../../whatsapp/groq';
 import { auditFromReq } from '../../lib/tenantAudit';
 
 export const aiRouter = Router();
@@ -18,7 +19,7 @@ aiRouter.get('/config', async (req, res) => {
   const cfg = await getConfig(req.tenantPrisma!);
   res.json({
     provider: cfg?.provider || 'groq',
-    model: cfg?.model || 'llama-3.3-70b-versatile',
+    model: resolveModel(cfg?.model),   // sustituye modelos dados de baja por el vigente
     enabled: cfg?.enabled ?? false,
     hasKey: !!cfg?.apiKeyEnc
   });
@@ -39,11 +40,11 @@ aiRouter.put('/config', async (req, res) => {
 
   const cfg = await req.tenantPrisma!.aiConfig.upsert({
     where: { id: 1 },
-    create: { id: 1, provider: 'groq', model: (data.model as string) || 'llama-3.3-70b-versatile', enabled: (data.enabled as boolean) ?? false, apiKeyEnc: (data.apiKeyEnc as string) ?? null },
+    create: { id: 1, provider: 'groq', model: (data.model as string) || DEFAULT_GROQ_MODEL, enabled: (data.enabled as boolean) ?? false, apiKeyEnc: (data.apiKeyEnc as string) ?? null },
     update: data
   });
   void auditFromReq(req, 'UPDATE', 'ai', 1, 'Configuración de FinancIA actualizada');
-  res.json({ provider: cfg.provider, model: cfg.model, enabled: cfg.enabled, hasKey: !!cfg.apiKeyEnc });
+  res.json({ provider: cfg.provider, model: resolveModel(cfg.model), enabled: cfg.enabled, hasKey: !!cfg.apiKeyEnc });
 });
 
 aiRouter.delete('/config', async (req, res) => {
@@ -71,6 +72,7 @@ aiRouter.post('/analyze', async (req, res) => {
   catch { return res.status(500).json({ message: 'No se pudo leer la clave de API.' }); }
 
   const { readable, snapshot } = await buildFinancialSnapshot(req.tenantPrisma!, userId);
-  const analysis = await callFinancIA(apiKey, cfg.model, readable, body.question);
+  // Si el modelo guardado fue dado de baja por Groq, usa el vigente igualmente.
+  const analysis = await callFinancIA(apiKey, resolveModel(cfg.model), readable, body.question);
   res.json({ analysis, snapshot, generatedAt: new Date().toISOString() });
 });
