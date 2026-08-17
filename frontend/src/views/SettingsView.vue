@@ -1948,9 +1948,15 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
               <li><strong>Comprobante:</strong> envía la foto y la adjunta al movimiento.</li>
             </ol>
           </div>
-          <label v-if="wa.state === 'connected'" class="wa-coach">
-            <input type="checkbox" :checked="wa.coachEnabled" @change="waSetCoach(($event.target as HTMLInputElement).checked)" />
-            <span>📊 Avisos proactivos de gasto <small>(el asistente te escribe si detecta gastos altos)</small></span>
+          <label v-if="wa.state === 'connected'" class="wa-coach" :class="{ on: wa.coachEnabled }">
+            <span class="wa-coach-text">
+              <strong>📊 Avisos proactivos de gasto</strong>
+              <small>El asistente te escribe si detecta gastos altos.</small>
+            </span>
+            <span class="wa-switch">
+              <input type="checkbox" :checked="wa.coachEnabled" @change="waSetCoach(($event.target as HTMLInputElement).checked)" />
+              <span class="wa-switch-track"><span class="wa-switch-thumb"></span></span>
+            </span>
           </label>
         </div>
 
@@ -2823,8 +2829,30 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .wa-actions .spin { animation: financia-spin 1s linear infinite; }
 .wa-howto { font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; }
 .wa-howto strong { color: #0f172a; } .wa-howto ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
-.wa-coach { display: flex; align-items: center; gap: 9px; font-size: 13px; color: #334155; cursor: pointer; padding: 4px 2px; }
-.wa-coach small { color: #94a3b8; }
+/* Toggle "Avisos proactivos" (interruptor tipo switch) */
+.wa-coach {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 12px 14px; border: 1px solid var(--color-border, #e2e8f0); border-radius: 12px;
+  background: #fff; cursor: pointer; transition: border-color .15s ease, background .15s ease;
+}
+.wa-coach:hover { border-color: #cbd5e1; }
+.wa-coach.on { border-color: #a7f3d0; background: #f0fdf9; }
+.wa-coach-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wa-coach-text strong { font-size: 13.5px; font-weight: 600; color: #0f172a; }
+.wa-coach-text small { font-size: 12px; color: #94a3b8; }
+.wa-switch { position: relative; flex-shrink: 0; width: 44px; height: 24px; }
+.wa-switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.wa-switch-track {
+  position: absolute; inset: 0; border-radius: 999px; background: #cbd5e1;
+  transition: background .18s ease; pointer-events: none;
+}
+.wa-switch-thumb {
+  position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .18s ease;
+}
+.wa-switch input:checked + .wa-switch-track { background: #10b981; }
+.wa-switch input:checked + .wa-switch-track .wa-switch-thumb { transform: translateX(20px); }
+.wa-switch input:focus-visible + .wa-switch-track { box-shadow: 0 0 0 3px rgba(16,185,129,.35); }
 .wa-qr-col { align-items: center; }
 .wa-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
 .wa-qr img { width: 260px; height: 260px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 8px; background: #fff; }
