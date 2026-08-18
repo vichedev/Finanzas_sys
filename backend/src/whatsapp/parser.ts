@@ -5,9 +5,7 @@
 // directamente los IDs correctos, evitando matching frágil de strings.
 // =====================================================
 import { logger } from '../lib/logger';
-import { getGroqCreds } from './groq';
-
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+import { getBrainCreds, chatComplete } from './llm';
 
 export type MovType = 'INCOME' | 'EXPENSE' | 'PURCHASE' | 'TRANSFER' | 'WITHDRAWAL';
 
@@ -51,7 +49,7 @@ function extractJson(raw: string): ParsedMovement | null {
 }
 
 export async function parseMovement(prisma: any, userId: number, text: string): Promise<ParsedMovement | { error: string }> {
-  const creds = await getGroqCreds(prisma);
+  const creds = await getBrainCreds(prisma);
   if (!creds) return { error: 'Falta la clave de IA. Configúrala en Ajustes → FinancIA.' };
 
   const [accounts, cards, categories] = await Promise.all([
@@ -100,39 +98,18 @@ Reglas (solo si intent="register"):
 Catálogos del usuario:
 ${JSON.stringify(catalogo)}`;
 
-  // Llama a Groq de forma tolerante: prueba el modelo configurado; si falla (p. ej.
-  // modelo desactualizado o sin soporte de JSON), reintenta con un modelo conocido
-  // y sin "response_format". Extrae el JSON aunque venga con texto/fences alrededor.
-  // Modelo vigente en Groq para el fallback (por si el configurado fue dado de baja).
-  const FALLBACK_MODEL = 'openai/gpt-oss-120b';
-  const messages = [{ role: 'system', content: system }, { role: 'user', content: text }];
-
-  async function callGroq(model: string, useJsonMode: boolean): Promise<{ status: number; content: string | null; err?: string }> {
-    const res = await fetch(GROQ_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${creds!.apiKey}` },
-      body: JSON.stringify({ model, temperature: 0.1, max_tokens: 500, ...(useJsonMode ? { response_format: { type: 'json_object' } } : {}), messages })
-    });
-    if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      logger.error({ status: res.status, model, useJsonMode, t: t.slice(0, 300) }, 'wa: parser Groq error');
-      return { status: res.status, content: null, err: t.slice(0, 200) };
-    }
-    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-    return { status: 200, content: data.choices?.[0]?.message?.content ?? null };
+  // Llama al proveedor (Groq/OpenRouter) de forma tolerante: modo JSON → sin JSON →
+  // fallback a Groq. Extrae el JSON aunque venga con ```json o texto alrededor.
+  let raw: string;
+  try {
+    raw = await chatComplete(creds, { system, user: text, jsonMode: true, temperature: 0.1, maxTokens: 500 });
+  } catch (e: any) {
+    return { error: e?.message || 'No pude interpretar el mensaje (falló la IA). Revisa el modelo en Ajustes → FinancIA.' };
   }
 
-  // Intento 1: modelo del usuario con modo JSON. Fallbacks ante error.
-  let r = await callGroq(creds.model, true);
-  if (r.status === 401) return { error: 'Clave de IA inválida. Revísala en Ajustes → FinancIA.' };
-  if (r.status === 429) return { error: 'Groq: límite de uso alcanzado, intenta en un momento.' };
-  if (!r.content) r = await callGroq(creds.model, false);                 // sin modo JSON
-  if (!r.content && creds.model !== FALLBACK_MODEL) r = await callGroq(FALLBACK_MODEL, true); // modelo conocido
-  if (!r.content) return { error: 'No pude interpretar el mensaje (falló la IA). Revisa el modelo en Ajustes → FinancIA.' };
-
   // Extrae el objeto JSON aunque venga con ```json, texto extra, etc.
-  const p = extractJson(r.content);
-  if (!p) { logger.error({ raw: r.content.slice(0, 300) }, 'wa: JSON inválido del parser'); return { error: 'No entendí bien; intenta de nuevo con el tipo y el monto.' }; }
+  const p = extractJson(raw);
+  if (!p) { logger.error({ raw: raw.slice(0, 300) }, 'wa: JSON inválido del parser'); return { error: 'No entendí bien; intenta de nuevo con el tipo y el monto.' }; }
 
   p.intent = p.intent === 'query' ? 'query' : 'register';
 

@@ -49,11 +49,34 @@ let manualClose = false;
 let incomingHandler: IncomingHandler | null = null;
 const sentIds = new Set<string>(); // ids de mensajes que enviamos nosotros (anti-loop)
 
+// Números autorizados a escribir al bot (solo dígitos). El 1º es el "principal":
+// recibe los avisos proactivos. Si la lista está vacía, solo se atiende el self-chat.
+let allowedNumbers: string[] = [];
+let allowSelfChat = true;
+
 export function setIncomingHandler(h: IncomingHandler) { incomingHandler = h; }
 
-export function getStatus() {
-  return { state, qr: currentQr, linkedNumber, tenantId: boundTenantId, userId: boundUserId };
+/** Configura la lista blanca de números autorizados (en vivo, sin reconectar). */
+export function setAllowedNumbers(nums: string[], allowSelf: boolean) {
+  allowedNumbers = (nums || []).map(digits).filter((n) => n.length >= 8);
+  allowSelfChat = allowSelf;
 }
+
+export function getStatus() {
+  return { state, qr: currentQr, linkedNumber, tenantId: boundTenantId, userId: boundUserId, allowedNumbers, allowSelfChat };
+}
+
+/** Solo los dígitos de un string/número. */
+function digits(s: unknown): string { return String(s ?? '').replace(/\D/g, ''); }
+/** Compara dos números por sus últimos 9 dígitos (tolera +593 vs 0 en Ecuador). */
+function sameNumber(a: string, b: string): boolean {
+  const x = digits(a), y = digits(b);
+  if (x.length < 8 || y.length < 8) return false;
+  const n = Math.min(9, x.length, y.length);
+  return x.slice(-n) === y.slice(-n);
+}
+/** jid de destino a partir de un número (dígitos con código de país). */
+function numberToJid(num: string): string { return `${digits(num)}@s.whatsapp.net`; }
 
 /** Quita el sufijo de dispositivo (":12") para comparar jids. */
 function normJid(jid: string | null | undefined): string {
@@ -69,6 +92,12 @@ export async function connect(tenantId: string, userId: number | null): Promise<
   boundTenantId = tenantId;
   boundUserId = userId;
   manualClose = false;
+  // Carga la lista blanca de números autorizados desde la config del tenant.
+  try {
+    const prisma = await getTenantPrisma(tenantId);
+    const cfg = await prisma.whatsappConfig.findUnique({ where: { id: 1 } });
+    setAllowedNumbers((cfg?.allowedNumbers || '').split(',').map((s: string) => s.trim()).filter(Boolean), cfg?.allowSelfChat ?? true);
+  } catch { /* la fila puede no existir aún */ }
   await startSocket();
 }
 
@@ -91,10 +120,15 @@ export async function disconnect(logout = false): Promise<void> {
   }
 }
 
-/** Envía un mensaje al propio chat (nota para mí). Devuelve false si no está conectado. */
+/**
+ * Envía un mensaje al "dueño": el primer número autorizado (a quien van los avisos
+ * proactivos). Si no hay números configurados, cae al propio chat (nota para mí).
+ */
 export async function sendToOwner(text: string): Promise<boolean> {
-  if (state !== 'connected' || !ownJid) return false;
-  try { await sendText(ownJid, text); return true; }
+  if (state !== 'connected') return false;
+  const target = allowedNumbers.length ? numberToJid(allowedNumbers[0]) : ownJid;
+  if (!target) return false;
+  try { await sendText(target, text); return true; }
   catch { return false; }
 }
 
@@ -210,18 +244,32 @@ async function handleMessage(m: any, downloadMediaMessage: any, waLogger: any, u
   const text: string | null = content?.conversation || content?.extendedTextMessage?.text || content?.imageMessage?.caption || null;
   const ts = Number(m.messageTimestamp || 0);
 
+  // No atendemos grupos ni canales (solo chats 1:1).
+  if (jid.endsWith('@g.us') || jid.endsWith('@newsletter') || jid.endsWith('@broadcast')) return;
+
   // Chat consigo mismo (nota para mí): coincide con el propio número real (PN)
   // o con el propio LID (@lid), que WhatsApp usa por privacidad.
   const chatNum = jidNumber(jid);
   const isSelfChat = (!!ownJid && chatNum === jidNumber(ownJid)) || (!!ownLid && chatNum === jidNumber(ownLid));
 
-  // Los mensajes de grupos/otros chats se ignoran sin llenar el log (solo debug).
-  if (!isSelfChat) { logger.debug({ jid }, 'wa: mensaje ignorado (no es self-chat)'); return; }
+  // Autorizados: números en la lista blanca (comparados por sus últimos dígitos).
+  // Se prueban varias formas del remitente por si WhatsApp usa @lid en vez del número.
+  const senderCandidates = [jid, m.key.senderPn, m.key.participant, m.key.participantPn].filter(Boolean).map((c: string) => jidNumber(c));
+  const isAllowed = allowedNumbers.some((n) => senderCandidates.some((c) => sameNumber(n, c)));
+
+  const accepted = (allowSelfChat && isSelfChat) || isAllowed;
+  if (!accepted) {
+    logger.debug({ jid, senderCandidates }, 'wa: mensaje ignorado (no autorizado)');
+    return;
+  }
 
   logger.info({
-    type: upsertType, jid, fromMe: m.key.fromMe,
+    type: upsertType, jid, fromMe: m.key.fromMe, isSelfChat, isAllowed,
     hasAudio: !!audioMsg, hasImage: !!imageMsg, hasText: !!text
-  }, 'wa: mensaje recibido (self-chat)');
+  }, 'wa: mensaje recibido (autorizado)');
+  // En un chat externo autorizado, fromMe=true significa que lo enviamos NOSOTROS
+  // (una respuesta del bot): se ignora. En el self-chat, fromMe es normal.
+  if (isAllowed && !isSelfChat && m.key.fromMe) return;
   if (m.key.id && sentIds.has(m.key.id)) return;           // no reprocesar nuestras respuestas
   if (ts && ts < startedAtSec - 5) { logger.info('wa: ignorado por antigüedad'); return; }
   if (!incomingHandler) { logger.warn('wa: sin handler registrado'); return; }
@@ -238,8 +286,8 @@ async function handleMessage(m: any, downloadMediaMessage: any, waLogger: any, u
     image = { buffer, mimetype: imageMsg.mimetype || 'image/jpeg' };
   }
 
-  // Respondemos al self-chat por el número real (destino canónico y siempre válido).
-  const replyTo = ownJid || jid;
+  // Self-chat → respondemos por el número real propio; autorizado externo → a su chat.
+  const replyTo = isSelfChat ? (ownJid || jid) : jid;
   await incomingHandler({
     tenantId: boundTenantId!,
     userId: boundUserId,

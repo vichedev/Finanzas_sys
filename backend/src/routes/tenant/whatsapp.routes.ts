@@ -3,7 +3,19 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { auditFromReq } from '../../lib/tenantAudit';
-import { getStatus, connect, disconnect } from '../../whatsapp/gateway';
+import { getStatus, connect, disconnect, setAllowedNumbers } from '../../whatsapp/gateway';
+
+/** Normaliza una lista de números a solo dígitos (>= 8), sin duplicados. */
+function normalizeNumbers(list: unknown): string[] {
+  const arr = Array.isArray(list) ? list : String(list ?? '').split(',');
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of arr) {
+    const d = String(raw ?? '').replace(/\D/g, '');
+    if (d.length >= 8 && !seen.has(d)) { seen.add(d); out.push(d); }
+  }
+  return out;
+}
 
 // Rutas para la pantalla de Ajustes → Asistente WhatsApp.
 // El socket de Baileys es único en el proceso; estos endpoints lo pilotan y
@@ -23,8 +35,10 @@ async function buildStatus(prisma: any) {
     linkedNumber: cfg?.linkedNumber ?? s.linkedNumber ?? null,
     enabled: cfg?.enabled ?? false,
     coachEnabled: cfg?.coachEnabled ?? true,  // avisos proactivos de gasto
+    allowedNumbers: normalizeNumbers(cfg?.allowedNumbers), // números autorizados a escribir al bot
+    allowSelfChat: cfg?.allowSelfChat ?? true,             // atender también la "nota para mí"
     userId: cfg?.userId ?? null,
-    hasAiKey: !!ai?.apiKeyEnc       // sin clave de IA el bot no puede transcribir
+    hasAiKey: !!(ai?.apiKeyEnc || ai?.transcribeApiKeyEnc) // sin clave de IA/Groq el bot no puede transcribir
   };
 }
 
@@ -32,16 +46,28 @@ whatsappRouter.get('/status', async (req, res) => {
   res.json(await buildStatus(req.tenantPrisma!));
 });
 
-// Activar/desactivar los avisos proactivos de gasto.
-const cfgSchema = z.object({ coachEnabled: z.boolean() }).strict();
+// Avisos proactivos + lista blanca de números autorizados + self-chat.
+const cfgSchema = z.object({
+  coachEnabled: z.boolean().optional(),
+  allowedNumbers: z.array(z.string().trim().max(20)).max(20).optional(),
+  allowSelfChat: z.boolean().optional()
+}).strict();
 whatsappRouter.put('/config', async (req, res) => {
-  const { coachEnabled } = cfgSchema.parse(req.body ?? {});
+  const body = cfgSchema.parse(req.body ?? {});
+  const data: Record<string, unknown> = {};
+  if (body.coachEnabled !== undefined) data.coachEnabled = body.coachEnabled;
+  if (body.allowSelfChat !== undefined) data.allowSelfChat = body.allowSelfChat;
+  if (body.allowedNumbers !== undefined) data.allowedNumbers = normalizeNumbers(body.allowedNumbers).join(',');
+
   await req.tenantPrisma!.whatsappConfig.upsert({
     where: { id: 1 },
-    create: { id: 1, enabled: false, userId: req.tenantUserId!, coachEnabled },
-    update: { coachEnabled }
+    create: { id: 1, enabled: false, userId: req.tenantUserId!, ...data },
+    update: data
   });
-  res.json(await buildStatus(req.tenantPrisma!));
+  // Aplica la lista blanca al socket en vivo (sin reconectar).
+  const status = await buildStatus(req.tenantPrisma!);
+  setAllowedNumbers(status.allowedNumbers, status.allowSelfChat);
+  res.json(status);
 });
 
 // Vincular / activar: guarda a qué usuario se imputan los movimientos, marca

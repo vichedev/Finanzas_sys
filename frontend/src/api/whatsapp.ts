@@ -8,8 +8,16 @@ export interface WhatsappStatus {
   linkedNumber: string | null;
   enabled: boolean;
   coachEnabled: boolean;      // avisos proactivos de gasto
+  allowedNumbers: string[];   // números autorizados a escribir al bot (dígitos)
+  allowSelfChat: boolean;     // atender también la "nota para mí"
   userId: number | null;
   hasAiKey: boolean;
+}
+
+export interface WhatsappConfigPayload {
+  coachEnabled?: boolean;
+  allowedNumbers?: string[];
+  allowSelfChat?: boolean;
 }
 
 export const whatsappApi = {
@@ -27,6 +35,10 @@ export const whatsappApi = {
   },
   async setCoach(coachEnabled: boolean): Promise<WhatsappStatus> {
     const { data } = await http.put<WhatsappStatus>('/whatsapp/config', { coachEnabled });
+    return data;
+  },
+  async saveConfig(payload: WhatsappConfigPayload): Promise<WhatsappStatus> {
+    const { data } = await http.put<WhatsappStatus>('/whatsapp/config', payload);
     return data;
   }
 };

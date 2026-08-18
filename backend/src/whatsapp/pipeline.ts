@@ -10,7 +10,7 @@
 // =====================================================
 import { logger } from '../lib/logger';
 import { getTenantPrisma } from '../lib/tenantPrisma';
-import { getGroqCreds } from './groq';
+import { getTranscribeCreds } from './llm';
 import { transcribeAudio } from './transcribe';
 import { parseMovement, type ParsedMovement, type MovType } from './parser';
 import { answerQuestion } from './assistant';
@@ -295,8 +295,8 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
   let text = (msg.text || '').trim();
   const fromAudio = !!msg.audio;
   if (fromAudio) {
-    const creds = await getGroqCreds(prisma);
-    if (!creds) { await msg.reply('⚠️ Falta la clave de IA. Ve a *Ajustes → FinancIA* y guárdala.'); return; }
+    const creds = await getTranscribeCreds(prisma);
+    if (!creds) { await msg.reply('⚠️ Falta la clave de Groq para transcribir audio. Ve a *Ajustes → FinancIA* y guárdala.'); return; }
     await msg.reply('🎧 Escuchando tu audio…');
     try { text = (await transcribeAudio(creds.apiKey, msg.audio!.buffer, msg.audio!.mimetype)).trim(); }
     catch (e: any) { await msg.reply(`❌ ${e?.message || 'No se pudo transcribir el audio.'}`); return; }

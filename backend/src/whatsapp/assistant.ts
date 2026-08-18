@@ -5,9 +5,7 @@
 // =====================================================
 import { logger } from '../lib/logger';
 import { buildFinancialSnapshot } from '../lib/financia';
-import { getGroqCreds } from './groq';
-
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+import { getBrainCreds, chatComplete } from './llm';
 
 // Formato pensado para WhatsApp: *negrita* con UN asterisco, viñetas con "• ".
 const CHAT_SYSTEM = `Eres el asistente financiero personal del usuario, dentro de WhatsApp (Ecuador, moneda USD, IVA 15%).
@@ -26,33 +24,17 @@ Empieza con "Oye 👋". Formato WhatsApp: *negrita* con UN asterisco, viñetas c
 Incluye: cuánto lleva gastado este mes, la categoría donde MÁS gasta (con la cifra) y una recomendación clara para limitarlo. Si hay una deuda por vencer o un saldo negativo, menciónalo.
 Máximo 6 líneas. Si NO hay nada realmente relevante que avisar (poco gasto, todo en orden), responde EXACTAMENTE la palabra: NADA`;
 
-async function callGroq(apiKey: string, model: string, system: string, user: string, maxTokens = 500): Promise<string> {
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model, temperature: 0.5, max_tokens: maxTokens,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }]
-    })
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    logger.error({ status: res.status, t: t.slice(0, 300) }, 'wa: assistant Groq error');
-    if (res.status === 401) throw Object.assign(new Error('Clave de IA inválida.'), { status: 400 });
-    if (res.status === 429) throw Object.assign(new Error('Groq: límite de uso alcanzado, intenta en un momento.'), { status: 429 });
-    throw Object.assign(new Error('No pude generar la respuesta.'), { status: 502 });
-  }
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  return (data.choices?.[0]?.message?.content || '').trim();
-}
-
 /** Responde una consulta del usuario usando todo su contexto financiero. */
 export async function answerQuestion(prisma: any, userId: number, question: string): Promise<string> {
-  const creds = await getGroqCreds(prisma);
+  const creds = await getBrainCreds(prisma);
   if (!creds) return '⚠️ Falta la clave de IA. Configúrala en *Ajustes → FinancIA*.';
   const { readable } = await buildFinancialSnapshot(prisma, userId);
   try {
-    const answer = await callGroq(creds.apiKey, creds.model, CHAT_SYSTEM, `Datos financieros actuales:\n${readable}\n\nMensaje del usuario: ${question}`);
+    const answer = await chatComplete(creds, {
+      system: CHAT_SYSTEM,
+      user: `Datos financieros actuales:\n${readable}\n\nMensaje del usuario: ${question}`,
+      temperature: 0.5, maxTokens: 500
+    });
     return answer || 'No tengo suficiente información para responder eso.';
   } catch (e: any) {
     return `❌ ${e?.message || 'No pude responder ahora.'}`;
@@ -61,11 +43,15 @@ export async function answerQuestion(prisma: any, userId: number, question: stri
 
 /** Genera un aviso proactivo de gastos, o null si no hay nada relevante que decir. */
 export async function proactiveCoach(prisma: any, userId: number): Promise<string | null> {
-  const creds = await getGroqCreds(prisma);
+  const creds = await getBrainCreds(prisma);
   if (!creds) return null;
   const { readable } = await buildFinancialSnapshot(prisma, userId);
   try {
-    const msg = await callGroq(creds.apiKey, creds.model, COACH_SYSTEM, `Datos financieros del usuario:\n${readable}`, 400);
+    const msg = await chatComplete(creds, {
+      system: COACH_SYSTEM,
+      user: `Datos financieros del usuario:\n${readable}`,
+      temperature: 0.5, maxTokens: 400
+    });
     if (!msg || msg.trim().toUpperCase() === 'NADA') return null;
     return msg;
   } catch (e: any) {

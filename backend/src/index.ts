@@ -76,7 +76,7 @@ app.use(cors({
 // (deben ir ANTES del json global de 256kb; express.json no re-parsea si el body ya se leyó).
 app.use('/api/attachments', express.json({ limit: '12mb' }));
 app.use('/api/branding', express.json({ limit: '6mb' }));
-app.use('/api/backup/import', express.json({ limit: '64mb' }));
+app.use('/api/backup/import', express.json({ limit: '256mb' }));
 app.use(express.json({ limit: '256kb' }));
 app.use(pinoHttp({
   logger,

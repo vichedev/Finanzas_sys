@@ -29,40 +29,76 @@ const auth = useAuthStore();
 const entities = useEntitiesStore();
 const { confirm, alert } = useConfirm();
 
-// ---- FinancIA (IA de análisis con Groq) ----
-const aiCfg = ref<{ model: string; enabled: boolean; hasKey: boolean }>({ model: 'openai/gpt-oss-120b', enabled: false, hasKey: false });
+// ---- FinancIA (IA de análisis: Groq u OpenRouter) ----
+const aiCfg = ref<{ provider: string; model: string; baseUrl: string; enabled: boolean; hasKey: boolean; hasTranscribeKey: boolean }>(
+  { provider: 'groq', model: 'openai/gpt-oss-120b', baseUrl: '', enabled: false, hasKey: false, hasTranscribeKey: false });
 const aiKeyInput = ref('');
+const aiTranscribeKeyInput = ref('');
 const aiMsg = ref(''); const aiErr = ref(''); const aiSaving = ref(false);
 const aiAnalyzing = ref(false);
 const aiResult = ref(''); const aiGeneratedAt = ref('');
 const aiQuestion = ref('');
-// Modelos VIGENTES en Groq. Los Llama 3.x y Qwen3-32B fueron dados de baja
-// (decommissioned) por Groq en 2026, por eso ya no aparecen.
-const AI_MODELS = [
-  { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (recomendado)' },
-  { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B (rápido)' }
+// Proveedores del "cerebro" (análisis + entender mensajes). La transcripción de
+// audio siempre usa Groq (Whisper).
+const AI_PROVIDERS = [
+  { value: 'groq', label: 'Groq — gratis (recomendado)' },
+  { value: 'gemini', label: 'Google Gemini — gratis' },
+  { value: 'openrouter', label: 'OpenRouter — gratis (DeepSeek/Llama/Qwen)' }
 ];
+// Datos por proveedor: dónde sacar la clave (gratis) + placeholder de la clave.
+const AI_PROVIDER_META: Record<string, { keyLabel: string; keyUrl: string; keyPlaceholder: string }> = {
+  groq: { keyLabel: 'Clave de API de Groq', keyUrl: 'https://console.groq.com/keys', keyPlaceholder: 'gsk_...' },
+  gemini: { keyLabel: 'Clave de API de Google Gemini', keyUrl: 'https://aistudio.google.com/apikey', keyPlaceholder: 'AIza...' },
+  openrouter: { keyLabel: 'Clave de API de OpenRouter', keyUrl: 'https://openrouter.ai/keys', keyPlaceholder: 'sk-or-...' }
+};
+// Modelos sugeridos por proveedor. Los IDs cambian: el campo admite escribir
+// cualquiera. "openrouter/free" elige automáticamente uno gratis vigente.
+const AI_MODELS_BY_PROVIDER: Record<string, { value: string; label: string }[]> = {
+  groq: [
+    { value: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (recomendado)' },
+    { value: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B (rápido)' }
+  ],
+  gemini: [
+    { value: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash (recomendado)' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash' }
+  ],
+  openrouter: [
+    { value: 'openrouter/free', label: 'Auto gratis (recomendado)' },
+    { value: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (gratis)' },
+    { value: 'deepseek/deepseek-r1:free', label: 'DeepSeek R1 (si está disponible)' },
+    { value: 'qwen/qwen-2.5-72b-instruct:free', label: 'Qwen 2.5 72B (gratis)' }
+  ]
+};
+const aiModels = computed(() => AI_MODELS_BY_PROVIDER[aiCfg.value.provider] || AI_MODELS_BY_PROVIDER.groq);
+const aiIsGroq = computed(() => aiCfg.value.provider === 'groq');
+const aiIsOpenRouter = computed(() => aiCfg.value.provider === 'openrouter');
+const aiProviderMeta = computed(() => AI_PROVIDER_META[aiCfg.value.provider] || AI_PROVIDER_META.groq);
+
+function onAiProviderChange() {
+  // Al cambiar de proveedor, propone su modelo por defecto.
+  aiCfg.value.model = (AI_MODELS_BY_PROVIDER[aiCfg.value.provider]?.[0]?.value) || aiCfg.value.model;
+}
 
 async function loadAiConfig() {
   try {
     const cfg = await aiApi.getConfig();
-    // Si el modelo guardado ya no existe en Groq (dado de baja), muestra el recomendado
-    // vigente para que al guardar quede corregido.
-    const model = AI_MODELS.some((m) => m.value === cfg.model) ? cfg.model : 'openai/gpt-oss-120b';
-    aiCfg.value = { model, enabled: cfg.enabled, hasKey: cfg.hasKey };
+    aiCfg.value = { provider: cfg.provider || 'groq', model: cfg.model, baseUrl: cfg.baseUrl || '', enabled: cfg.enabled, hasKey: cfg.hasKey, hasTranscribeKey: cfg.hasTranscribeKey };
   } catch { /* ignora */ }
 }
 async function saveAiConfig() {
   aiErr.value = ''; aiMsg.value = ''; aiSaving.value = true;
   try {
-    const payload: { apiKey?: string; model?: string; enabled?: boolean } = {
-      model: aiCfg.value.model,
+    const payload: import('../api/ai').AiConfigPayload = {
+      provider: aiCfg.value.provider,
+      model: aiCfg.value.model.trim(),
       enabled: aiCfg.value.enabled
     };
     if (aiKeyInput.value.trim()) payload.apiKey = aiKeyInput.value.trim();
+    if (aiTranscribeKeyInput.value.trim()) payload.transcribeApiKey = aiTranscribeKeyInput.value.trim();
     const cfg = await aiApi.saveConfig(payload);
-    aiCfg.value = { model: cfg.model, enabled: cfg.enabled, hasKey: cfg.hasKey };
-    aiKeyInput.value = '';
+    aiCfg.value = { provider: cfg.provider, model: cfg.model, baseUrl: cfg.baseUrl || '', enabled: cfg.enabled, hasKey: cfg.hasKey, hasTranscribeKey: cfg.hasTranscribeKey };
+    aiKeyInput.value = ''; aiTranscribeKeyInput.value = '';
     aiMsg.value = 'Configuración de FinancIA guardada.';
     setTimeout(() => (aiMsg.value = ''), 2500);
   } catch (e: unknown) {
@@ -92,10 +128,38 @@ async function runAnalysis() {
 }
 
 // ---- Asistente por WhatsApp (Baileys) ----
-const wa = ref<WhatsappStatus>({ state: 'idle', qr: null, linkedNumber: null, enabled: false, coachEnabled: true, userId: null, hasAiKey: false });
+const wa = ref<WhatsappStatus>({ state: 'idle', qr: null, linkedNumber: null, enabled: false, coachEnabled: true, allowedNumbers: [], allowSelfChat: true, userId: null, hasAiKey: false });
 const waBusy = ref(false);
 const waErr = ref('');
+const waNumberInput = ref('');
 let waPollTimer: ReturnType<typeof setInterval> | null = null;
+
+// Formatea un número (dígitos) como +593 98 630 8514 para mostrarlo.
+function fmtWaNumber(d: string): string {
+  const s = String(d || '').replace(/\D/g, '');
+  return s ? '+' + s : s;
+}
+async function waAddNumber() {
+  const d = waNumberInput.value.replace(/\D/g, '');
+  if (d.length < 8) { waErr.value = 'Número inválido. Usa el número con código de país, ej. 593986308514.'; return; }
+  if (wa.value.allowedNumbers.includes(d)) { waNumberInput.value = ''; return; }
+  waErr.value = '';
+  const nums = [...wa.value.allowedNumbers, d];
+  try { wa.value = await whatsappApi.saveConfig({ allowedNumbers: nums }); waNumberInput.value = ''; }
+  catch { waErr.value = 'No se pudo guardar el número.'; }
+}
+async function waRemoveNumber(n: string) {
+  waErr.value = '';
+  const nums = wa.value.allowedNumbers.filter((x) => x !== n);
+  try { wa.value = await whatsappApi.saveConfig({ allowedNumbers: nums }); }
+  catch { waErr.value = 'No se pudo quitar el número.'; }
+}
+async function waSetSelfChat(val: boolean) {
+  const prev = wa.value.allowSelfChat;
+  wa.value.allowSelfChat = val;
+  try { wa.value = await whatsappApi.saveConfig({ allowSelfChat: val }); }
+  catch { wa.value.allowSelfChat = prev; waErr.value = 'No se pudo cambiar la opción.'; }
+}
 
 const WA_STATE_LABEL: Record<string, string> = {
   idle: 'Sin vincular',
@@ -1124,7 +1188,7 @@ const SECTIONS = computed<SectionCard[]>(() => {
     base.push({ key: 'smtp', title: 'Servidor de correo', description: 'Configura el SMTP para enviar emails (bienvenida, avisos).', icon: Mail, accent: 'cyan' });
     base.push({ key: 'backups', title: 'Respaldos', description: 'Exporta e importa todos tus datos para migrar o restaurar.', icon: Archive, accent: 'green' });
     base.push({ key: 'financia', title: 'FinancIA', description: 'Asistente de IA (Groq) que analiza tus datos y da recomendaciones.', icon: Sparkles, accent: 'indigo' });
-    base.push({ key: 'whatsapp', title: 'Asistente WhatsApp', description: 'Registra movimientos enviando un audio de WhatsApp a tu propio chat.', icon: MessageCircle, accent: 'green' });
+    base.push({ key: 'whatsapp', title: 'Asistente WhatsApp', description: 'Escríbele por WhatsApp (audio o texto) desde tu número y registra movimientos.', icon: MessageCircle, accent: 'green' });
   }
   return base;
 });
@@ -1846,19 +1910,39 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
         <div class="financia-config">
           <h4>Configuración</h4>
           <div class="field">
-            <label>Clave de API de Groq</label>
+            <label>Proveedor de IA (cerebro)</label>
+            <select v-model="aiCfg.provider" @change="onAiProviderChange">
+              <option v-for="p in AI_PROVIDERS" :key="p.value" :value="p.value">{{ p.label }}</option>
+            </select>
+            <small class="hint">Analiza tus datos y entiende tus mensajes. La transcripción de audio siempre usa Groq.</small>
+          </div>
+          <div class="field">
+            <label>{{ aiProviderMeta.keyLabel }}</label>
             <input v-model="aiKeyInput" type="password" autocomplete="off"
-                   :placeholder="aiCfg.hasKey ? '•••••••••• (ya configurada)' : 'gsk_...'" />
+                   :placeholder="aiCfg.hasKey ? '•••••••••• (ya configurada)' : aiProviderMeta.keyPlaceholder" />
             <small class="hint">
-              Consíguela gratis en <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a>.
+              Créala <strong>gratis</strong> en <a :href="aiProviderMeta.keyUrl" target="_blank" rel="noopener">{{ aiProviderMeta.keyUrl.replace('https://', '') }}</a>.
               Se guarda cifrada. {{ aiCfg.hasKey ? 'Deja vacío para conservar la actual.' : '' }}
+            </small>
+          </div>
+          <!-- Clave de Groq para transcribir audio: necesaria si el cerebro NO es Groq -->
+          <div class="field" v-if="!aiIsGroq">
+            <label>Clave de Groq (transcripción de audio)</label>
+            <input v-model="aiTranscribeKeyInput" type="password" autocomplete="off"
+                   :placeholder="aiCfg.hasTranscribeKey ? '•••••••••• (ya configurada)' : 'gsk_...'" />
+            <small class="hint">
+              Este proveedor no transcribe audios; se usa Groq (Whisper) para eso — también <strong>gratis</strong>. Pega tu clave de
+              <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> aquí.
+              {{ aiCfg.hasTranscribeKey ? 'Deja vacío para conservar la actual.' : '' }}
             </small>
           </div>
           <div class="field">
             <label>Modelo</label>
-            <select v-model="aiCfg.model">
-              <option v-for="m in AI_MODELS" :key="m.value" :value="m.value">{{ m.label }}</option>
-            </select>
+            <input v-model="aiCfg.model" list="ai-models" :placeholder="aiModels[0]?.value" autocomplete="off" />
+            <datalist id="ai-models">
+              <option v-for="m in aiModels" :key="m.value" :value="m.value">{{ m.label }}</option>
+            </datalist>
+            <small class="hint" v-if="aiIsOpenRouter">Puedes escribir cualquier modelo de OpenRouter. <strong>openrouter/free</strong> elige uno gratis automáticamente.</small>
           </div>
           <div class="field">
             <label class="financia-toggle">
@@ -1908,12 +1992,12 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
         <div class="wa-ic"><MessageCircle :size="22" /></div>
         <div>
           <h3>Asistente por WhatsApp</h3>
-          <p>Vincula tu WhatsApp y envíate un <strong>audio a tu propio chat</strong> ("Mensajes contigo mismo"). El asistente lo transcribe y —en las próximas versiones— registrará el movimiento tras confirmarlo.</p>
+          <p>Vincula un WhatsApp (puede ser otro número/chip) y <strong>escríbele desde tu número</strong> por audio o texto. Transcribe, entiende, te pide los datos que falten y registra el movimiento tras tu confirmación.</p>
         </div>
       </div>
 
       <p v-if="!wa.hasAiKey" class="wa-warn">
-        ⚠️ Primero configura tu clave de IA (Groq) en <strong>Ajustes → FinancIA</strong>: el asistente la usa para transcribir tus audios.
+        ⚠️ Primero configura tu clave de IA en <strong>Ajustes → FinancIA</strong> (incluye la clave de Groq para transcribir tus audios).
       </p>
 
       <div class="wa-grid">
@@ -1945,12 +2029,37 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
           <div v-if="wa.state === 'connected'" class="wa-howto">
             <strong>¿Cómo lo uso?</strong>
             <ol>
-              <li>Abre tu chat <em>"Mensajes contigo mismo"</em> en WhatsApp.</li>
-              <li><strong>Registra:</strong> audio o texto — <em>"gasté 20 en el súper con Pichincha"</em> → confirmas con <em>SÍ</em>.</li>
+              <li>Agrega tu número en <em>"Números autorizados"</em> (aquí abajo) y escríbele al bot desde tu WhatsApp.</li>
+              <li><strong>Registra:</strong> audio o texto — <em>"gasté 20 en el súper con Pichincha"</em>. Si falta un dato (cuenta, categoría, método), te lo pregunta con una lista → confirmas con <em>SÍ</em>.</li>
               <li><strong>Consulta:</strong> <em>"¿en qué gasto más?"</em>, <em>"dame consejos"</em> → te responde con recomendaciones.</li>
               <li><strong>Comprobante:</strong> envía la foto y la adjunta al movimiento.</li>
             </ol>
           </div>
+
+          <!-- Números autorizados -->
+          <div v-if="wa.state === 'connected'" class="wa-nums">
+            <div class="wa-nums-head">
+              <strong><Users :size="15" /> Números autorizados</strong>
+              <small>Solo estos números pueden escribirle al bot. El primero recibe los avisos proactivos.</small>
+            </div>
+            <div class="wa-num-add">
+              <input v-model="waNumberInput" @keyup.enter="waAddNumber" inputmode="numeric" maxlength="20"
+                     placeholder="Número con código de país, ej. 593986308514" />
+              <button type="button" @click="waAddNumber"><Plus :size="15" /> Agregar</button>
+            </div>
+            <ul v-if="wa.allowedNumbers.length" class="wa-num-list">
+              <li v-for="(n, i) in wa.allowedNumbers" :key="n">
+                <span>{{ fmtWaNumber(n) }}<em v-if="i === 0"> · principal</em></span>
+                <button type="button" class="wa-num-del" @click="waRemoveNumber(n)" title="Quitar"><X :size="14" /></button>
+              </li>
+            </ul>
+            <small v-else class="wa-num-empty">Aún no agregas números. Si no agregas ninguno, solo funcionará tu propio chat.</small>
+            <label class="wa-selfchat">
+              <input type="checkbox" :checked="wa.allowSelfChat" @change="waSetSelfChat(($event.target as HTMLInputElement).checked)" />
+              <span>También atender mi propio chat ("nota para mí")</span>
+            </label>
+          </div>
+
           <label v-if="wa.state === 'connected'" class="wa-coach" :class="{ on: wa.coachEnabled }">
             <span class="wa-coach-text">
               <strong>📊 Avisos proactivos de gasto</strong>
@@ -2832,6 +2941,22 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .wa-actions .spin { animation: financia-spin 1s linear infinite; }
 .wa-howto { font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; }
 .wa-howto strong { color: #0f172a; } .wa-howto ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+/* Números autorizados */
+.wa-nums { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.wa-nums-head strong { display: flex; align-items: center; gap: 6px; font-size: 13.5px; color: #0f172a; }
+.wa-nums-head small { display: block; font-size: 12px; color: #94a3b8; margin-top: 2px; }
+.wa-num-add { display: flex; gap: 8px; }
+.wa-num-add input { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }
+.wa-num-add button { display: inline-flex; align-items: center; gap: 4px; padding: 8px 12px; border: none; border-radius: 8px; background: #16a34a; color: #fff; font-weight: 600; font-size: 13px; cursor: pointer; }
+.wa-num-add button:hover { background: #15803d; }
+.wa-num-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wa-num-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; font-size: 13px; color: #0f172a; }
+.wa-num-list li em { font-style: normal; color: #16a34a; font-weight: 600; font-size: 12px; }
+.wa-num-del { display: inline-flex; border: none; background: transparent; color: #94a3b8; cursor: pointer; padding: 2px; border-radius: 6px; }
+.wa-num-del:hover { color: #dc2626; background: #fee2e2; }
+.wa-num-empty { font-size: 12.5px; color: #94a3b8; }
+.wa-selfchat { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #475569; cursor: pointer; }
+.wa-selfchat input { width: 15px; height: 15px; }
 /* Toggle "Avisos proactivos" (interruptor tipo switch) */
 .wa-coach {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;

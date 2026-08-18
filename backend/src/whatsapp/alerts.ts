@@ -8,7 +8,7 @@ import { getTenantPrisma } from '../lib/tenantPrisma';
 import { getStatus, sendToOwner } from './gateway';
 import { proactiveCoach } from './assistant';
 
-const COACH_MIN_INTERVAL = 20 * 60 * 60 * 1000; // ~20 h entre avisos
+const COACH_MIN_INTERVAL = 24 * 60 * 60 * 1000; // ~1 día entre avisos proactivos
 
 export async function runCoachScan(): Promise<void> {
   try {

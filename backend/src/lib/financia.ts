@@ -1,6 +1,7 @@
 import { PrismaClient, Prisma } from '.prisma/tenant';
 import { logger } from './logger';
 import { accountBelongsToDebitCard } from './debitCard';
+import { getBrainCreds, chatComplete, type BrainCreds } from '../whatsapp/llm';
 
 type TenantPrisma = PrismaClient;
 
@@ -102,8 +103,6 @@ export async function buildFinancialSnapshot(prisma: TenantPrisma, userId: numbe
   return { snapshot, readable: lines.join('\n') };
 }
 
-const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
-
 const SYSTEM_PROMPT = `Eres "FinancIA", una asesora financiera experta integrada en un sistema de finanzas para empresas y personas en Ecuador (moneda USD, IVA 15%).
 Analizas los datos financieros reales que te entregan y respondes SIEMPRE en español, de forma clara, concreta y accionable.
 Tu objetivo: detectar lo importante (riesgos, oportunidades, fugas de dinero, presupuestos excedidos, deudas próximas a vencer, uso de tarjetas, liquidez) y dar recomendaciones priorizadas.
@@ -114,10 +113,9 @@ Formato de respuesta en Markdown:
 4. **Alertas** (solo si hay riesgos: deudas por vencer, saldos negativos, presupuestos excedidos, sobreuso de tarjeta).
 No inventes datos que no estén en la información provista. Si faltan datos, dilo brevemente. Sé conciso.`;
 
-/** Llama a Groq (API compatible con OpenAI) y devuelve el texto del análisis. */
+/** Genera el informe de FinancIA con el proveedor configurado (Groq/OpenRouter). */
 export async function callFinancIA(
-  apiKey: string,
-  model: string,
+  creds: BrainCreds,
   readable: string,
   question?: string
 ): Promise<string> {
@@ -125,30 +123,12 @@ export async function callFinancIA(
     ? `Datos financieros actuales:\n${readable}\n\nPregunta específica del usuario: ${question.trim()}`
     : `Analiza estos datos financieros y entrega tu informe:\n${readable}`;
 
-  const res = await fetch(GROQ_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0.4,
-      max_tokens: 1200,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent }
-      ]
-    })
+  const content = await chatComplete(creds, {
+    system: SYSTEM_PROMPT, user: userContent, temperature: 0.4, maxTokens: 1200
   });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    logger.error({ status: res.status, text: text.slice(0, 500) }, 'Groq API error');
-    if (res.status === 401) throw Object.assign(new Error('Clave de API de Groq inválida o expirada.'), { status: 400 });
-    if (res.status === 429) throw Object.assign(new Error('Groq: límite de uso alcanzado. Intenta más tarde.'), { status: 429 });
-    throw Object.assign(new Error('No se pudo obtener el análisis de FinancIA.'), { status: 502 });
-  }
-
-  const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const content = data.choices?.[0]?.message?.content?.trim();
   if (!content) throw Object.assign(new Error('FinancIA no devolvió respuesta.'), { status: 502 });
   return content;
 }
+
+// Re-export para que ai.routes.ts pueda construir las credenciales del cerebro.
+export { getBrainCreds };

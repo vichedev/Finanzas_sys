@@ -1,10 +1,21 @@
 import { http } from './http';
 
 export interface AiConfig {
-  provider: string;
+  provider: string;          // groq | openrouter
   model: string;
+  baseUrl: string;
   enabled: boolean;
-  hasKey: boolean;
+  hasKey: boolean;           // clave del "cerebro" (análisis/parsing)
+  hasTranscribeKey: boolean; // clave de Groq para transcribir audio (Whisper)
+}
+
+export interface AiConfigPayload {
+  provider?: string;
+  apiKey?: string;           // clave del cerebro
+  transcribeApiKey?: string; // clave de Groq para audio
+  baseUrl?: string;
+  model?: string;
+  enabled?: boolean;
 }
 
 export interface AnalyzeResult {
@@ -18,7 +29,7 @@ export const aiApi = {
     const { data } = await http.get<AiConfig>('/ai/config');
     return data;
   },
-  async saveConfig(payload: { apiKey?: string; model?: string; enabled?: boolean }): Promise<AiConfig> {
+  async saveConfig(payload: AiConfigPayload): Promise<AiConfig> {
     const { data } = await http.put<AiConfig>('/ai/config', payload);
     return data;
   },

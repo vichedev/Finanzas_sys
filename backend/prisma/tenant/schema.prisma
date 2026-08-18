@@ -494,12 +494,14 @@ model Budget {
 }
 
 model AiConfig {
-  id          Int      @id @default(1) // singleton por empresa
-  provider    String   @default("groq")
-  apiKeyEnc   String?  // clave de API cifrada (AES-256-GCM)
-  model       String   @default("openai/gpt-oss-120b")
-  enabled     Boolean  @default(false)
-  updatedAt   DateTime @updatedAt @default(now())
+  id                  Int      @id @default(1) // singleton por empresa
+  provider            String   @default("groq")  // groq | openrouter (API compatible con OpenAI)
+  apiKeyEnc           String?  // clave del "cerebro" (análisis/parsing) cifrada (AES-256-GCM)
+  model               String   @default("openai/gpt-oss-120b")
+  baseUrl             String?  // URL base del proveedor (si null se usa la del proveedor)
+  transcribeApiKeyEnc String?  // clave de Groq para transcribir audio (Whisper); si el cerebro no es Groq
+  enabled             Boolean  @default(false)
+  updatedAt           DateTime @updatedAt @default(now())
 }
 
 // Asistente por WhatsApp (Baileys). Singleton por empresa, como AiConfig.
@@ -507,13 +509,15 @@ model AiConfig {
 // esto solo lleva el estado configurable: a qué usuario se imputan los
 // movimientos, si está activo, y el número vinculado (para mostrar).
 model WhatsappConfig {
-  id            Int       @id @default(1) // singleton por empresa
-  enabled       Boolean   @default(false) // procesar mensajes entrantes
-  userId        Int?                       // User local al que se imputan los movimientos (sin FK: singleton)
-  linkedNumber  String?                    // número vinculado (E.164) para mostrar
-  coachEnabled  Boolean   @default(true)   // enviar avisos proactivos de gastos
-  lastCoachAt   DateTime?                  // último aviso proactivo enviado (para no spamear)
-  updatedAt     DateTime  @updatedAt @default(now())
+  id             Int       @id @default(1) // singleton por empresa
+  enabled        Boolean   @default(false) // procesar mensajes entrantes
+  userId         Int?                       // User local al que se imputan los movimientos (sin FK: singleton)
+  linkedNumber   String?                    // número vinculado del bot (E.164) para mostrar
+  allowedNumbers String?                    // números autorizados a escribir al bot (CSV de dígitos); 1º = principal (recibe avisos)
+  allowSelfChat  Boolean   @default(true)   // procesar también la "nota para mí" (chat consigo mismo)
+  coachEnabled   Boolean   @default(true)   // enviar avisos proactivos de gastos
+  lastCoachAt    DateTime?                  // último aviso proactivo enviado (para no spamear)
+  updatedAt      DateTime  @updatedAt @default(now())
 }
 
 model AuditLog {
