@@ -254,12 +254,22 @@ async function handleMessage(m: any, downloadMediaMessage: any, waLogger: any, u
 
   // Autorizados: números en la lista blanca (comparados por sus últimos dígitos).
   // Se prueban varias formas del remitente por si WhatsApp usa @lid en vez del número.
-  const senderCandidates = [jid, m.key.senderPn, m.key.participant, m.key.participantPn].filter(Boolean).map((c: string) => jidNumber(c));
+  const rawCandidates: string[] = [jid, m.key.senderPn, m.key.participant, m.key.participantPn, m.key.remoteJidAlt, m.key.participantAlt, m.participant].filter(Boolean);
+  // Si el chat viene como @lid, intenta mapearlo al número real (PN) vía Baileys.
+  if (jid.endsWith('@lid')) {
+    try {
+      const pn = sock?.signalRepository?.lidMapping?.getPNForLID?.(jid);
+      const resolved = pn && typeof pn.then === 'function' ? await pn : pn;
+      if (resolved) rawCandidates.push(resolved);
+    } catch { /* mapping no disponible */ }
+  }
+  const senderCandidates = rawCandidates.map((c: string) => jidNumber(c));
   const isAllowed = allowedNumbers.some((n) => senderCandidates.some((c) => sameNumber(n, c)));
 
   const accepted = (allowSelfChat && isSelfChat) || isAllowed;
   if (!accepted) {
-    logger.debug({ jid, senderCandidates }, 'wa: mensaje ignorado (no autorizado)');
+    // Info (no debug) para poder diagnosticar por qué no responde a un número externo.
+    logger.info({ jid, fromMe: m.key.fromMe, senderCandidates, allowedNumbers }, 'wa: mensaje ignorado (remitente no autorizado)');
     return;
   }
 
