@@ -211,6 +211,10 @@ async function startSocket(): Promise<void> {
   });
 
   sock.ev.on('messages.upsert', async (up: any) => {
+    // Log de llegada (diagnóstico): confirma que CUALQUIER mensaje llega a Baileys,
+    // con su remitente y tipo, antes de cualquier filtro de autorización.
+    const jids = (up.messages || []).map((mm: any) => mm?.key?.remoteJid).filter(Boolean);
+    logger.info({ type: up.type, count: (up.messages || []).length, jids }, 'wa: upsert recibido');
     // En "nota para mí" los mensajes propios pueden llegar como 'notify' o 'append';
     // no filtramos por tipo, nos apoyamos en el guard de antigüedad + sentIds.
     for (const m of up.messages || []) {
