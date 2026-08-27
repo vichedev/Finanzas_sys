@@ -1935,6 +1935,9 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
               <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> aquí.
               {{ aiCfg.hasTranscribeKey ? 'Deja vacío para conservar la actual.' : '' }}
             </small>
+            <small class="ai-warn" v-if="!aiCfg.hasTranscribeKey && !aiTranscribeKeyInput.trim()">
+              ⚠️ Falta esta clave: el bot de WhatsApp <strong>no podrá transcribir audios</strong> hasta que la agregues.
+            </small>
           </div>
           <div class="field">
             <label>Modelo</label>
@@ -2900,6 +2903,7 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .financia-config, .financia-analysis { display: flex; flex-direction: column; gap: 12px; }
 .financia-config h4, .financia-analysis h4 { margin: 0 0 4px; font-size: 15px; }
 .financia-config .field, .financia-analysis .field { display: flex; flex-direction: column; gap: 4px; }
+.ai-warn { color: #b45309; font-size: 12px; background: #fffbeb; border: 1px solid #fde68a; padding: 6px 8px; border-radius: 6px; }
 .financia-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .financia-toggle input { width: 16px; height: 16px; }
 .financia-actions { display: flex; gap: 8px; }

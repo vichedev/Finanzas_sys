@@ -52,12 +52,14 @@ aiRouter.put('/config', async (req, res) => {
   if (body.apiKey) data.apiKeyEnc = encryptString(body.apiKey);
   if (body.transcribeApiKey) data.transcribeApiKeyEnc = encryptString(body.transcribeApiKey);
 
-  // Migración suave: si el usuario cambia de Groq a otro proveedor y no había clave
-  // de transcripción, conserva la clave de Groq actual para que el audio siga
-  // funcionando (antes de que la nueva clave del cerebro sobrescriba apiKeyEnc).
-  if (body.provider && body.provider !== 'groq' && resolveProvider(prev?.provider) === 'groq'
-      && prev?.apiKeyEnc && !prev?.transcribeApiKeyEnc && !body.transcribeApiKey) {
-    data.transcribeApiKeyEnc = prev.apiKeyEnc;
+  // SOLO en la transición Groq → otro proveedor: limpia cualquier clave de
+  // transcripción previa (salvo que se envíe una nueva ahora). Así el usuario
+  // ingresa explícitamente la clave de Groq del audio y nunca queda una clave
+  // vieja/inválida "fantasma" que confunda (antes copiaba una que daba 401).
+  // En guardados posteriores (ya en otro proveedor) NO se toca la clave existente.
+  const switchingAwayFromGroq = body.provider && body.provider !== 'groq' && resolveProvider(prev?.provider) === 'groq';
+  if (switchingAwayFromGroq && !body.transcribeApiKey) {
+    data.transcribeApiKeyEnc = null;
   }
 
   const cfg = await req.tenantPrisma!.aiConfig.upsert({
