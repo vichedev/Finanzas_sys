@@ -131,7 +131,8 @@ Devuelve SOLO JSON: {"kind":"RECEIVABLE|PAYABLE|LOAN|null","amount":number|null,
 - kind: RECEIVABLE si a ti te deben o vas a COBRAR ("me debe", "cobrar a", "presté"); PAYABLE si TÚ debes o vas a pagar ("le debo", "tengo que pagar"); LOAN si es un préstamo formal con cuotas. Si no está claro, null.
 - amount: número en USD. counterparty: nombre de la persona/institución. dueDate: fecha de cobro/pago si la dice (resuelve "el 5", "5 de septiembre"). description: concepto breve.`,
     precarga: (data, p) => {
-      if (['RECEIVABLE', 'PAYABLE', 'LOAN'].includes(p.kind)) data.kind = p.kind;
+      // El tipo (por cobrar/pagar) NO se precarga: siempre se pregunta, para no
+      // guardarlo mal (la IA a veces confunde cobro con pago). El usuario lo elige.
       if (Number(p.amount) > 0) data.amount = Number(p.amount);
       if (p.counterparty) data.counterparty = String(p.counterparty).trim();
       if (p.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(p.dueDate)) { data.dueDate = p.dueDate; data._dueSet = true; }

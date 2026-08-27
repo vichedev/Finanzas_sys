@@ -72,15 +72,20 @@ debtsRouter.put('/:id', async (req, res) => {
   if (!existing || existing.userId !== req.tenantUserId!) {
     return res.status(404).json({ message: 'Recurso no encontrado' });
   }
-  // kind es inmutable: cambiarlo desincroniza balances con movements asociados
-  if (body.kind !== undefined && body.kind !== existing.kind) {
-    return res.status(400).json({ message: 'No se puede cambiar el tipo de la deuda. Crea una nueva.' });
+  // El tipo (kind) solo se puede cambiar si la deuda NO tiene pagos/movimientos
+  // asociados (cambiarlo con movimientos desincroniza los balances).
+  const changingKind = body.kind !== undefined && body.kind !== existing.kind;
+  if (changingKind) {
+    const linked = await req.tenantPrisma!.movement.count({ where: { debtId: id } });
+    if (linked > 0) {
+      return res.status(400).json({ message: 'No se puede cambiar el tipo: la deuda ya tiene pagos registrados. Crea una nueva.' });
+    }
   }
 
   await assertAccount(req.tenantPrisma!, req.tenantUserId!, body.accountId);
 
   const data: Record<string, unknown> = { ...body };
-  delete data.kind;
+  if (!changingKind) delete data.kind; // si no cambia, no lo tocamos
 
   const row = await req.tenantPrisma!.debt.update({
     where: { id, userId: req.tenantUserId! },

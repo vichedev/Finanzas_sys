@@ -208,8 +208,9 @@ async function save() {
     resetForm();
     editingId.value = null;
     await load();
-  } catch {
-    toast.error('No se pudo guardar el registro.');
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    toast.error(err?.response?.data?.message || 'No se pudo guardar el registro.');
   } finally {
     saving.value = false;
   }
