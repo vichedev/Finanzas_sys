@@ -21,11 +21,19 @@ export async function transcribeAudio(apiKey: string, buffer: Buffer, mimetype: 
   form.append('language', 'es');
   form.append('response_format', 'json');
 
-  const res = await fetch(GROQ_WHISPER_URL, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form
-  });
+  let res: Response;
+  try {
+    res = await fetch(GROQ_WHISPER_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form
+    });
+  } catch (e: any) {
+    // "fetch failed" oculta la causa real (DNS/TLS/timeout/conexión) en e.cause.
+    const cause = e?.cause?.code || e?.cause?.message || e?.message;
+    logger.error({ err: e?.message, cause, causeCode: e?.cause?.code, bytes: buffer?.length, mimetype }, 'Groq Whisper fetch failed');
+    throw Object.assign(new Error(`No pude conectar con Groq para transcribir (${cause || 'fetch failed'}). Intenta de nuevo.`), { status: 502 });
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
