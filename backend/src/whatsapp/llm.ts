@@ -69,8 +69,11 @@ export async function getTranscribeCreds(prisma: any): Promise<{ apiKey: string 
   if (!cfg) return null;
   const provider = resolveProvider(cfg.provider);
   try {
-    if (cfg.transcribeApiKeyEnc) return { apiKey: decryptString(cfg.transcribeApiKeyEnc) };
+    // Con Groq como cerebro, la MISMA clave (apiKeyEnc) transcribe: se usa esa y se
+    // ignora cualquier transcribeApiKeyEnc viejo (evita usar una clave obsoleta).
     if (provider === 'groq' && cfg.apiKeyEnc) return { apiKey: decryptString(cfg.apiKeyEnc) };
+    // Con otro cerebro, se usa la clave de Groq dedicada a transcripción.
+    if (cfg.transcribeApiKeyEnc) return { apiKey: decryptString(cfg.transcribeApiKeyEnc) };
   } catch { /* clave corrupta */ }
   return null;
 }

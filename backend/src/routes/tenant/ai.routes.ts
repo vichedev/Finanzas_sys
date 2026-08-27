@@ -61,6 +61,9 @@ aiRouter.put('/config', async (req, res) => {
   if (switchingAwayFromGroq && !body.transcribeApiKey) {
     data.transcribeApiKeyEnc = null;
   }
+  // Con Groq como cerebro no se usa una clave de transcripción aparte (la misma
+  // clave transcribe): se limpia para no dejar una clave vieja/inválida guardada.
+  if (body.provider === 'groq') data.transcribeApiKeyEnc = null;
 
   const cfg = await req.tenantPrisma!.aiConfig.upsert({
     where: { id: 1 },
