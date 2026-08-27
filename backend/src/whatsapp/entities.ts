@@ -137,14 +137,14 @@ Devuelve SOLO JSON: {"kind":"RECEIVABLE|PAYABLE|LOAN|null","amount":number|null,
     },
     slots: (data) => {
       const s: Slot[] = [];
-      if (!(Number(data.amount) > 0)) s.push({ key: 'amount', ask: '💵 ¿De cuánto es? (solo el número)', type: 'num' });
-      if (!data.counterparty) s.push({ key: 'counterparty', ask: '👤 ¿Con quién? (nombre de la persona o institución)', type: 'text' });
-      if (!data.kind) s.push({ key: 'kind', ask: '¿Es un cobro o un pago?', type: 'choice', options: [
+      if (!data.kind) s.push({ key: 'kind', ask: '*Deuda o cobro* — elige el tipo:', type: 'choice', options: [
         { label: '💰 Por cobrar (me deben)', value: 'RECEIVABLE' },
         { label: '💸 Por pagar (yo debo)', value: 'PAYABLE' },
         { label: '🏦 Préstamo', value: 'LOAN' }
       ] });
-      if (!data._dueSet) s.push({ key: 'dueDate', ask: '📅 ¿Para qué fecha? (ej. 5/09/2026, o escribe *sin fecha*)', type: 'date', optional: true });
+      if (!(Number(data.amount) > 0)) s.push({ key: 'amount', ask: '💵 Escribe el *monto* (solo números, ej: *500* o *24.50*)', type: 'num' });
+      if (!data.counterparty) s.push({ key: 'counterparty', ask: '👤 Escribe el *nombre* de la persona o institución (ej: *Juan Pérez*)', type: 'text' });
+      if (!data._dueSet) s.push({ key: 'dueDate', ask: '📅 Escribe la *fecha* de cobro/pago (ej: *5/09/2026*) o escribe *sin fecha*', type: 'date', optional: true });
       return s;
     },
     summary: (data) => {
@@ -192,18 +192,18 @@ Categorías: ${JSON.stringify(catList(ctx.categories))}`,
     },
     slots: (data) => {
       const s: Slot[] = [];
-      if (!data.type) s.push({ key: 'type', ask: '¿Es un ingreso o un gasto recurrente?', type: 'choice', options: [
+      if (!data.type) s.push({ key: 'type', ask: '*Recurrente* — ¿es ingreso o gasto?', type: 'choice', options: [
         { label: '💰 Ingreso (cobro)', value: 'INCOME' }, { label: '💸 Gasto (pago)', value: 'EXPENSE' }
       ] });
-      if (!(Number(data.amount) > 0)) s.push({ key: 'amount', ask: '💵 ¿De cuánto? (solo el número)', type: 'num' });
-      if (!data.name || String(data.name).length < 2) s.push({ key: 'name', ask: '📝 ¿Qué nombre/concepto? (ej. Arriendo, Netflix, Sueldo)', type: 'text' });
+      if (!(Number(data.amount) > 0)) s.push({ key: 'amount', ask: '💵 Escribe el *monto* (solo números, ej: *300*)', type: 'num' });
+      if (!data.name || String(data.name).length < 2) s.push({ key: 'name', ask: '📝 Escribe el *nombre/concepto* (ej: *Arriendo*, *Netflix*, *Sueldo*)', type: 'text' });
       if (!data.frequency) s.push({ key: 'frequency', ask: '🔁 ¿Cada cuánto se repite?', type: 'choice', options: [
         { label: 'Mensual', value: 'MONTHLY' }, { label: 'Semanal', value: 'WEEKLY' }, { label: 'Diario', value: 'DAILY' }, { label: 'Anual', value: 'YEARLY' }
       ] });
       if (!data.paymentMethod) s.push({ key: 'paymentMethod', ask: '💳 ¿Método de pago habitual?', type: 'choice', options: [
         { label: '💵 Efectivo', value: 'CASH' }, { label: '🏦 Transferencia', value: 'BANK_TRANSFER' }, { label: '💳 T. Débito', value: 'DEBIT_CARD' }, { label: '💳 T. Crédito', value: 'CREDIT_CARD' }, { label: '👛 Billetera', value: 'WALLET' }, { label: '• Otro', value: 'OTHER' }
       ] });
-      if (!data._nextSet) s.push({ key: 'nextRunDate', ask: '📅 ¿Fecha máxima de pago/cobro? (ej. 5/09/2026)', type: 'date' });
+      if (!data._nextSet) s.push({ key: 'nextRunDate', ask: '📅 Escribe la *fecha* del próximo pago/cobro (ej: *5/09/2026*)', type: 'date' });
       return s;
     },
     summary: (data, ctx) => {
@@ -242,8 +242,8 @@ Categorías: ${JSON.stringify(catList(ctx.categories))}`,
     },
     slots: (data, ctx) => {
       const s: Slot[] = [];
-      if (!data.categoryId) s.push({ key: 'categoryId', ask: '🏷️ ¿Para qué *categoría* es el presupuesto?', type: 'choice', options: catList(ctx.categories) });
-      if (!(Number(data.amount) > 0)) s.push({ key: 'amount', ask: '💵 ¿Cuál es el *límite mensual*? (solo el número)', type: 'num' });
+      if (!data.categoryId) s.push({ key: 'categoryId', ask: '📊 *Presupuesto* — elige la *categoría*:', type: 'choice', options: catList(ctx.categories) });
+      if (!(Number(data.amount) > 0)) s.push({ key: 'amount', ask: '💵 Escribe el *límite mensual* (solo números, ej: *400*)', type: 'num' });
       return s;
     },
     summary: (data, ctx) => {
@@ -274,11 +274,11 @@ Devuelve SOLO JSON: {"name":string|null,"type":"CASH|BANK|WALLET|null","initialB
     },
     slots: (data) => {
       const s: Slot[] = [];
-      if (!data.name || String(data.name).length < 2) s.push({ key: 'name', ask: '🏷️ ¿Cómo se llama la cuenta? (ej. Cuenta Pichincha sueldo)', type: 'text' });
-      if (!data.type) s.push({ key: 'type', ask: '¿Qué tipo de cuenta es?', type: 'choice', options: [
+      if (!data.type) s.push({ key: 'type', ask: '🏦 *Nueva cuenta* — ¿qué tipo es?', type: 'choice', options: [
         { label: '🏦 Banco', value: 'BANK' }, { label: '💵 Efectivo', value: 'CASH' }, { label: '👛 Billetera', value: 'WALLET' }
       ] });
-      if (!data._balSet) s.push({ key: 'initialBalance', ask: '💵 ¿Saldo inicial? (0 si empieza vacía)', type: 'num' });
+      if (!data.name || String(data.name).length < 2) s.push({ key: 'name', ask: '🏷️ Escribe el *nombre* de la cuenta (ej: *Cuenta Pichincha sueldo*)', type: 'text' });
+      if (!data._balSet) s.push({ key: 'initialBalance', ask: '💵 Escribe el *saldo inicial* (solo números; *0* si empieza vacía)', type: 'num' });
       return s;
     },
     summary: (data) => {
@@ -338,7 +338,8 @@ async function askOrFinalize(msg: IncomingMessage, spec: Spec, d: EDraft): Promi
 export async function startEntity(prisma: any, msg: IncomingMessage, kind: EntityKind, text: string): Promise<void> {
   const spec = SPECS[kind];
   const ctx = await spec.loadCtx(prisma, msg.userId!);
-  const parsed = await extractEntity(prisma, msg.userId!, kind, text, ctx);
+  // Si viene del menú (sin texto), no gastamos una llamada a la IA: preguntamos todo.
+  const parsed = text.trim().length >= 3 ? await extractEntity(prisma, msg.userId!, kind, text, ctx) : {};
   const data: Record<string, any> = {};
   spec.precarga(data, parsed, ctx);
   const d: EDraft = { kind, data, current: null, awaiting: 'question', userId: msg.userId!, at: Date.now(), ctx };

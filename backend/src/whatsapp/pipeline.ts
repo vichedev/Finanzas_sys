@@ -62,17 +62,28 @@ const AFFIRM = /^\s*(s[ií]|si|dale|ok(ay)?|conf[ií]rmo|correcto|listo|va|h[aá
 const NEGATE = /^\s*(no|nel|nop|cancela(r)?|olv[ií]dalo|❌)\b/i;
 const HELPREQ = /^\s*(ayuda|help|men[uú]|c[oó]mo funciona|hola|buenas|\?)\s*$/i;
 
-const HELP = `👋 Soy tu asistente de finanzas. Mándame un *audio* o *texto* y yo detecto qué quieres y lo guardo en su sección:
+const HELP = `👋 *Asistente de finanzas* — responde con el *número* de lo que quieres hacer (o descríbelo por audio/texto):
 
-• 💸 *Movimiento*: "gasté 20 en el súper", "ingreso de 800", "transferí 50 de Pichincha a Guayaquil", "retiré 100"
-• 🤝 *Deuda / cobro*: "recuérdame cobrar 500 a Juan el 5", "le debo 200 a Pedro"
-• 🔁 *Recurrente*: "todos los meses pago 300 de arriendo"
-• 📊 *Presupuesto*: "ponme un límite de 400 en comida"
-• 🏦 *Cuenta*: "crea una cuenta de ahorros con 500"
-• 🧠 *Consulta*: "¿en qué gasto más?", "dame consejos"
+*1️⃣ Registrar movimiento* 💸
+   _gasto, ingreso, compra, transferencia o retiro_
+*2️⃣ Deuda o cobro* 🤝
+   _me deben / yo debo / cobrar a alguien_
+*3️⃣ Pago o cobro recurrente* 🔁
+   _algo que se repite cada mes/semana_
+*4️⃣ Presupuesto* 📊
+   _límite de gasto por categoría_
+*5️⃣ Crear cuenta* 🏦
+   _efectivo, banco o billetera_
+*6️⃣ Consultar / consejos* 🧠
+   _¿en qué gasto más?, ¿cómo voy?_
 
-*Lo que falte te lo pregunto con una lista* y eliges el número. Al final confirmas con *SÍ*.
-📎 En los movimientos también puedes enviarme la *foto del comprobante*.`;
+Escribe el *número* (ej: *2*) y te voy pidiendo cada dato, uno por uno. 📎 En movimientos puedes enviar la *foto del comprobante*.`;
+
+// Texto de arranque de cada opción del menú: le dice al usuario qué escribir/decir.
+const MENU_PROMPT: Record<string, string> = {
+  '1': '💸 *Registrar movimiento*\nEscribe o di qué pasó, con el *monto*. Ejemplos:\n• _gasté 20 en el súper con Pichincha_\n• _ingreso de 800 de sueldo_\n• _transferí 50 de Pichincha a Guayaquil_\nLo que falte te lo pregunto.',
+  '6': '🧠 *Consulta*\nEscribe o di tu pregunta. Ejemplos:\n• _¿en qué gasto más este mes?_\n• _¿cómo voy con mis gastos?_\n• _dame consejos para ahorrar_'
+};
 
 const METHOD_LABEL: Record<string, string> = { CASH: 'Efectivo', BANK_TRANSFER: 'Transferencia', DEPOSIT: 'Depósito', DEBIT_CARD: 'Tarjeta de débito', CREDIT_CARD: 'Tarjeta de crédito', WALLET: 'Billetera', OTHER: 'Otro' };
 
@@ -166,8 +177,8 @@ function computeNext(d: Draft): Question | null {
 function rawNext(d: Draft): Question | null {
   const p = d.payload;
   const type = p.type as MovType;
-  if (!(Number(p.amount) > 0)) return { key: 'amount', text: '💵 ¿Cuál es el *monto*? (solo el número, ej. 20)', free: 'amount' };
-  if (!p.description || String(p.description).trim().length < 2) return { key: 'description', text: '📝 ¿Qué *detalle* le pongo? (ej. Supermercado, Sueldo)', free: 'description' };
+  if (!(Number(p.amount) > 0)) return { key: 'amount', text: '💵 Escribe el *monto* (solo números, ej: *20* o *24.50*)', free: 'amount' };
+  if (!p.description || String(p.description).trim().length < 2) return { key: 'description', text: '📝 Escribe el *detalle* (ej: *Supermercado*, *Gasolina*, *Sueldo*)', free: 'description' };
 
   if (type === 'TRANSFER') {
     if (!p.accountId) return accountQ('fromAccount', '🔁 ¿De qué cuenta *sale* el dinero?', d.ctx.accounts, d.bankHint, 'accountId');
@@ -351,6 +362,17 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
 
   // Instrucción nueva: descarta cualquier borrador de entidad colgado.
   clearEntityDraft(msg.chatId);
+
+  // Selección del MENÚ: un número suelto 1-6 (sin borrador activo) abre esa opción.
+  const pick = text.trim().match(/^([1-6])$/);
+  if (pick) {
+    const n = pick[1];
+    if (n === '1' || n === '6') { await msg.reply(MENU_PROMPT[n]); return; }
+    const kind = { '2': 'debt', '3': 'recurring', '4': 'budget', '5': 'account' }[n] as 'debt' | 'recurring' | 'budget' | 'account';
+    drafts.delete(msg.chatId);
+    await startEntity(prisma, msg, kind, '');
+    return;
+  }
 
   // Enrutador por intención: decide QUÉ quiere el usuario y a qué sección va.
   const target = await classifyTarget(prisma, userId, text);
