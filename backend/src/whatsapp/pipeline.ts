@@ -159,6 +159,14 @@ function cardQ(cards: any[]): Question { return { key: 'card', text: '💳 ¿Cu�
 function walletQ(wallets: any[]): Question { return { key: 'wallet', text: '👛 ¿Cuál *billetera*?', options: wallets.map((w: any) => ({ label: `👛 ${w.name}`, patch: { walletId: w.id } })) }; }
 function categoryQ(cats: any[]): Question { return { key: 'category', text: '🏷️ ¿Qué *categoría*?', options: [...cats.map((c: any) => ({ label: c.name, patch: { categoryId: c.id } })), { label: 'Sin categoría', patch: { categoryId: null } }], resolveKey: 'category' }; }
 
+/** Ajusta campos derivados al elegir el tipo de movimiento (cuando se pregunta el tipo). */
+function applyTypeDefaults(d: Draft): void {
+  const t = d.payload.type as MovType;
+  d.payload.expenseKind = t === 'EXPENSE' ? 'VARIABLE' : null;
+  d.payload.isCredit = false;
+  if (t === 'TRANSFER' || t === 'WITHDRAWAL') { d.payload.paymentMethod = 'BANK_TRANSFER'; d.resolved.add('method'); }
+}
+
 /** Devuelve la siguiente pregunta pendiente, auto-resolviendo las que tienen una sola opción. */
 function computeNext(d: Draft): Question | null {
   for (let i = 0; i < 25; i++) {
@@ -177,6 +185,13 @@ function computeNext(d: Draft): Question | null {
 function rawNext(d: Draft): Question | null {
   const p = d.payload;
   const type = p.type as MovType;
+  if (!type) return { key: 'movtype', text: '¿Qué *tipo de movimiento* quieres registrar?', options: [
+    { label: '💸 Gasto', patch: { type: 'EXPENSE' } },
+    { label: '💰 Ingreso', patch: { type: 'INCOME' } },
+    { label: '🛍️ Compra', patch: { type: 'PURCHASE' } },
+    { label: '🔁 Transferencia', patch: { type: 'TRANSFER' } },
+    { label: '🏧 Retiro', patch: { type: 'WITHDRAWAL' } }
+  ] };
   if (!(Number(p.amount) > 0)) return { key: 'amount', text: '💵 Escribe el *monto* (solo números, ej: *20* o *24.50*)', free: 'amount' };
   if (!p.description || String(p.description).trim().length < 2) return { key: 'description', text: '📝 Escribe el *detalle* (ej: *Supermercado*, *Gasolina*, *Sueldo*)', free: 'description' };
 
@@ -345,6 +360,7 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
         if (!opt) { await msg.reply('🤔 No te entendí.\n' + renderQuestion(q)); return; }
         Object.assign(draft.payload, opt.patch);
         if (q.resolveKey) draft.resolved.add(q.resolveKey);
+        if (q.key === 'movtype') applyTypeDefaults(draft);
       }
       draft.at = Date.now();
       await advance(prisma, msg, draft);
@@ -385,12 +401,13 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
     return;
   }
 
-  // target === 'movement' (por defecto): flujo de movimientos existente.
+  // target === 'movement' (por defecto): movimiento o consulta (lo decide el parser).
   const parsed = await parseMovement(prisma, userId, text);
   if ('error' in parsed) { await msg.reply(`❌ ${parsed.error}`); return; }
   if (parsed.intent === 'query') { await msg.reply('🧠 Analizando tus finanzas…'); await msg.reply(await answerQuestion(prisma, userId, text)); return; }
-  if (!parsed.type) { await msg.reply(`🤔 ${parsed.clarification || 'No entendí qué quieres registrar.'}\n\n${HELP}`); return; }
 
+  // Aunque falte el tipo o el monto, ARRANCAMOS el flujo: el bot pide lo que falte
+  // (tipo → monto → detalle → método → cuenta/tarjeta → categoría) paso a paso.
   const built = await buildRegister(prisma, userId, parsed);
   if ('ask' in built) { await msg.reply(built.ask); return; }
   built.pendingImages = image ? [image] : [];

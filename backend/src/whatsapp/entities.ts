@@ -48,16 +48,18 @@ function extractJson(raw: string): any | null {
 }
 
 // ---- Clasificador de intención ----
-const CLASSIFY_SYSTEM = `Clasifica el mensaje del usuario (español, Ecuador) según lo que quiere hacer en su app de finanzas.
-Responde SOLO un JSON: {"target":"..."}. Valores posibles de target:
-- "movement": registrar algo que YA ocurrió: un gasto, ingreso, compra, transferencia entre cuentas, o retiro. Ej: "gasté 20 en el súper", "ingreso de 800", "compré una laptop", "transferí 50", "retiré 100".
-- "debt": una DEUDA o COBRO puntual con una persona: me deben / debo / presté / me prestaron / "cobrar a X" / "pagarle a X" / recordatorio de cobro o pago. Ej: "recuérdame cobrar 500 a Juan el 5", "le debo 200 a Pedro".
-- "recurring": un pago o cobro que se REPITE periódicamente. Ej: "todos los meses pago 300 de arriendo", "cada mes cobro 800 de sueldo", "suscripción de Netflix 15 mensual".
-- "budget": un PRESUPUESTO o límite de gasto por categoría. Ej: "ponme un presupuesto de 400 en comida", "límite de 200 en transporte".
-- "account": crear una CUENTA, billetera o efectivo nuevo. Ej: "crea una cuenta de ahorros en Pichincha", "agrega una billetera".
-- "card": crear una TARJETA de crédito o débito. Ej: "agrega una tarjeta Visa".
-- "query": una pregunta, consulta, análisis o consejo. Ej: "¿cuánto gasté?", "¿en qué gasto más?", "dame consejos".
-Elige el MÁS probable. Si dudas entre movement y debt: si es una transacción ya hecha con dinero propio -> movement; si involucra deber/cobrar a una persona -> debt.`;
+// Solo detecta ENTIDADES específicas (deuda/recurrente/presupuesto/cuenta/tarjeta).
+// Todo lo demás -> "movement", que lo resuelve el parser de movimientos (que sabe
+// distinguir un movimiento real de una consulta). Es conservador: ante la duda, "movement".
+const CLASSIFY_SYSTEM = `Eres un enrutador. Decide si el mensaje del usuario (español, Ecuador) pide crear una de estas cosas ESPECÍFICAS. Responde SOLO JSON {"target":"..."}:
+- "debt": una deuda o cobro CON UNA PERSONA/INSTITUCIÓN: "me deben", "le debo", "presté a", "me prestaron", "cobrar a X", "pagarle a X", recordatorio de cobro/pago a alguien.
+- "recurring": un pago/cobro que se REPITE en el tiempo: "todos los meses", "cada mes", "cada semana", "mensualmente", suscripción, sueldo mensual.
+- "budget": un PRESUPUESTO o límite de gasto por categoría: "presupuesto de X en Y", "límite de gasto".
+- "account": crear una CUENTA, billetera o efectivo nuevo: "crea una cuenta", "agrega una billetera".
+- "card": crear una TARJETA: "agrega una tarjeta".
+- "movement": TODO LO DEMÁS. Incluye: registrar un gasto/ingreso/compra/transferencia/retiro (aunque falten datos o pida ayuda, ej. "ayúdame a agregar un gasto", "quiero registrar un ingreso", "un gasto de 20"), Y también preguntas/consultas ("¿cuánto gasté?", "dame consejos").
+Reglas: si NO es claramente debt/recurring/budget/account/card, responde "movement". Ante cualquier duda: "movement".
+Ejemplos: "ayúdame a agregar un gasto"->movement; "gasté 20"->movement; "¿en qué gasto más?"->movement; "le debo 200 a Juan"->debt; "cada mes pago 300 de luz"->recurring; "presupuesto de 400 en comida"->budget; "crea una cuenta de ahorros"->account.`;
 
 export async function classifyTarget(prisma: any, userId: number, text: string): Promise<Target> {
   try {
@@ -66,7 +68,7 @@ export async function classifyTarget(prisma: any, userId: number, text: string):
     const raw = await chatComplete(creds, { system: CLASSIFY_SYSTEM, user: text, jsonMode: true, temperature: 0, maxTokens: 800 });
     const j = extractJson(raw);
     const t = String(j?.target || '').toLowerCase();
-    if (['movement', 'debt', 'recurring', 'budget', 'account', 'card', 'query'].includes(t)) return t as Target;
+    if (['debt', 'recurring', 'budget', 'account', 'card'].includes(t)) return t as Target;
   } catch (e: any) { logger.warn({ e: e?.message }, 'wa: clasificador falló, asumo movement'); }
   return 'movement';
 }
