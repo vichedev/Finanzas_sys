@@ -21,18 +21,24 @@ export async function transcribeAudio(apiKey: string, buffer: Buffer, mimetype: 
   form.append('language', 'es');
   form.append('response_format', 'json');
 
-  let res: Response;
-  try {
-    res = await fetch(GROQ_WHISPER_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: form
-    });
-  } catch (e: any) {
-    // "fetch failed" oculta la causa real (DNS/TLS/timeout/conexión) en e.cause.
-    const cause = e?.cause?.code || e?.cause?.message || e?.message;
-    logger.error({ err: e?.message, cause, causeCode: e?.cause?.code, bytes: buffer?.length, mimetype }, 'Groq Whisper fetch failed');
-    throw Object.assign(new Error(`No pude conectar con Groq para transcribir (${cause || 'fetch failed'}). Intenta de nuevo.`), { status: 502 });
+  // Reintenta ante fallos transitorios (red caída, 5xx). "fetch failed" oculta la
+  // causa real (DNS/TLS/timeout/conexión) en e.cause.
+  let res: Response | null = null;
+  let lastCause = 'fetch failed';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      res = await fetch(GROQ_WHISPER_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form });
+    } catch (e: any) {
+      lastCause = e?.cause?.code || e?.cause?.message || e?.message || 'fetch failed';
+      logger.warn({ attempt, cause: lastCause, bytes: buffer?.length, mimetype }, 'Groq Whisper fetch falló, reintentando');
+      res = null;
+    }
+    if (res && (res.ok || res.status < 500)) break; // ok o error de cliente → no reintentar
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+  }
+  if (!res) {
+    logger.error({ cause: lastCause }, 'Groq Whisper fetch failed');
+    throw Object.assign(new Error(`No pude conectar con Groq para transcribir (${lastCause}). Intenta de nuevo.`), { status: 502 });
   }
 
   if (!res.ok) {

@@ -104,6 +104,31 @@ async function callOnce(baseUrl: string, apiKey: string, model: string, useJson:
   return { status: 200, content: data.choices?.[0]?.message?.content ?? null };
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Llama al proveedor tolerando fallos TRANSITORIOS: captura errores de red
+ * ("fetch failed") y reintenta ante red caída (status 0), 429 y 5xx (saturación).
+ * NO reintenta errores de cliente (400/401/403/404/422), que son deterministas.
+ */
+async function callResilient(baseUrl: string, apiKey: string, model: string, useJson: boolean, opts: ChatOpts): Promise<{ status: number; content: string | null; err?: string }> {
+  let r: { status: number; content: string | null; err?: string } = { status: 0, content: null };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      r = await callOnce(baseUrl, apiKey, model, useJson, opts);
+    } catch (e: any) {
+      const cause = e?.cause?.code || e?.cause?.message || e?.message;
+      r = { status: 0, content: null, err: cause };
+      logger.warn({ attempt, err: cause, model, baseUrl }, 'llm: fallo de red, reintentando');
+    }
+    if (r.content) return r;
+    // Errores de cliente (menos 429): no tiene sentido reintentar.
+    if (r.status >= 400 && r.status < 500 && r.status !== 429) return r;
+    if (attempt < 2) await sleep(600 * (attempt + 1));
+  }
+  return r;
+}
+
 /**
  * Completa un chat con el proveedor configurado, con reintentos tolerantes:
  * 1) modelo configurado con modo JSON (si se pide); 2) sin modo JSON;
@@ -111,14 +136,14 @@ async function callOnce(baseUrl: string, apiKey: string, model: string, useJson:
  */
 export async function chatComplete(creds: BrainCreds, opts: ChatOpts): Promise<string> {
   const groq = PROVIDERS.groq;
-  let r = await callOnce(creds.baseUrl, creds.apiKey, creds.model, !!opts.jsonMode, opts);
+  let r = await callResilient(creds.baseUrl, creds.apiKey, creds.model, !!opts.jsonMode, opts);
   if (r.status === 401 && creds.provider === 'groq') throw Object.assign(new Error('Clave de IA inválida. Revísala en Ajustes → FinancIA.'), { status: 400 });
-  if (!r.content && opts.jsonMode) r = await callOnce(creds.baseUrl, creds.apiKey, creds.model, false, opts);
+  if (!r.content && opts.jsonMode) r = await callResilient(creds.baseUrl, creds.apiKey, creds.model, false, opts);
   // Fallback a Groq si el proveedor no es Groq y tenemos su clave.
   if (!r.content && creds.provider !== 'groq' && creds.groqKey) {
     logger.warn({ status: r.status, err: r.err }, 'llm: proveedor falló, usando Groq de respaldo');
-    r = await callOnce(groq.baseUrl, creds.groqKey, groq.defaultModel, !!opts.jsonMode, opts);
-    if (!r.content && opts.jsonMode) r = await callOnce(groq.baseUrl, creds.groqKey, groq.defaultModel, false, opts);
+    r = await callResilient(groq.baseUrl, creds.groqKey, groq.defaultModel, !!opts.jsonMode, opts);
+    if (!r.content && opts.jsonMode) r = await callResilient(groq.baseUrl, creds.groqKey, groq.defaultModel, false, opts);
   }
   if (r.status === 401) throw Object.assign(new Error('Clave de IA inválida.'), { status: 400 });
   if (r.status === 429) throw Object.assign(new Error('Límite de uso de la IA alcanzado, intenta en un momento.'), { status: 429 });
