@@ -84,6 +84,10 @@ async function callOnce(baseUrl: string, apiKey: string, model: string, useJson:
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` };
   // OpenRouter recomienda estas cabeceras (identifican la app); son inofensivas en otros.
   if (baseUrl.includes('openrouter')) { headers['HTTP-Referer'] = 'https://maat.ec'; headers['X-Title'] = 'MAAT Finanzas'; }
+  // gpt-oss (Groq) es un modelo de RAZONAMIENTO: consume tokens "pensando" y puede
+  // devolver vacío si el presupuesto se agota. Bajamos el esfuerzo de razonamiento
+  // para dejar espacio a la respuesta (evita 'json_validate_failed' con salida vacía).
+  const isGroqGptOss = baseUrl.includes('groq') && /gpt-oss/i.test(model);
   const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     headers,
@@ -91,6 +95,7 @@ async function callOnce(baseUrl: string, apiKey: string, model: string, useJson:
       model,
       temperature: opts.temperature ?? 0.4,
       max_tokens: opts.maxTokens ?? 800,
+      ...(isGroqGptOss ? { reasoning_effort: 'low' } : {}),
       ...(useJson ? { response_format: { type: 'json_object' } } : {}),
       messages: [{ role: 'system', content: opts.system }, { role: 'user', content: opts.user }]
     })

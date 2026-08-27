@@ -33,7 +33,7 @@ export async function answerQuestion(prisma: any, userId: number, question: stri
     const answer = await chatComplete(creds, {
       system: CHAT_SYSTEM,
       user: `Datos financieros actuales:\n${readable}\n\nMensaje del usuario: ${question}`,
-      temperature: 0.5, maxTokens: 500
+      temperature: 0.5, maxTokens: 1000
     });
     return answer || 'No tengo suficiente información para responder eso.';
   } catch (e: any) {
@@ -50,7 +50,7 @@ export async function proactiveCoach(prisma: any, userId: number): Promise<strin
     const msg = await chatComplete(creds, {
       system: COACH_SYSTEM,
       user: `Datos financieros del usuario:\n${readable}`,
-      temperature: 0.5, maxTokens: 400
+      temperature: 0.5, maxTokens: 800
     });
     if (!msg || msg.trim().toUpperCase() === 'NADA') return null;
     return msg;

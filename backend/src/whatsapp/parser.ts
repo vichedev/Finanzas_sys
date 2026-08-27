@@ -102,7 +102,7 @@ ${JSON.stringify(catalogo)}`;
   // fallback a Groq. Extrae el JSON aunque venga con ```json o texto alrededor.
   let raw: string;
   try {
-    raw = await chatComplete(creds, { system, user: text, jsonMode: true, temperature: 0.1, maxTokens: 500 });
+    raw = await chatComplete(creds, { system, user: text, jsonMode: true, temperature: 0.1, maxTokens: 2000 });
   } catch (e: any) {
     return { error: e?.message || 'No pude interpretar el mensaje (falló la IA). Revisa el modelo en Ajustes → FinancIA.' };
   }
