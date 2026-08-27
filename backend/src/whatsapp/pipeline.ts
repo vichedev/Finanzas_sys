@@ -14,6 +14,7 @@ import { getTranscribeCreds } from './llm';
 import { transcribeAudio } from './transcribe';
 import { parseMovement, type ParsedMovement, type MovType } from './parser';
 import { answerQuestion } from './assistant';
+import { classifyTarget, startEntity, continueEntity, clearEntityDraft } from './entities';
 import { createMovement, MOVE_LABEL } from '../routes/tenant/movements.routes';
 import { createNotification } from '../lib/notifications';
 import { optimizeImage } from '../lib/imageOptimize';
@@ -61,16 +62,17 @@ const AFFIRM = /^\s*(s[ií]|si|dale|ok(ay)?|conf[ií]rmo|correcto|listo|va|h[aá
 const NEGATE = /^\s*(no|nel|nop|cancela(r)?|olv[ií]dalo|❌)\b/i;
 const HELPREQ = /^\s*(ayuda|help|men[uú]|c[oó]mo funciona|hola|buenas|\?)\s*$/i;
 
-const HELP = `👋 Soy tu asistente de finanzas. Mándame un *audio* o *texto* con lo que quieras registrar:
+const HELP = `👋 Soy tu asistente de finanzas. Mándame un *audio* o *texto* y yo detecto qué quieres y lo guardo en su sección:
 
-• 💸 *Gasto*: "gasté 20 en el súper"
-• 💰 *Ingreso*: "ingreso de 800 de sueldo"
-• 🛍️ *Compra*: "compré una laptop de 900"
-• 🔁 *Transferencia*: "transferí 50 de Pichincha a Guayaquil"
-• 🏧 *Retiro*: "retiré 100 en efectivo"
+• 💸 *Movimiento*: "gasté 20 en el súper", "ingreso de 800", "transferí 50 de Pichincha a Guayaquil", "retiré 100"
+• 🤝 *Deuda / cobro*: "recuérdame cobrar 500 a Juan el 5", "le debo 200 a Pedro"
+• 🔁 *Recurrente*: "todos los meses pago 300 de arriendo"
+• 📊 *Presupuesto*: "ponme un límite de 400 en comida"
+• 🏦 *Cuenta*: "crea una cuenta de ahorros con 500"
+• 🧠 *Consulta*: "¿en qué gasto más?", "dame consejos"
 
-Voy tomando los datos que me des (monto, detalle, fecha, categoría, quién paga, método). *Lo que falte te lo pregunto con una lista* y eliges el número. Al final confirmas con *SÍ*.
-📎 También puedes enviarme la *foto del comprobante*.`;
+*Lo que falte te lo pregunto con una lista* y eliges el número. Al final confirmas con *SÍ*.
+📎 En los movimientos también puedes enviarme la *foto del comprobante*.`;
 
 const METHOD_LABEL: Record<string, string> = { CASH: 'Efectivo', BANK_TRANSFER: 'Transferencia', DEPOSIT: 'Depósito', DEBIT_CARD: 'Tarjeta de débito', CREDIT_CARD: 'Tarjeta de crédito', WALLET: 'Billetera', OTHER: 'Otro' };
 
@@ -305,6 +307,10 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
 
   const draft = getDraft(msg.chatId);
 
+  // Si hay un flujo de ENTIDAD en curso (deuda/recurrente/presupuesto/cuenta),
+  // la respuesta de texto va ahí (devuelve false si no hay borrador de entidad).
+  if (!fromAudio && text && await continueEntity(prisma, msg, text)) return;
+
   if (image && !text && !fromAudio) { await handleVoucher(prisma, msg, image, draft); return; }
   if (text && HELPREQ.test(text) && !draft) { await msg.reply(HELP); return; }
 
@@ -343,6 +349,21 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
   if (fromAudio) await msg.reply(`📝 Entendí: "${text}"`);
   if (!text) { await msg.reply('📎 Recibí la foto, pero cuéntame primero el movimiento (audio o texto).\n\n' + HELP); return; }
 
+  // Instrucción nueva: descarta cualquier borrador de entidad colgado.
+  clearEntityDraft(msg.chatId);
+
+  // Enrutador por intención: decide QUÉ quiere el usuario y a qué sección va.
+  const target = await classifyTarget(prisma, userId, text);
+
+  if (target === 'query') { await msg.reply('🧠 Analizando tus finanzas…'); await msg.reply(await answerQuestion(prisma, userId, text)); return; }
+  if (target === 'card') { await msg.reply('💳 Para crear una *tarjeta* entra a *Tarjetas* en la app: necesita banco, cupo y fechas de corte/pago. Ahí queda perfecta.'); return; }
+  if (target === 'debt' || target === 'recurring' || target === 'budget' || target === 'account') {
+    drafts.delete(msg.chatId);            // no mezclar con un borrador de movimiento
+    await startEntity(prisma, msg, target, text);
+    return;
+  }
+
+  // target === 'movement' (por defecto): flujo de movimientos existente.
   const parsed = await parseMovement(prisma, userId, text);
   if ('error' in parsed) { await msg.reply(`❌ ${parsed.error}`); return; }
   if (parsed.intent === 'query') { await msg.reply('🧠 Analizando tus finanzas…'); await msg.reply(await answerQuestion(prisma, userId, text)); return; }
@@ -351,6 +372,7 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
   const built = await buildRegister(prisma, userId, parsed);
   if ('ask' in built) { await msg.reply(built.ask); return; }
   built.pendingImages = image ? [image] : [];
+  clearEntityDraft(msg.chatId);           // por si quedó uno de entidad abandonado
   drafts.set(msg.chatId, built);
   await advance(prisma, msg, built);
 }
