@@ -30,7 +30,7 @@ export async function transcribeAudio(apiKey: string, buffer: Buffer, mimetype: 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     logger.error({ status: res.status, text: text.slice(0, 500) }, 'Groq Whisper error');
-    if (res.status === 401) throw Object.assign(new Error('Clave de IA inválida.'), { status: 400 });
+    if (res.status === 401) throw Object.assign(new Error('Clave de Groq (transcripción de audio) inválida. Revísala en Ajustes → FinancIA (debe empezar con gsk_).'), { status: 400 });
     if (res.status === 429) throw Object.assign(new Error('Groq: límite de uso alcanzado.'), { status: 429 });
     throw Object.assign(new Error('No se pudo transcribir el audio.'), { status: 502 });
   }
