@@ -25,7 +25,7 @@ const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s+/g
 
 type Img = { buffer: Buffer; mimetype: string };
 type Patch = Record<string, unknown>;
-interface Option { label: string; patch: Patch }
+interface Option { label: string; patch: Patch; action?: 'showAllCats' }
 interface Question { key: string; text: string; options?: Option[]; free?: 'amount' | 'description'; resolveKey?: string }
 interface Ctx { accounts: any[]; creditCards: any[]; wallets: any[]; categories: any[] }
 interface Draft {
@@ -33,6 +33,8 @@ interface Draft {
   resolved: Set<string>;           // slots con valor "nulo válido" ya resueltos (method, category)
   bankHint: string;
   ctx: Ctx;
+  categoryCandidates: number[];    // categorías probables (para no listar todas)
+  showAllCats: boolean;            // el usuario pidió "ver todas" las categorías
   current: Question | null;
   awaiting: 'question' | 'confirm';
   userId: number;
@@ -134,13 +136,15 @@ async function attachToMovement(prisma: any, userId: number, movementId: number,
 }
 
 // ---- Preguntas (slots) ----
-function accountQ(key: string, text: string, accounts: any[], bankHint: string, field: 'accountId' | 'toAccountId'): Question {
-  let list = accounts;
+/** Filtra una lista (cuentas/tarjetas) por el banco mencionado; si no calza ninguna, no filtra. */
+function filterByBank<T extends { bankName?: string | null; name?: string | null }>(list: T[], bankHint: string): T[] {
   const hint = norm(bankHint);
-  if (hint) {
-    const byBank = accounts.filter((a: any) => norm(a.bankName).includes(hint) || norm(a.name).includes(hint) || hint.includes(norm(a.bankName)));
-    if (byBank.length) list = byBank;
-  }
+  if (!hint) return list;
+  const byBank = list.filter((x) => norm(x.bankName).includes(hint) || norm(x.name).includes(hint) || hint.includes(norm(x.bankName)));
+  return byBank.length ? byBank : list;
+}
+function accountQ(key: string, text: string, accounts: any[], bankHint: string, field: 'accountId' | 'toAccountId'): Question {
+  const list = filterByBank(accounts, bankHint);
   return { key, text, options: list.map((a: any) => ({ label: `🏦 ${accLabel(a)}`, patch: { [field]: a.id } })) };
 }
 function methodQ(ctx: Ctx): Question {
@@ -155,9 +159,23 @@ function methodQ(ctx: Ctx): Question {
   opts.push({ label: '• Otro', patch: { paymentMethod: 'OTHER', accountId: null, cardId: null, walletId: null } });
   return { key: 'method', text: '💳 ¿Cuál es el *método de pago*?', options: opts, resolveKey: 'method' };
 }
-function cardQ(cards: any[]): Question { return { key: 'card', text: '💳 ¿Cuál *tarjeta de crédito*?', options: cards.map((c: any) => ({ label: `💳 ${cardLabel(c)}`, patch: { cardId: c.id } })) }; }
+function cardQ(cards: any[], bankHint: string): Question {
+  const list = filterByBank(cards, bankHint);
+  return { key: 'card', text: '💳 ¿Cuál *tarjeta de crédito*?', options: list.map((c: any) => ({ label: `💳 ${cardLabel(c)}`, patch: { cardId: c.id } })) };
+}
 function walletQ(wallets: any[]): Question { return { key: 'wallet', text: '👛 ¿Cuál *billetera*?', options: wallets.map((w: any) => ({ label: `👛 ${w.name}`, patch: { walletId: w.id } })) }; }
-function categoryQ(cats: any[]): Question { return { key: 'category', text: '🏷️ ¿Qué *categoría*?', options: [...cats.map((c: any) => ({ label: c.name, patch: { categoryId: c.id } })), { label: 'Sin categoría', patch: { categoryId: null } }], resolveKey: 'category' }; }
+/** Categorías: muestra solo las candidatas (relacionadas al detalle) + "ver todas". */
+function categoryQ(d: Draft): Question {
+  const cats = d.ctx.categories;
+  const cands = d.showAllCats ? [] : cats.filter((c: any) => d.categoryCandidates.includes(c.id));
+  const list = cands.length ? cands : cats;
+  const options: Option[] = list.map((c: any) => ({ label: c.name, patch: { categoryId: c.id } }));
+  options.push({ label: 'Sin categoría', patch: { categoryId: null } });
+  // Si mostramos solo las probables, deja una salida para ver el resto.
+  if (cands.length && cands.length < cats.length) options.push({ label: '📋 Ver todas las categorías', patch: {}, action: 'showAllCats' });
+  const hint = cands.length ? ' _(las más probables)_' : '';
+  return { key: 'category', text: `🏷️ ¿Qué *categoría*?${hint}`, options, resolveKey: 'category' };
+}
 
 /** Ajusta campos derivados al elegir el tipo de movimiento (cuando se pregunta el tipo). */
 function applyTypeDefaults(d: Draft): void {
@@ -208,9 +226,9 @@ function rawNext(d: Draft): Question | null {
   if (!d.resolved.has('method')) return methodQ(d.ctx);
   const m = String(p.paymentMethod || '');
   if ((m === 'BANK_TRANSFER' || m === 'DEPOSIT' || m === 'DEBIT_CARD') && !p.accountId) return accountQ('account', '🏦 ¿De qué *cuenta*?', d.ctx.accounts, d.bankHint, 'accountId');
-  if (m === 'CREDIT_CARD' && !p.cardId) return cardQ(d.ctx.creditCards);
+  if (m === 'CREDIT_CARD' && !p.cardId) return cardQ(d.ctx.creditCards, d.bankHint);
   if (m === 'WALLET' && !p.walletId) return walletQ(d.ctx.wallets);
-  if (!d.resolved.has('category') && (type === 'EXPENSE' || type === 'INCOME' || type === 'PURCHASE')) return categoryQ(d.ctx.categories);
+  if (!d.resolved.has('category') && (type === 'EXPENSE' || type === 'INCOME' || type === 'PURCHASE')) return categoryQ(d);
   return null;
 }
 
@@ -271,7 +289,7 @@ async function buildRegister(prisma: any, userId: number, p: ParsedMovement): Pr
     if (cat) { payload.categoryId = cat.id; resolved.add('category'); }
   }
 
-  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [] };
+  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, categoryCandidates: p.categoryCandidates || [], showAllCats: false, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [] };
 }
 
 async function balanceReadback(prisma: any, userId: number, payload: Record<string, unknown>): Promise<string> {
@@ -356,8 +374,16 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
         if (desc.length < 2) { await msg.reply('🤔 El detalle es muy corto, dime algo más.'); return; }
         draft.payload.description = desc;
       } else {
-        const opt = resolveChoice(q, text);
+        let opt = resolveChoice(q, text);
+        // En categorías, permite escribir el NOMBRE aunque no esté en la lista corta.
+        if (!opt && q.key === 'category') {
+          const t = norm(text);
+          const hit = t.length >= 3 ? draft.ctx.categories.find((c: any) => norm(c.name).includes(t) || t.includes(norm(c.name))) : null;
+          if (hit) opt = { label: hit.name, patch: { categoryId: hit.id } };
+        }
         if (!opt) { await msg.reply('🤔 No te entendí.\n' + renderQuestion(q)); return; }
+        // "Ver todas las categorías": no es una opción real, re-pregunta con la lista completa.
+        if (opt.action === 'showAllCats') { draft.showAllCats = true; draft.at = Date.now(); const full = categoryQ(draft); draft.current = full; await msg.reply(renderQuestion(full)); return; }
         Object.assign(draft.payload, opt.patch);
         if (q.resolveKey) draft.resolved.add(q.resolveKey);
         if (q.key === 'movtype') applyTypeDefaults(draft);

@@ -20,6 +20,7 @@ export interface ParsedMovement {
   toAccountId: number | null;
   cardId: number | null;
   categoryId: number | null;
+  categoryCandidates: number[] | null; // ids de categorías probables según el detalle (para acotar la lista)
   paymentMethod: 'CASH' | 'BANK_TRANSFER' | 'DEPOSIT' | 'DEBIT_CARD' | 'CREDIT_CARD' | 'WALLET' | 'OTHER' | null;
   date: string | null;
   isCredit: boolean;
@@ -70,7 +71,7 @@ export async function parseMovement(prisma: any, userId: number, text: string): 
   const system = `Eres un asistente que convierte una instrucción (en español, Ecuador, moneda USD) en UN movimiento financiero en JSON.
 Hoy es ${todayYmd()}.
 Devuelve SOLO un objeto JSON válido con EXACTAMENTE estas claves:
-{"understood":bool,"intent":"register|query","type":"INCOME|EXPENSE|PURCHASE|TRANSFER|WITHDRAWAL|null","amount":number|null,"description":string,"bankHint":string|null,"accountId":number|null,"toAccountId":number|null,"cardId":number|null,"categoryId":number|null,"paymentMethod":"CASH|BANK_TRANSFER|DEPOSIT|DEBIT_CARD|CREDIT_CARD|WALLET|OTHER|null","date":"YYYY-MM-DD|null","isCredit":bool,"vendor":string|null,"familyMember":string|null,"notes":string|null,"clarification":string|null}
+{"understood":bool,"intent":"register|query","type":"INCOME|EXPENSE|PURCHASE|TRANSFER|WITHDRAWAL|null","amount":number|null,"description":string,"bankHint":string|null,"accountId":number|null,"toAccountId":number|null,"cardId":number|null,"categoryId":number|null,"categoryCandidates":number[],"paymentMethod":"CASH|BANK_TRANSFER|DEPOSIT|DEBIT_CARD|CREDIT_CARD|WALLET|OTHER|null","date":"YYYY-MM-DD|null","isCredit":bool,"vendor":string|null,"familyMember":string|null,"notes":string|null,"clarification":string|null}
 
 Primero decide la intención:
 - intent="register": el usuario quiere REGISTRAR un movimiento (ej. "gasté 20 en el súper", "ingreso de 800").
@@ -91,7 +92,8 @@ Reglas (solo si intent="register"):
 - WITHDRAWAL: accountId=cuenta de la que sale el efectivo.
 - date: fecha del movimiento en formato YYYY-MM-DD; resuelve "hoy", "ayer", "el 5", "el lunes". Si no se menciona, usa hoy.
 - description: breve y clara en español (ej. "Gasolina", "Sueldo", "Supermercado").
-- categoryId: elige la categoría más adecuada del catálogo si aplica (para EXPENSE/INCOME/PURCHASE); si ninguna calza, null.
+- categoryId: elige la categoría más adecuada del catálogo si aplica (para EXPENSE/INCOME/PURCHASE) SOLO si estás muy seguro; si dudas, null.
+- categoryCandidates: SEGÚN el detalle/vendor, devuelve un arreglo con los ids de las 2 a 4 categorías que MÁS podrían aplicar (relaciona el concepto: "súper/comida"->alimentación; "gasolina/taxi"->transporte; "medicina/doctor"->salud; etc.), ordenadas de más a menos probable. Si de verdad ninguna se relaciona, [].
 - isCredit: true SOLO si es una compra "fiada"/"a crédito" que no se paga ahora.
 - understood: true si pudiste extraer al menos "type" y "amount". Si falta lo esencial o es ambiguo, understood=false y explica breve en "clarification" qué necesitas.
 
@@ -127,6 +129,12 @@ ${JSON.stringify(catalogo)}`;
   const cat = p.categoryId ? categories.find((c: any) => c.id === p.categoryId) : undefined;
   if (p.categoryId && !cat) p.categoryId = null;
   p.categoryName = cat?.name ?? null;
+
+  // Filtra las candidatas a ids reales del usuario (máx 4). Incluye la principal si existe.
+  const validIds = new Set(categories.map((c: any) => c.id));
+  let cands = Array.isArray(p.categoryCandidates) ? p.categoryCandidates.filter((id) => validIds.has(id)) : [];
+  if (p.categoryId && !cands.includes(p.categoryId)) cands = [p.categoryId, ...cands];
+  p.categoryCandidates = Array.from(new Set(cands)).slice(0, 4);
 
   return p;
 }
