@@ -308,9 +308,27 @@ async function buildRegister(prisma: any, userId: number, p: ParsedMovement): Pr
     payload.paymentMethod = 'BANK_TRANSFER'; resolved.add('method');
     if (acc) payload.accountId = acc.id;
   } else {
-    if (p.paymentMethod) { payload.paymentMethod = p.paymentMethod; resolved.add('method'); }
-    if (credit) { payload.cardId = credit.id; payload.paymentMethod = 'CREDIT_CARD'; resolved.add('method'); }
-    else if (acc) { payload.accountId = acc.id; if (!payload.paymentMethod) { payload.paymentMethod = 'BANK_TRANSFER'; resolved.add('method'); } }
+    // El MÉTODO manda y el instrumento es coherente con él:
+    //  - crédito -> SOLO tarjeta de crédito (nunca cuenta).
+    //  - transferencia/depósito/débito -> SOLO cuenta (nunca tarjeta).
+    // Si pide crédito pero no hay tarjetas de crédito, no lo forzamos: se re-pregunta el método.
+    let method = p.paymentMethod || null;
+    if (method === 'CREDIT_CARD' && !creditCards.length) method = null;
+    const wantsCredit = (method === 'CREDIT_CARD' || !!credit) && creditCards.length > 0;
+
+    if (wantsCredit) {
+      payload.paymentMethod = 'CREDIT_CARD'; resolved.add('method');
+      payload.accountId = null;                 // crédito NO usa cuenta
+      if (credit) payload.cardId = credit.id;   // si la IA acertó la tarjeta exacta
+    } else if (method === 'CASH') {
+      payload.paymentMethod = 'CASH'; resolved.add('method');
+    } else if (acc) {
+      payload.accountId = acc.id; payload.cardId = null;
+      payload.paymentMethod = (method === 'DEBIT_CARD' || method === 'DEPOSIT') ? method : 'BANK_TRANSFER';
+      resolved.add('method');
+    } else if (method) {
+      payload.paymentMethod = method; resolved.add('method');
+    }
     if (cat) { payload.categoryId = cat.id; resolved.add('category'); }
   }
 

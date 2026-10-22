@@ -83,8 +83,8 @@ Reglas (solo si intent="register"):
 - bankHint: si el usuario menciona un banco o cuenta (ej. "Pichincha", "Guayaquil", "la cuenta de ahorros"), pon ese texto corto; si no menciona, null. NO inventes.
 - accountId, toAccountId, cardId, categoryId: ELIGE únicamente por "id" de los catálogos dados. Si no se menciona o no calza con seguridad, usa null. NO inventes ids.
 - paymentMethod: SOLO si el usuario menciona explícitamente CÓMO pagó/recibió (efectivo, transferencia, depósito, tarjeta de débito, tarjeta de crédito, billetera). Si NO lo menciona, null (el sistema lo preguntará).
-- Pago con TARJETA DE CRÉDITO -> cardId = id de la tarjeta de crédito, paymentMethod="CREDIT_CARD", accountId=null.
-- Pago con CUENTA o TARJETA DE DÉBITO -> accountId = id de la cuenta correspondiente, paymentMethod="DEBIT_CARD" (si dijo "débito") o "BANK_TRANSFER" (si dijo transferencia/cuenta). cardId=null.
+- Pago con TARJETA DE CRÉDITO -> paymentMethod="CREDIT_CARD", accountId=null SIEMPRE. cardId = id de la tarjeta de crédito SOLO si identificas cuál; si mencionan "tarjeta de crédito" pero no sabes cuál, igual paymentMethod="CREDIT_CARD", cardId=null y accountId=null. NUNCA uses una cuenta para un pago con tarjeta de crédito.
+- Pago con CUENTA o TARJETA DE DÉBITO -> accountId = id de la cuenta correspondiente, paymentMethod="DEBIT_CARD" (si dijo "débito") o "BANK_TRANSFER" (si dijo transferencia/cuenta). cardId=null. "débito" y "crédito" son DISTINTOS: no los confundas.
 - Efectivo -> paymentMethod="CASH", sin cuenta ni tarjeta.
 - familyMember: nombre de la persona si el usuario dice "quién paga" o menciona una persona involucrada; si no, null.
 - notes: cualquier nota o número de factura extra que mencione; si no, null.
