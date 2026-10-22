@@ -36,6 +36,7 @@ import { budgetsRouter } from './routes/tenant/budgets.routes';
 import { auditRouter } from './routes/tenant/audit.routes';
 import { aiRouter } from './routes/tenant/ai.routes';
 import { whatsappRouter } from './routes/tenant/whatsapp.routes';
+import { mailRouter } from './routes/tenant/mail.routes';
 import { bootWhatsapp } from './whatsapp/boot';
 import { runCoachScan } from './whatsapp/alerts';
 import { requireAuth } from './middleware/auth';
@@ -141,6 +142,7 @@ app.use('/api/budgets',    tenantScope, budgetsRouter);
 app.use('/api/audit',      tenantScope, auditRouter);
 app.use('/api/ai',         tenantScope, aiRouter);
 app.use('/api/whatsapp',   tenantScope, whatsappRouter);
+app.use('/api/mail',       tenantScope, mailRouter);
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof ZodError) {

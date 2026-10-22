@@ -520,6 +520,50 @@ model WhatsappConfig {
   updatedAt      DateTime  @updatedAt @default(now())
 }
 
+// Lector de correo (IMAP) para ingerir comprobantes/facturas. Singleton por empresa.
+model MailConfig {
+  id          Int       @id @default(1)
+  enabled     Boolean   @default(false)
+  host        String    @default("imap.gmail.com")
+  port        Int       @default(993)
+  email       String?                    // buzón dedicado a leer
+  passwordEnc String?                    // contraseña de aplicación cifrada
+  folder      String    @default("INBOX")
+  userId      Int?                       // a quién se imputan los movimientos creados
+  autoCreate  Boolean   @default(false)  // crear movimiento sin revisar (si false, bandeja)
+  lastCheckAt DateTime?
+  lastSeenUid Int?                       // último UID procesado (para no reprocesar)
+  updatedAt   DateTime  @updatedAt @default(now())
+}
+
+// Comprobante leído del correo, pendiente de revisar/aprobar (bandeja).
+model MailReceipt {
+  id             Int       @id @default(autoincrement())
+  userId         Int
+  messageId      String                   // id del correo (dedupe)
+  fromAddr       String?
+  subject        String?
+  receivedAt     DateTime?
+  kind           String    @default("TEXT") // XML (factura SRI) | TEXT (IA)
+  vendor         String?                   // comercio/proveedor
+  taxId          String?                   // RUC/cédula
+  amount         Decimal?  @db.Decimal(14, 2)
+  net            Decimal?  @db.Decimal(14, 2)
+  vat            Decimal?  @db.Decimal(14, 2)
+  docDate        DateTime?
+  status         String    @default("PENDING") // PENDING | APPROVED | DISCARDED
+  movementId     Int?
+  invoiceId      Int?
+  attachmentName String?
+  attachmentMime String?
+  attachmentData Bytes?                    // PDF/XML original
+  raw            Json?                     // datos parseados
+  createdAt      DateTime  @default(now())
+
+  @@unique([userId, messageId])
+  @@index([userId, status])
+}
+
 model AuditLog {
   id        Int      @id @default(autoincrement())
   userId    Int?     // quién hizo el cambio (sin FK: el log sobrevive al borrado del usuario)

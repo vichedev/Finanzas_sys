@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette, Sparkles, RefreshCw, MessageCircle } from 'lucide-vue-next';
+import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Inbox, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette, Sparkles, RefreshCw, MessageCircle } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
 import { useBrandingStore } from '../stores/branding';
 import { useEntitiesStore } from '../stores/entities';
@@ -10,6 +10,7 @@ import { http } from '../api/http';
 import { backupApi } from '../api/backup';
 import { aiApi } from '../api/ai';
 import { whatsappApi, type WhatsappStatus } from '../api/whatsapp';
+import { mailApi, type MailConfig } from '../api/mail';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
 import AppModal from '../components/AppModal.vue';
@@ -203,6 +204,45 @@ async function waSetCoach(val: boolean) {
   catch { wa.value.coachEnabled = prev; waErr.value = 'No se pudo cambiar los avisos.'; }
 }
 
+// ---- Lector de correo (IMAP) ----
+const mailCfg = ref<MailConfig>({ enabled: false, host: 'imap.gmail.com', port: 993, email: null, folder: 'INBOX', autoCreate: false, hasPassword: false, lastCheckAt: null });
+const mailEmail = ref(''); const mailPass = ref('');
+const mailMsg = ref(''); const mailErr = ref(''); const mailSaving = ref(false); const mailTesting = ref(false);
+const mailTest = ref<{ total: number; recent: string[] } | null>(null);
+
+async function loadMailConfig() {
+  try { const c = await mailApi.getConfig(); mailCfg.value = c; mailEmail.value = c.email || ''; } catch { /* ignora */ }
+}
+async function saveMailConfig() {
+  mailErr.value = ''; mailMsg.value = ''; mailSaving.value = true;
+  try {
+    const payload: import('../api/mail').MailConfigPayload = {
+      enabled: mailCfg.value.enabled, host: mailCfg.value.host, port: mailCfg.value.port,
+      folder: mailCfg.value.folder, autoCreate: mailCfg.value.autoCreate
+    };
+    if (mailEmail.value.trim()) payload.email = mailEmail.value.trim();
+    if (mailPass.value.trim()) payload.password = mailPass.value.trim();
+    mailCfg.value = await mailApi.saveConfig(payload);
+    mailPass.value = '';
+    mailMsg.value = 'Configuración guardada.';
+    setTimeout(() => (mailMsg.value = ''), 2500);
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    mailErr.value = err?.response?.data?.message || 'No se pudo guardar.';
+  } finally { mailSaving.value = false; }
+}
+async function testMailConnection() {
+  mailErr.value = ''; mailMsg.value = ''; mailTest.value = null; mailTesting.value = true;
+  try {
+    const r = await mailApi.test();
+    mailTest.value = { total: r.total, recent: r.recent };
+    mailMsg.value = `✅ Conectado. ${r.total} correos en la carpeta.`;
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    mailErr.value = err?.response?.data?.message || 'No se pudo conectar.';
+  } finally { mailTesting.value = false; }
+}
+
 // Markdown mínimo y seguro (escapa HTML, luego aplica negritas, títulos y viñetas).
 const aiResultHtml = computed(() => {
   const raw = aiResult.value;
@@ -360,9 +400,9 @@ const profile = ref<Profile | null>(null);
 const profileForm = ref({ name: '', email: '', currency: 'USD', currentPassword: '', newPassword: '' });
 const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = ref(false);
 
-type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
-const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
-const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users', 'whatsapp'];
+type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'mail' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
+const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'mail', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
+const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users', 'whatsapp', 'mail'];
 const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
 
 const route = useRoute();
@@ -1189,6 +1229,7 @@ const SECTIONS = computed<SectionCard[]>(() => {
     base.push({ key: 'backups', title: 'Respaldos', description: 'Exporta e importa todos tus datos para migrar o restaurar.', icon: Archive, accent: 'green' });
     base.push({ key: 'financia', title: 'FinancIA', description: 'Asistente de IA (Groq) que analiza tus datos y da recomendaciones.', icon: Sparkles, accent: 'indigo' });
     base.push({ key: 'whatsapp', title: 'Asistente WhatsApp', description: 'Escríbele por WhatsApp (audio o texto) desde tu número y registra movimientos.', icon: MessageCircle, accent: 'green' });
+    base.push({ key: 'mail', title: 'Lector de correo', description: 'Lee tus comprobantes/facturas desde un correo y los registra.', icon: Inbox, accent: 'cyan' });
   }
   return base;
 });
@@ -1243,7 +1284,8 @@ onMounted(async () => {
     auth.isAdmin ? loadSmtp() : Promise.resolve(),
     auth.isAdmin ? loadIdentity() : Promise.resolve(),
     auth.isAdmin ? loadAiConfig() : Promise.resolve(),
-    auth.isAdmin ? loadWaStatus() : Promise.resolve()
+    auth.isAdmin ? loadWaStatus() : Promise.resolve(),
+    auth.isAdmin ? loadMailConfig() : Promise.resolve()
   ]);
   ensureWaPolling();
 });
@@ -2097,6 +2139,72 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
       </div>
     </div>
 
+    <div v-if="activeSection === 'mail' && auth.isAdmin" class="panel mail-panel">
+      <div class="financia-banner" style="background: linear-gradient(135deg,#ecfeff,#eff6ff); border-color:#bae6fd;">
+        <div class="financia-ic" style="background:#06b6d4;"><Inbox :size="22" /></div>
+        <div>
+          <h3>Lector de correo · Comprobantes</h3>
+          <p>Lee tus facturas/comprobantes desde un buzón dedicado y los registra. Recomendado: reenvía tus facturas de Outlook a un <strong>Gmail</strong> y conéctalo aquí con una <strong>contraseña de aplicación</strong>.</p>
+        </div>
+      </div>
+
+      <div class="mail-guide">
+        <strong>📋 Cómo preparar el Gmail (una sola vez):</strong>
+        <ol>
+          <li>Crea/usa un Gmail dedicado y activa <em>IMAP</em> (Configuración → Reenvío y correo POP/IMAP).</li>
+          <li>Activa la verificación en 2 pasos y crea una <strong>Contraseña de aplicación</strong> (myaccount.google.com → Seguridad → Contraseñas de aplicaciones).</li>
+          <li>En Outlook, crea una regla que <strong>reenvíe</strong> las facturas/comprobantes a ese Gmail.</li>
+          <li>Pega aquí el correo y la contraseña de aplicación y pulsa <em>Probar conexión</em>.</li>
+        </ol>
+      </div>
+
+      <div class="financia-grid">
+        <div class="financia-config">
+          <h4>Conexión</h4>
+          <div class="field">
+            <label>Correo (buzón a leer)</label>
+            <input v-model="mailEmail" type="email" autocomplete="off" placeholder="comprobantes@gmail.com" />
+          </div>
+          <div class="field">
+            <label>Contraseña de aplicación</label>
+            <input v-model="mailPass" type="password" autocomplete="off"
+                   :placeholder="mailCfg.hasPassword ? '•••••••••• (ya configurada)' : 'xxxx xxxx xxxx xxxx'" />
+            <small class="hint">Se guarda cifrada. {{ mailCfg.hasPassword ? 'Deja vacío para conservar la actual.' : 'NO es tu contraseña normal de Gmail.' }}</small>
+          </div>
+          <div class="field" style="flex-direction:row; gap:10px;">
+            <div style="flex:1"><label>Servidor IMAP</label><input v-model="mailCfg.host" placeholder="imap.gmail.com" /></div>
+            <div style="width:90px"><label>Puerto</label><input v-model.number="mailCfg.port" type="number" /></div>
+          </div>
+          <div class="field">
+            <label class="financia-toggle"><input type="checkbox" v-model="mailCfg.enabled" /><span>Activar lectura automática</span></label>
+          </div>
+          <div class="financia-actions">
+            <button type="button" @click="saveMailConfig" :disabled="mailSaving"><Check :size="16" /> {{ mailSaving ? 'Guardando…' : 'Guardar' }}</button>
+            <button type="button" class="ghost" @click="testMailConnection" :disabled="mailTesting || !mailCfg.hasPassword">
+              <component :is="mailTesting ? RefreshCw : Inbox" :size="16" :class="{ spin: mailTesting }" /> {{ mailTesting ? 'Probando…' : 'Probar conexión' }}
+            </button>
+          </div>
+          <p v-if="mailMsg" class="hint-msg">{{ mailMsg }}</p>
+          <p v-if="mailErr" class="error">{{ mailErr }}</p>
+        </div>
+
+        <div class="financia-analysis">
+          <h4>Prueba</h4>
+          <div v-if="mailTest" class="financia-result">
+            <div class="financia-result-head"><Inbox :size="14" /> {{ mailTest.total }} correos</div>
+            <p style="font-size:13px;color:#64748b;margin:0 0 6px;">Asuntos recientes:</p>
+            <ul style="margin:0;padding-left:18px;">
+              <li v-for="(s, i) in mailTest.recent" :key="i" style="font-size:13px;color:#374151;">{{ s }}</li>
+            </ul>
+          </div>
+          <div v-else class="financia-empty">
+            <Inbox :size="28" />
+            <p>Pulsa "Probar conexión" para verificar el acceso y ver los correos recientes. La lectura y la <strong>bandeja de comprobantes</strong> para aprobar cada factura llegan en la siguiente fase.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div v-if="activeSection === 'smtp' && auth.isAdmin" class="smtp-card">
       <div class="smtp-banner">
         <h3>Datos del servidor de correo</h3>
@@ -2904,6 +3012,8 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .financia-config h4, .financia-analysis h4 { margin: 0 0 4px; font-size: 15px; }
 .financia-config .field, .financia-analysis .field { display: flex; flex-direction: column; gap: 4px; }
 .ai-warn { color: #b45309; font-size: 12px; background: #fffbeb; border: 1px solid #fde68a; padding: 6px 8px; border-radius: 6px; }
+.mail-guide { font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; }
+.mail-guide strong { color: #0f172a; } .mail-guide ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .financia-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .financia-toggle input { width: 16px; height: 16px; }
 .financia-actions { display: flex; gap: 8px; }
