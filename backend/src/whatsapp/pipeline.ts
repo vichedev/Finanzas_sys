@@ -25,7 +25,7 @@ const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s+/g
 
 type Img = { buffer: Buffer; mimetype: string };
 type Patch = Record<string, unknown>;
-interface Option { label: string; patch: Patch; action?: 'showAllCats' }
+interface Option { label: string; patch: Patch; action?: 'showAllCats' | 'transferToPerson' }
 interface Question { key: string; text: string; options?: Option[]; free?: 'amount' | 'description'; resolveKey?: string }
 interface Ctx { accounts: any[]; creditCards: any[]; wallets: any[]; categories: any[] }
 interface Draft {
@@ -107,9 +107,29 @@ function cardLabel(c: any): string {
   if (c.last4) parts.push('****' + c.last4);
   return parts.join(' · ');
 }
+/**
+ * Interpreta un monto tolerando separadores de miles y decimales en formato
+ * latino o anglosajón: "3098"/"3.098"/"3,098" = 3098; "3,98"/"3.98" = 3.98;
+ * "3.098,50"/"3,098.50" = 3098.50. Un separador con 3 dígitos detrás = miles.
+ */
 function parseAmount(text: string): number {
-  const m = text.replace(/,/g, '.').match(/\d+(\.\d+)?/);
-  return m ? Number(m[0]) : NaN;
+  const m = String(text).match(/-?\d[\d.,]*/);
+  if (!m) return NaN;
+  let s = m[0];
+  const hasDot = s.includes('.'), hasComma = s.includes(',');
+  if (hasDot && hasComma) {
+    // El último separador es el decimal; el otro, miles.
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (hasComma) {
+    const parts = s.split(',');
+    s = (parts.length === 2 && parts[1].length <= 2) ? s.replace(',', '.') : s.replace(/,/g, '');
+  } else if (hasDot) {
+    const parts = s.split('.');
+    if (!(parts.length === 2 && parts[1].length <= 2)) s = s.replace(/\./g, '');
+  }
+  const n = Number(s);
+  return isNaN(n) ? NaN : n;
 }
 
 // ---- Comprobantes (imagen) ----
@@ -214,6 +234,11 @@ function rawNext(d: Draft): Question | null {
   if (!p.description || String(p.description).trim().length < 2) return { key: 'description', text: '📝 Escribe el *detalle* (ej: *Supermercado*, *Gasolina*, *Sueldo*)', free: 'description' };
 
   if (type === 'TRANSFER') {
+    // Primero: ¿es entre cuentas propias o a otra persona? (cambia cómo se registra)
+    if (!d.resolved.has('transferScope')) return { key: 'transferScope', text: '🔁 Esta transferencia es…', resolveKey: 'transferScope', options: [
+      { label: '🔄 Entre MIS cuentas', patch: {} },
+      { label: '👤 A otra persona (sale dinero)', patch: {}, action: 'transferToPerson' }
+    ] };
     if (!p.accountId) return accountQ('fromAccount', '🔁 ¿De qué cuenta *sale* el dinero?', d.ctx.accounts, d.bankHint, 'accountId');
     if (!p.toAccountId) return accountQ('toAccount', '🔁 ¿A qué cuenta *entra*?', d.ctx.accounts.filter((a: any) => a.id !== p.accountId), '', 'toAccountId');
     return null;
@@ -384,6 +409,18 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
         if (!opt) { await msg.reply('🤔 No te entendí.\n' + renderQuestion(q)); return; }
         // "Ver todas las categorías": no es una opción real, re-pregunta con la lista completa.
         if (opt.action === 'showAllCats') { draft.showAllCats = true; draft.at = Date.now(); const full = categoryQ(draft); draft.current = full; await msg.reply(renderQuestion(full)); return; }
+        // Transferencia a otra persona = sale dinero → se registra como GASTO (no como transferencia interna).
+        if (opt.action === 'transferToPerson') {
+          draft.payload.type = 'EXPENSE';
+          draft.payload.toAccountId = null;
+          draft.payload.paymentMethod = 'BANK_TRANSFER';
+          draft.payload.expenseKind = 'VARIABLE';
+          draft.resolved.add('method');
+          draft.at = Date.now();
+          await msg.reply('👤 Entendido, es un *gasto por transferencia* a otra persona. Sigo con los datos…');
+          await advance(prisma, msg, draft);
+          return;
+        }
         Object.assign(draft.payload, opt.patch);
         if (q.resolveKey) draft.resolved.add(q.resolveKey);
         if (q.key === 'movtype') applyTypeDefaults(draft);

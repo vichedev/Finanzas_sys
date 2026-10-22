@@ -22,7 +22,25 @@ function todayYmd(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function fmtDate(ymd: string): string { const [y, m, d] = ymd.split('-'); return d && m && y ? `${d}/${m}/${y}` : ymd; }
-function parseAmount(text: string): number { const m = text.replace(/,/g, '.').match(/\d+(\.\d+)?/); return m ? Number(m[0]) : NaN; }
+/** Monto tolerante a miles/decimales latino o anglosajón (ver pipeline.parseAmount). */
+function parseAmount(text: string): number {
+  const m = String(text).match(/-?\d[\d.,]*/);
+  if (!m) return NaN;
+  let s = m[0];
+  const hasDot = s.includes('.'), hasComma = s.includes(',');
+  if (hasDot && hasComma) {
+    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.');
+    else s = s.replace(/,/g, '');
+  } else if (hasComma) {
+    const parts = s.split(',');
+    s = (parts.length === 2 && parts[1].length <= 2) ? s.replace(',', '.') : s.replace(/,/g, '');
+  } else if (hasDot) {
+    const parts = s.split('.');
+    if (!(parts.length === 2 && parts[1].length <= 2)) s = s.replace(/\./g, '');
+  }
+  const n = Number(s);
+  return isNaN(n) ? NaN : n;
+}
 
 /** Parsea una fecha libre: "5/9", "05/09/2026", "sin fecha"/"no" → null. undefined si no entiende. */
 function parseDateLoose(text: string): string | null | undefined {
@@ -129,7 +147,7 @@ const SPECS: Record<EntityKind, Spec> = {
     extractSystem: () => `Extrae los datos de una DEUDA o COBRO (Ecuador, USD). Hoy es ${todayYmd()}.
 Devuelve SOLO JSON: {"kind":"RECEIVABLE|PAYABLE|LOAN|null","amount":number|null,"counterparty":string|null,"dueDate":"YYYY-MM-DD|null","description":string|null}
 - kind: RECEIVABLE si a ti te deben o vas a COBRAR ("me debe", "cobrar a", "presté"); PAYABLE si TÚ debes o vas a pagar ("le debo", "tengo que pagar"); LOAN si es un préstamo formal con cuotas. Si no está claro, null.
-- amount: número en USD. counterparty: nombre de la persona/institución. dueDate: fecha de cobro/pago si la dice (resuelve "el 5", "5 de septiembre"). description: concepto breve.`,
+- amount: número en USD; interpreta MILES ("tres mil noventa y ocho"->3098, "mil quinientos"->1500, "3.098"/"3,098"->3098). counterparty: nombre de la persona/institución. dueDate: fecha de cobro/pago si la dice (resuelve "el 5", "5 de septiembre"). description: concepto breve.`,
     precarga: (data, p) => {
       // El tipo (por cobrar/pagar) NO se precarga: siempre se pregunta, para no
       // guardarlo mal (la IA a veces confunde cobro con pago). El usuario lo elige.

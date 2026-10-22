@@ -79,7 +79,7 @@ Primero decide la intención:
 
 Reglas (solo si intent="register"):
 - type: INCOME=entra dinero (sueldo, cobro); EXPENSE=gasto/pago que sale (servicios, comida, salud); PURCHASE=compra de un bien/producto; TRANSFER=mover dinero entre DOS cuentas propias; WITHDRAWAL=retirar efectivo de una cuenta.
-- amount: solo el número en USD (ej. "veinte dólares" -> 20).
+- amount: solo el número en USD. Interpreta cantidades habladas/escritas con MILES: "tres mil noventa y ocho" -> 3098, "mil quinientos" -> 1500, "3 mil" -> 3000, "3.098" o "3,098" -> 3098. El punto/coma seguido de 3 dígitos es separador de miles, NO decimal.
 - bankHint: si el usuario menciona un banco o cuenta (ej. "Pichincha", "Guayaquil", "la cuenta de ahorros"), pon ese texto corto; si no menciona, null. NO inventes.
 - accountId, toAccountId, cardId, categoryId: ELIGE únicamente por "id" de los catálogos dados. Si no se menciona o no calza con seguridad, usa null. NO inventes ids.
 - paymentMethod: SOLO si el usuario menciona explícitamente CÓMO pagó/recibió (efectivo, transferencia, depósito, tarjeta de débito, tarjeta de crédito, billetera). Si NO lo menciona, null (el sistema lo preguntará).
