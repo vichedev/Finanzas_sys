@@ -6,6 +6,7 @@
 // =====================================================
 import { logger } from '../lib/logger';
 import { getBrainCreds, chatComplete } from './llm';
+import { accountBelongsToDebitCard } from '../lib/debitCard';
 
 export type MovType = 'INCOME' | 'EXPENSE' | 'PURCHASE' | 'TRANSFER' | 'WITHDRAWAL';
 
@@ -54,17 +55,25 @@ export async function parseMovement(prisma: any, userId: number, text: string): 
   if (!creds) return { error: 'Falta la clave de IA. Configúrala en Ajustes → FinancIA.' };
 
   const [accounts, cards, categories] = await Promise.all([
-    prisma.account.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, type: true } }),
-    prisma.card.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, last4: true, type: true } }),
+    prisma.account.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, bankId: true, accountKind: true, accountNumber: true, type: true } }),
+    prisma.card.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, bankId: true, last4: true, type: true } }),
     prisma.category.findMany({ where: { userId }, select: { id: true, name: true } })
   ]);
 
   // Para pagos con débito o cuenta usamos la CUENTA; las tarjetas de crédito sí van como cardId.
   const creditCards = cards.filter((c: any) => (c.type || '').toUpperCase() === 'CREDIT');
+  const debitCards = cards.filter((c: any) => (c.type || '').toUpperCase() === 'DEBIT');
+  const last4 = (s: unknown) => { const d = String(s ?? '').replace(/\D/g, ''); return d ? d.slice(-4) : null; };
 
   const catalogo = {
-    cuentas: accounts.map((a: any) => ({ id: a.id, nombre: a.name, banco: a.bankName })),
+    // ultimos4 de la cuenta para que "la cuenta/tarjeta que termina en 4567" calce directo.
+    cuentas: accounts.map((a: any) => ({ id: a.id, nombre: a.name, banco: a.bankName, tipo: a.accountKind, ultimos4: last4(a.accountNumber) })),
     tarjetasCredito: creditCards.map((c: any) => ({ id: c.id, nombre: c.name, banco: c.bankName, ultimos4: c.last4 })),
+    // Tarjetas de DÉBITO -> se pagan con su CUENTA asociada (cuentaId si es única).
+    tarjetasDebito: debitCards.map((c: any) => {
+      const matched = accounts.filter((a: any) => accountBelongsToDebitCard(c, a));
+      return { ultimos4: last4(c.last4), banco: c.bankName, cuentaId: matched.length === 1 ? matched[0].id : null };
+    }),
     categorias: categories.map((c: any) => ({ id: c.id, nombre: c.name }))
   };
 
@@ -83,8 +92,10 @@ Reglas (solo si intent="register"):
 - bankHint: si el usuario menciona un banco o cuenta (ej. "Pichincha", "Guayaquil", "la cuenta de ahorros"), pon ese texto corto; si no menciona, null. NO inventes.
 - accountId, toAccountId, cardId, categoryId: ELIGE únicamente por "id" de los catálogos dados. Si no se menciona o no calza con seguridad, usa null. NO inventes ids.
 - paymentMethod: SOLO si el usuario menciona explícitamente CÓMO pagó/recibió (efectivo, transferencia, depósito, tarjeta de débito, tarjeta de crédito, billetera). Si NO lo menciona, null (el sistema lo preguntará).
-- Pago con TARJETA DE CRÉDITO -> paymentMethod="CREDIT_CARD", accountId=null SIEMPRE. cardId = id de la tarjeta de crédito SOLO si identificas cuál; si mencionan "tarjeta de crédito" pero no sabes cuál, igual paymentMethod="CREDIT_CARD", cardId=null y accountId=null. NUNCA uses una cuenta para un pago con tarjeta de crédito.
-- Pago con CUENTA o TARJETA DE DÉBITO -> accountId = id de la cuenta correspondiente, paymentMethod="DEBIT_CARD" (si dijo "débito") o "BANK_TRANSFER" (si dijo transferencia/cuenta). cardId=null. "débito" y "crédito" son DISTINTOS: no los confundas.
+- EMPAREJAR por últimos dígitos: si el usuario dice "la que termina en 4567", "la 4567", "****4567" o similar, busca ese número en los "ultimos4" de cuentas, tarjetasCredito y tarjetasDebito y usa el id correspondiente. Prioriza el match exacto por ultimos4 sobre el nombre.
+- Pago con TARJETA DE CRÉDITO -> paymentMethod="CREDIT_CARD", accountId=null SIEMPRE. cardId = id de la tarjeta de crédito (empareja por ultimos4 o nombre); si mencionan "tarjeta de crédito" pero no sabes cuál, igual paymentMethod="CREDIT_CARD", cardId=null y accountId=null. NUNCA uses una cuenta para un pago con tarjeta de crédito.
+- Pago con TARJETA DE DÉBITO -> busca en "tarjetasDebito" por ultimos4; usa su "cuentaId" como accountId y paymentMethod="DEBIT_CARD". Si no hay cuentaId, intenta emparejar una cuenta por ultimos4. cardId=null.
+- Pago con CUENTA / transferencia / depósito -> accountId = id de la cuenta (empareja por ultimos4 o nombre), paymentMethod="BANK_TRANSFER" (o "DEPOSIT" si dijo depósito). cardId=null. "débito" y "crédito" son DISTINTOS: no los confundas.
 - Efectivo -> paymentMethod="CASH", sin cuenta ni tarjeta.
 - familyMember: nombre de la persona si el usuario dice "quién paga" o menciona una persona involucrada; si no, null.
 - notes: cualquier nota o número de factura extra que mencione; si no, null.
@@ -92,8 +103,8 @@ Reglas (solo si intent="register"):
 - WITHDRAWAL: accountId=cuenta de la que sale el efectivo.
 - date: fecha del movimiento en formato YYYY-MM-DD; resuelve "hoy", "ayer", "el 5", "el lunes". Si no se menciona, usa hoy.
 - description: breve y clara en español (ej. "Gasolina", "Sueldo", "Supermercado").
-- categoryId: elige la categoría más adecuada del catálogo si aplica (para EXPENSE/INCOME/PURCHASE) SOLO si estás muy seguro; si dudas, null.
-- categoryCandidates: SEGÚN el detalle/vendor, devuelve un arreglo con los ids de las 2 a 4 categorías que MÁS podrían aplicar (relaciona el concepto: "súper/comida"->alimentación; "gasolina/taxi"->transporte; "medicina/doctor"->salud; etc.), ordenadas de más a menos probable. Si de verdad ninguna se relaciona, [].
+- categoryId: ASIGNA con confianza la categoría del catálogo cuando el detalle se relacione claramente con ella (relaciona el concepto de forma inteligente: "víveres/súper/comida/mercado"->Alimentación; "gasolina/taxi/bus/uber"->Transporte; "medicina/doctor/farmacia"->Salud; "arriendo/luz/agua/internet"->Servicios/Hogar; etc.). Usa null SOLO si de verdad no hay ninguna categoría relacionada en el catálogo. Elige por el id real del catálogo.
+- categoryCandidates: 2 a 4 ids de categorías probables según el detalle, ordenadas de más a menos probable (por si el usuario quiere cambiar la asignada). Si ninguna aplica, [].
 - isCredit: true SOLO si es una compra "fiada"/"a crédito" que no se paga ahora.
 - understood: true si pudiste extraer al menos "type" y "amount". Si falta lo esencial o es ambiguo, understood=false y explica breve en "clarification" qué necesitas.
 
