@@ -25,7 +25,7 @@ const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s+/g
 
 type Img = { buffer: Buffer; mimetype: string };
 type Patch = Record<string, unknown>;
-interface Option { label: string; patch: Patch; action?: 'showAllCats' | 'transferToPerson' }
+interface Option { label: string; patch: Patch; action?: 'showAllCats' | 'transferToPerson' | 'newCategory' }
 interface Question { key: string; text: string; options?: Option[]; free?: 'amount' | 'description'; resolveKey?: string }
 interface Ctx { accounts: any[]; creditCards: any[]; wallets: any[]; categories: any[] }
 interface Draft {
@@ -35,6 +35,7 @@ interface Draft {
   ctx: Ctx;
   categoryCandidates: number[];    // categorías probables (para no listar todas)
   showAllCats: boolean;            // el usuario pidió "ver todas" las categorías
+  awaitingNewCategory: boolean;    // esperando el nombre de una categoría nueva a crear
   current: Question | null;
   awaiting: 'question' | 'confirm';
   userId: number;
@@ -184,16 +185,25 @@ function cardQ(cards: any[], bankHint: string): Question {
   return { key: 'card', text: '💳 ¿Cuál *tarjeta de crédito*?', options: list.map((c: any) => ({ label: `💳 ${cardLabel(c)}`, patch: { cardId: c.id } })) };
 }
 function walletQ(wallets: any[]): Question { return { key: 'wallet', text: '👛 ¿Cuál *billetera*?', options: wallets.map((w: any) => ({ label: `👛 ${w.name}`, patch: { walletId: w.id } })) }; }
-/** Categorías: muestra solo las candidatas (relacionadas al detalle) + "ver todas". */
+/** Busca una categoría por nombre (sin distinguir mayúsculas) o la crea. */
+async function findOrCreateCategory(prisma: any, userId: number, name: string): Promise<{ id: number; name: string }> {
+  const clean = name.trim().slice(0, 60);
+  const existing = await prisma.category.findFirst({ where: { userId, name: { equals: clean, mode: 'insensitive' } }, select: { id: true, name: true } });
+  if (existing) return existing;
+  return prisma.category.create({ data: { userId, name: clean }, select: { id: true, name: true } });
+}
+
+/** Categorías: muestra solo las candidatas (relacionadas al detalle) + "crear" + "ver todas". */
 function categoryQ(d: Draft): Question {
   const cats = d.ctx.categories;
   const cands = d.showAllCats ? [] : cats.filter((c: any) => d.categoryCandidates.includes(c.id));
   const list = cands.length ? cands : cats;
   const options: Option[] = list.map((c: any) => ({ label: c.name, patch: { categoryId: c.id } }));
+  options.push({ label: '➕ Crear nueva categoría', patch: {}, action: 'newCategory' });
   options.push({ label: 'Sin categoría', patch: { categoryId: null } });
   // Si mostramos solo las probables, deja una salida para ver el resto.
   if (cands.length && cands.length < cats.length) options.push({ label: '📋 Ver todas las categorías', patch: {}, action: 'showAllCats' });
-  const hint = cands.length ? ' _(las más probables)_' : '';
+  const hint = cands.length ? ' _(las más probables, o escribe el nombre de una)_' : '';
   return { key: 'category', text: `🏷️ ¿Qué *categoría*?${hint}`, options, resolveKey: 'category' };
 }
 
@@ -332,7 +342,7 @@ async function buildRegister(prisma: any, userId: number, p: ParsedMovement): Pr
     if (cat) { payload.categoryId = cat.id; resolved.add('category'); }
   }
 
-  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, categoryCandidates: p.categoryCandidates || [], showAllCats: false, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [] };
+  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, categoryCandidates: p.categoryCandidates || [], showAllCats: false, awaitingNewCategory: false, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [] };
 }
 
 async function balanceReadback(prisma: any, userId: number, payload: Record<string, unknown>): Promise<string> {
@@ -406,6 +416,24 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
     if (image) draft.pendingImages.push(image);
     if (NEGATE.test(text)) { drafts.delete(msg.chatId); await msg.reply('❌ Cancelado. No registré nada.'); return; }
 
+    // Esperando el nombre de una categoría nueva a crear.
+    if (draft.awaitingNewCategory) {
+      const name = text.trim();
+      if (name.length < 2) { await msg.reply('🤔 El nombre es muy corto. Escribe el *nombre* de la categoría.'); return; }
+      draft.awaitingNewCategory = false;
+      try {
+        const cat = await findOrCreateCategory(prisma, userId, name);
+        draft.ctx.categories.push(cat);
+        draft.payload.categoryId = cat.id; draft.resolved.add('category');
+        await msg.reply(`🏷️ Categoría *${cat.name}* lista.`);
+        draft.at = Date.now(); await advance(prisma, msg, draft);
+      } catch (e: any) {
+        logger.error({ e: e?.message }, 'wa: fallo creando categoría');
+        const q = categoryQ(draft); draft.current = q; await msg.reply('❌ No pude crear la categoría.\n' + renderQuestion(q));
+      }
+      return;
+    }
+
     if (draft.awaiting === 'question' && draft.current) {
       const q = draft.current;
       if (q.free === 'amount') {
@@ -418,13 +446,23 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
         draft.payload.description = desc;
       } else {
         let opt = resolveChoice(q, text);
-        // En categorías, permite escribir el NOMBRE aunque no esté en la lista corta.
+        // En categorías, permite escribir el NOMBRE: si existe la usa; si no, la CREA al vuelo.
         if (!opt && q.key === 'category') {
           const t = norm(text);
           const hit = t.length >= 3 ? draft.ctx.categories.find((c: any) => norm(c.name).includes(t) || t.includes(norm(c.name))) : null;
           if (hit) opt = { label: hit.name, patch: { categoryId: hit.id } };
+          else if (/[a-záéíóúñ]/i.test(text) && text.trim().length >= 3) {
+            try {
+              const cat = await findOrCreateCategory(prisma, userId, text.trim());
+              draft.ctx.categories.push(cat);
+              await msg.reply(`🏷️ Categoría *${cat.name}* creada.`);
+              opt = { label: cat.name, patch: { categoryId: cat.id } };
+            } catch (e: any) { logger.error({ e: e?.message }, 'wa: fallo creando categoría'); }
+          }
         }
         if (!opt) { await msg.reply('🤔 No te entendí.\n' + renderQuestion(q)); return; }
+        // "Crear nueva categoría": pide el nombre.
+        if (opt.action === 'newCategory') { draft.awaitingNewCategory = true; draft.at = Date.now(); await msg.reply('➕ Escribe el *nombre* de la nueva categoría (ej: *Mascotas*, *Educación*).'); return; }
         // "Ver todas las categorías": no es una opción real, re-pregunta con la lista completa.
         if (opt.action === 'showAllCats') { draft.showAllCats = true; draft.at = Date.now(); const full = categoryQ(draft); draft.current = full; await msg.reply(renderQuestion(full)); return; }
         // Transferencia a otra persona = sale dinero → se registra como GASTO (no como transferencia interna).
