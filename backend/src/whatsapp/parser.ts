@@ -66,8 +66,8 @@ export async function parseMovement(prisma: any, userId: number, text: string): 
   const last4 = (s: unknown) => { const d = String(s ?? '').replace(/\D/g, ''); return d ? d.slice(-4) : null; };
 
   const catalogo = {
-    // ultimos4 de la cuenta para que "la cuenta/tarjeta que termina en 4567" calce directo.
-    cuentas: accounts.map((a: any) => ({ id: a.id, nombre: a.name, banco: a.bankName, tipo: a.accountKind, ultimos4: last4(a.accountNumber) })),
+    // Datos ricos para emparejar la cuenta por nombre, banco, tipo o ultimos4.
+    cuentas: accounts.map((a: any) => ({ id: a.id, nombre: a.name, banco: a.bankName, tipo: a.accountKind === 'SAVINGS' ? 'ahorros' : a.accountKind === 'CHECKING' ? 'corriente' : null, ultimos4: last4(a.accountNumber) })),
     tarjetasCredito: creditCards.map((c: any) => ({ id: c.id, nombre: c.name, banco: c.bankName, ultimos4: c.last4 })),
     // Tarjetas de DÉBITO -> se pagan con su CUENTA asociada (cuentaId si es única).
     tarjetasDebito: debitCards.map((c: any) => {
@@ -93,6 +93,7 @@ Reglas (solo si intent="register"):
 - accountId, toAccountId, cardId, categoryId: ELIGE únicamente por "id" de los catálogos dados. Si no se menciona o no calza con seguridad, usa null. NO inventes ids.
 - paymentMethod: SOLO si el usuario menciona explícitamente CÓMO pagó/recibió (efectivo, transferencia, depósito, tarjeta de débito, tarjeta de crédito, billetera). Si NO lo menciona, null (el sistema lo preguntará).
 - EMPAREJAR por últimos dígitos: si el usuario dice "la que termina en 4567", "la 4567", "****4567" o similar, busca ese número en los "ultimos4" de cuentas, tarjetasCredito y tarjetasDebito y usa el id correspondiente. Prioriza el match exacto por ultimos4 sobre el nombre.
+- ELEGIR CUENTA de forma FLEXIBLE e INTELIGENTE: empareja la cuenta por CUALQUIERA de estos datos: nombre, banco, tipo (corriente/ahorros) o ultimos4. El nombre puede ser una abreviatura (ej. "B.P-Corriente" = Banco Pichincha, corriente; "B.G-MAAT" = Banco Guayaquil). Ejemplos: "la corriente de Pichincha" -> cuenta con banco Pichincha y tipo corriente; "Produbanco" -> cuenta de banco Produbanco; "Pacífico" -> cuenta de banco Pacífico; "mi ahorros de Guayaquil" -> banco Guayaquil tipo ahorros; "la del JEP" -> Cooperativa JEP. Reconoce el banco aunque el nombre esté abreviado. Pon siempre bankHint con el banco/cuenta mencionado. Si VARIAS cuentas calzan por igual (ej. solo dice "Pichincha" y hay varias), deja accountId=null para que el sistema pregunte cuál.
 - Pago con TARJETA DE CRÉDITO -> paymentMethod="CREDIT_CARD", accountId=null SIEMPRE. cardId = id de la tarjeta de crédito (empareja por ultimos4 o nombre); si mencionan "tarjeta de crédito" pero no sabes cuál, igual paymentMethod="CREDIT_CARD", cardId=null y accountId=null. NUNCA uses una cuenta para un pago con tarjeta de crédito.
 - Pago con TARJETA DE DÉBITO -> busca en "tarjetasDebito" por ultimos4; usa su "cuentaId" como accountId y paymentMethod="DEBIT_CARD". Si no hay cuentaId, intenta emparejar una cuenta por ultimos4. cardId=null.
 - Pago con CUENTA / transferencia / depósito -> accountId = id de la cuenta (empareja por ultimos4 o nombre), paymentMethod="BANK_TRANSFER" (o "DEPOSIT" si dijo depósito). cardId=null. "débito" y "crédito" son DISTINTOS: no los confundas.
