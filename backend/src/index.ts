@@ -23,6 +23,7 @@ import { movementsRouter } from './routes/tenant/movements.routes';
 import { debtsRouter } from './routes/tenant/debts.routes';
 import { recurringsRouter } from './routes/tenant/recurrings.routes';
 import { invoicesRouter } from './routes/tenant/invoices.routes';
+import { invoiceImportRouter, jsonExceptInvoiceImport } from './routes/tenant/invoiceImport.routes';
 import { dashboardRouter } from './routes/tenant/dashboard.routes';
 import { onboardingRouter } from './routes/tenant/onboarding.routes';
 import { notificationsRouter } from './routes/tenant/notifications.routes';
@@ -81,7 +82,8 @@ app.use(cors({
 app.use('/api/attachments', express.json({ limit: '12mb' }));
 app.use('/api/branding', express.json({ limit: '6mb' }));
 app.use('/api/backup/import', express.json({ limit: '256mb' }));
-app.use(express.json({ limit: '256kb' }));
+// La importación de facturas lee su cuerpo dentro de su router, después de autenticar y autorizar.
+app.use(jsonExceptInvoiceImport('256kb'));
 app.use(pinoHttp({
   logger,
   customLogLevel: (_req, res, err) => {
@@ -133,6 +135,7 @@ app.use('/api/statements', tenantScope, statementsRouter);
 app.use('/api/movements',  tenantScope, movementsRouter);
 app.use('/api/debts',      tenantScope, debtsRouter);
 app.use('/api/recurrings', tenantScope, recurringsRouter);
+app.use('/api/invoices/import', tenantScope, invoiceImportRouter);
 app.use('/api/invoices',   tenantScope, invoicesRouter);
 app.use('/api/dashboard',  tenantScope, dashboardRouter);
 app.use('/api/onboarding', tenantScope, onboardingRouter);

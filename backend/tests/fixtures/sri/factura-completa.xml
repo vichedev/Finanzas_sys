@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<factura id="comprobante" version="2.1.0">
+  <infoTributaria>
+    <ambiente>2</ambiente>
+    <tipoEmision>1</tipoEmision>
+    <razonSocial>EMPRESA EJEMPLO S.A.</razonSocial>
+    <nombreComercial>TIENDA EJEMPLO</nombreComercial>
+    <ruc>1790000000001</ruc>
+    <claveAcceso>{{CLAVE}}</claveAcceso>
+    <codDoc>01</codDoc>
+    <estab>001</estab>
+    <ptoEmi>002</ptoEmi>
+    <secuencial>000001234</secuencial>
+    <dirMatriz>AV. EJEMPLO 123</dirMatriz>
+  </infoTributaria>
+  <infoFactura>
+    <fechaEmision>15/03/2026</fechaEmision>
+    <dirEstablecimiento>AV. EJEMPLO 123</dirEstablecimiento>
+    <obligadoContabilidad>SI</obligadoContabilidad>
+    <tipoIdentificacionComprador>04</tipoIdentificacionComprador>
+    <razonSocialComprador>CLIENTE EJEMPLO CIA. LTDA.</razonSocialComprador>
+    <identificacionComprador>0990000000001</identificacionComprador>
+    <totalSinImpuestos>150.00</totalSinImpuestos>
+    <totalDescuento>5.00</totalDescuento>
+    <totalConImpuestos>
+      <totalImpuesto>
+        <codigo>2</codigo>
+        <codigoPorcentaje>0</codigoPorcentaje>
+        <baseImponible>50.00</baseImponible>
+        <tarifa>0</tarifa>
+        <valor>0.00</valor>
+      </totalImpuesto>
+      <totalImpuesto>
+        <codigo>2</codigo>
+        <codigoPorcentaje>4</codigoPorcentaje>
+        <baseImponible>100.00</baseImponible>
+        <tarifa>15</tarifa>
+        <valor>15.00</valor>
+      </totalImpuesto>
+    </totalConImpuestos>
+    <propina>0.00</propina>
+    <importeTotal>165.00</importeTotal>
+    <moneda>DOLAR</moneda>
+    <pagos>
+      <pago>
+        <formaPago>20</formaPago>
+        <total>165.00</total>
+      </pago>
+    </pagos>
+  </infoFactura>
+  <detalles>
+    <detalle>
+      <codigoPrincipal>P-001</codigoPrincipal>
+      <descripcion>PRODUCTO DE EJEMPLO</descripcion>
+      <cantidad>1.000000</cantidad>
+      <precioUnitario>150.000000</precioUnitario>
+      <descuento>5.00</descuento>
+      <precioTotalSinImpuesto>150.00</precioTotalSinImpuesto>
+      <impuestos>
+        <impuesto>
+          <codigo>2</codigo>
+          <codigoPorcentaje>4</codigoPorcentaje>
+          <tarifa>15.00</tarifa>
+          <baseImponible>100.00</baseImponible>
+          <valor>15.00</valor>
+        </impuesto>
+      </impuestos>
+    </detalle>
+  </detalles>
+  <infoAdicional>
+    <campoAdicional nombre="Email">cliente@example.com</campoAdicional>
+  </infoAdicional>
+  <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#" Id="Signature-ejemplo">
+    <ds:SignedInfo>
+      <ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+    </ds:SignedInfo>
+    <ds:SignatureValue>QUJDREVGRw==</ds:SignatureValue>
+  </ds:Signature>
+</factura>

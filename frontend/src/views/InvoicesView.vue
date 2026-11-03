@@ -10,7 +10,7 @@ import {
   CategoryScale,
   LinearScale
 } from 'chart.js';
-import { FileText, Pencil, Trash2, Plus, X, ArrowUpRight, ArrowDownLeft } from 'lucide-vue-next';
+import { FileText, Pencil, Trash2, Plus, X, ArrowUpRight, ArrowDownLeft, Upload } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
 import PanelCard from '../components/PanelCard.vue';
 import FormField from '../components/FormField.vue';
@@ -18,9 +18,12 @@ import AppButton from '../components/AppButton.vue';
 import DataTable, { type Column } from '../components/DataTable.vue';
 import TabBar from '../components/TabBar.vue';
 import AttachmentUploader from '../components/AttachmentUploader.vue';
+import InvoiceImportModal from '../components/InvoiceImportModal.vue';
 import { http } from '../api/http';
 import { useCrud } from '../composables/useCrud';
+import { useConfirm } from '../composables/useConfirm';
 import { useFormat } from '../composables/useFormat';
+import { usePermissions } from '../composables/usePermissions';
 import { yearOptions as periodYears, monthsForYear, START_YEAR, START_MONTH } from '../composables/usePeriod';
 import { useEntitiesStore } from '../stores/entities';
 import { invoicesApi } from '../api/invoices';
@@ -29,6 +32,8 @@ import type { Invoice, InvoiceKind, InvoiceStatus, InvoicePayload } from '../typ
 ChartJS.register(Title, Tooltip, Legend, BarElement, CategoryScale, LinearScale);
 
 const { formatMoney } = useFormat();
+const { alert } = useConfirm();
+const { canWrite } = usePermissions('invoices');
 const entities = useEntitiesStore();
 const accounts = computed(() => entities.accounts);
 const entityList = ref<{ id: number; name: string; kind: 'PERSONAL' | 'BUSINESS' }[]>([]);
@@ -75,9 +80,9 @@ const activeTab = ref<InvoiceTab>('ALL');
 // ---- Período tributario seleccionado (controla resumen IVA + dashboard) ----
 const now = new Date();
 const period = ref({ year: now.getFullYear(), month: now.getMonth() + 1 });
-const yearOptions = computed(() => periodYears());
-// Meses válidos según el año (en el año de inicio, solo desde mayo).
-const monthOptions = computed(() => monthsForYear(period.value.year));
+const yearOptions = computed(() => periodYears(new Date(), periodStart.value.year));
+// Meses válidos según el año (en el año de inicio, solo desde el mes de inicio).
+const monthOptions = computed(() => monthsForYear(period.value.year, periodStart.value.year, periodStart.value.month));
 // Si al cambiar de año el mes queda fuera del rango permitido, se ajusta al mínimo válido.
 watch(() => period.value.year, () => {
   if (!monthOptions.value.some((m) => m.value === period.value.month)) {
@@ -88,6 +93,14 @@ watch(() => period.value.year, () => {
 // ---- CRUD genérico (igual que Cuentas) ----
 const crud = useCrud<Invoice, InvoicePayload>({
   service: invoicesApi,
+  // El 409 explica qué dato del comprobante está bloqueado.
+  onSaveError: async (err) => {
+    const response = (err as { response?: { status?: number; data?: { message?: unknown } } }).response;
+    const message = response?.data?.message;
+    if (response?.status !== 409 || typeof message !== 'string' || !message) return false;
+    await alert(message, 'No se pudo guardar');
+    return true;
+  },
   emptyForm: (): InvoicePayload => ({
     kind: 'SALE',
     status: 'ISSUED',
@@ -132,7 +145,8 @@ const crud = useCrud<Invoice, InvoicePayload>({
   }),
   validate: (f) => {
     if (!f.counterparty.trim()) return f.kind === 'SALE' ? 'El cliente es obligatorio.' : 'El proveedor es obligatorio.';
-    if (!(Number(f.netAmount) > 0)) return 'El valor neto debe ser mayor a 0.';
+    // El neto de un comprobante importado no se edita: exigirlo impediría cambiar el resto.
+    if (!editingImported.value && !(Number(f.netAmount) > 0)) return 'El valor neto debe ser mayor a 0.';
     return null;
   },
   labels: {
@@ -156,32 +170,59 @@ async function onSave() {
 }
 
 // Cálculo en vivo del IVA/total del formulario
-const formVat = computed(() => round2(Number(form.value.netAmount || 0) * (Number(form.value.vatRate || 0) / 100)));
-const formTotal = computed(() => round2(Number(form.value.netAmount || 0) + formVat.value));
+// (una factura importada muestra lo guardado: su IVA y total salen del comprobante, no de neto × tarifa)
+const editingInvoice = computed(() => (editingId.value === null ? null : rows.value.find((r) => r.id === editingId.value) ?? null));
+const editingImported = computed(() => editingInvoice.value?.source === 'SRI_XML');
+const importedInvoice = computed(() => (editingImported.value ? editingInvoice.value : null));
+const formVat = computed(() => importedInvoice.value
+  ? Number(importedInvoice.value.vatAmount)
+  : round2(Number(form.value.netAmount || 0) * (Number(form.value.vatRate || 0) / 100)));
+const formTotal = computed(() => importedInvoice.value
+  ? Number(importedInvoice.value.total)
+  : round2(Number(form.value.netAmount || 0) + formVat.value));
+const hasManyRates = (i: Invoice | null) => (i?.vatLines?.length ?? 0) > 1;
+// Tarifas de comprobantes antiguos (12 %, 5 %…) que el selector no ofrece.
+const importedRateOutOfList = computed(() => editingImported.value && ![0, 15].includes(Number(form.value.vatRate)));
 
 // ---- Helpers de período (robustos a zona horaria: usamos la cadena YYYY-MM) ----
 const ym = (iso: string) => String(iso).slice(0, 7); // "YYYY-MM"
 const periodKey = computed(() => `${period.value.year}-${pad2(period.value.month)}`);
 
+// Normalmente desde mayo 2026, pero una factura importada puede ser anterior y debe poder liquidarse.
+const periodStart = computed(() => {
+  let oldest = `${START_YEAR}-${pad2(START_MONTH)}`;
+  for (const r of rows.value) {
+    const key = ym(r.issueDate);
+    if (/^\d{4}-\d{2}$/.test(key) && key < oldest) oldest = key;
+  }
+  return { year: Number(oldest.slice(0, 4)), month: Number(oldest.slice(5, 7)) };
+});
+// Si se elimina la factura más antigua, el período elegido puede quedar fuera del rango.
+watch(periodStart, (start) => {
+  if (period.value.year < start.year || (period.value.year === start.year && period.value.month < start.month)) {
+    period.value = { year: start.year, month: start.month };
+  }
+});
+
 const validRows = computed(() => rows.value.filter((r) => r.status !== 'VOID'));
 
 // ---- Resumen de IVA del mes seleccionado ----
 const summary = computed(() => {
-  let salesNet = 0, salesVat = 0, salesCount = 0;
-  let purchasesNet = 0, purchasesVat = 0, purchasesCount = 0;
+  let salesNet = 0, salesVat = 0, salesTotal = 0, salesCount = 0;
+  let purchasesNet = 0, purchasesVat = 0, purchasesTotal = 0, purchasesCount = 0;
   for (const r of validRows.value) {
     if (ym(r.issueDate) !== periodKey.value) continue;
     if (r.kind === 'SALE') {
-      salesNet += Number(r.netAmount); salesVat += Number(r.vatAmount); salesCount++;
+      salesNet += Number(r.netAmount); salesVat += Number(r.vatAmount); salesTotal += Number(r.total); salesCount++;
     } else {
-      purchasesNet += Number(r.netAmount); purchasesVat += Number(r.vatAmount); purchasesCount++;
+      purchasesNet += Number(r.netAmount); purchasesVat += Number(r.vatAmount); purchasesTotal += Number(r.total); purchasesCount++;
     }
   }
   const netVat = round2(salesVat - purchasesVat);
   const pay = new Date(period.value.year, period.value.month, 1); // mes siguiente
   return {
-    sales: { net: salesNet, vat: salesVat, total: round2(salesNet + salesVat), count: salesCount },
-    purchases: { net: purchasesNet, vat: purchasesVat, total: round2(purchasesNet + purchasesVat), count: purchasesCount },
+    sales: { net: salesNet, vat: salesVat, total: round2(salesTotal), count: salesCount },
+    purchases: { net: purchasesNet, vat: purchasesVat, total: round2(purchasesTotal), count: purchasesCount },
     vatToPay: netVat > 0 ? netVat : 0,
     vatCredit: netVat < 0 ? round2(-netVat) : 0,
     paymentLabel: `${MONTHS[pay.getMonth()]} ${pay.getFullYear()}`
@@ -205,29 +246,30 @@ const vatByEntity = computed(() => {
 });
 
 // ---- Serie mensual (12 meses terminando en el período seleccionado) ----
+// Lo facturado sale del total guardado: neto + IVA no recoge los otros cargos de un comprobante.
 const monthlySeries = computed(() => {
-  const buckets: Array<{ key: string; label: string; salesNet: number; salesVat: number; purchasesNet: number; purchasesVat: number }> = [];
+  const buckets: Array<{ key: string; label: string; salesNet: number; salesVat: number; salesGross: number; purchasesNet: number; purchasesVat: number }> = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(period.value.year, period.value.month - 1 - i, 1);
     const y = d.getFullYear(), mo = d.getMonth() + 1;
-    // No mostrar meses anteriores al inicio del sistema (mayo 2026).
-    if (y < START_YEAR || (y === START_YEAR && mo < START_MONTH)) continue;
+    // No mostrar meses anteriores al inicio (mayo 2026 o la factura más antigua).
+    if (y < periodStart.value.year || (y === periodStart.value.year && mo < periodStart.value.month)) continue;
     buckets.push({
       key: `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`,
       label: `${MONTH_SHORT[d.getMonth()]} ${String(d.getFullYear()).slice(2)}`,
-      salesNet: 0, salesVat: 0, purchasesNet: 0, purchasesVat: 0
+      salesNet: 0, salesVat: 0, salesGross: 0, purchasesNet: 0, purchasesVat: 0
     });
   }
   const byKey = new Map(buckets.map((b) => [b.key, b]));
   for (const r of validRows.value) {
     const b = byKey.get(ym(r.issueDate));
     if (!b) continue;
-    if (r.kind === 'SALE') { b.salesNet += Number(r.netAmount); b.salesVat += Number(r.vatAmount); }
+    if (r.kind === 'SALE') { b.salesNet += Number(r.netAmount); b.salesVat += Number(r.vatAmount); b.salesGross += Number(r.total); }
     else { b.purchasesNet += Number(r.netAmount); b.purchasesVat += Number(r.vatAmount); }
   }
   return buckets.map((b) => ({
     ...b,
-    salesTotal: round2(b.salesNet + b.salesVat),
+    salesTotal: round2(b.salesGross),
     vatToPay: Math.max(0, round2(b.salesVat - b.purchasesVat))
   }));
 });
@@ -261,6 +303,10 @@ const visibleRows = computed(() =>
   activeTab.value === 'ALL' ? rows.value : rows.value.filter((r) => r.kind === activeTab.value)
 );
 
+// ---- Importación desde XML del SRI ----
+const importOpen = ref(false);
+const accountOptions = computed(() => accounts.value.map((a) => ({ id: a.id, label: accountLabel(a) })));
+
 const columns: Column<Invoice>[] = [
   { key: 'kind', label: 'Tipo', align: 'center', width: '10%' },
   { key: 'doc', label: 'Factura / Contraparte', width: '30%' },
@@ -288,7 +334,13 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
 
 <template>
   <section class="dashboard">
-    <PageHeader title="Facturas e IVA" subtitle="Registra tus facturas de ventas y compras, y calcula el IVA a pagar al SRI." />
+    <PageHeader title="Facturas e IVA" subtitle="Registra tus facturas de ventas y compras, y calcula el IVA a pagar al SRI.">
+      <template v-if="canWrite()" #actions>
+        <AppButton @click="importOpen = true">
+          <template #icon><Upload :size="16" /></template>Subir XML
+        </AppButton>
+      </template>
+    </PageHeader>
 
     <TabBar :tabs="MAIN_TABS" v-model="mainTab" />
 
@@ -297,17 +349,18 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
       <!-- Formulario -->
       <PanelCard :title="editingId !== null ? 'Editar factura' : 'Nueva factura'">
         <form class="form" @submit.prevent="onSave">
+          <p v-if="editingImported" class="imported-note">Datos del comprobante: no se editan</p>
           <div class="form-grid">
             <FormField label="Tipo" required html-for="inv-kind"
                        :hint="form.kind === 'SALE' ? 'Tú emites la factura (IVA cobrado).' : 'Recibes la factura de un proveedor (IVA crédito).'">
-              <select id="inv-kind" v-model="form.kind" required>
+              <select id="inv-kind" v-model="form.kind" required :disabled="editingImported">
                 <option value="SALE">Venta (emitida)</option>
                 <option value="PURCHASE">Compra (recibida)</option>
               </select>
             </FormField>
 
             <FormField label="Nº de factura" html-for="inv-number" hint="Número o autorización SRI. Opcional.">
-              <input id="inv-number" v-model="form.number" maxlength="60" placeholder="ej. 001-001-000001234" />
+              <input id="inv-number" v-model="form.number" :disabled="editingImported" maxlength="60" placeholder="ej. 001-001-000001234" />
             </FormField>
 
             <FormField :label="form.kind === 'SALE' ? 'Cliente' : 'Proveedor'" required html-for="inv-counterparty">
@@ -316,11 +369,11 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
             </FormField>
 
             <FormField label="RUC / Cédula" html-for="inv-ruc" hint="Opcional.">
-              <input id="inv-ruc" v-model="form.counterpartyTaxId" maxlength="20" placeholder="ej. 1790012345001" />
+              <input id="inv-ruc" v-model="form.counterpartyTaxId" :disabled="editingImported" maxlength="20" placeholder="ej. 1790012345001" />
             </FormField>
 
             <FormField label="Fecha de emisión" required html-for="inv-date" hint="Define el período tributario.">
-              <input id="inv-date" v-model="form.issueDate" type="date" required />
+              <input id="inv-date" v-model="form.issueDate" type="date" required :disabled="editingImported" />
             </FormField>
 
             <FormField label="Cuenta relacionada" html-for="inv-account" hint="Solo referencia. No afecta el saldo.">
@@ -338,7 +391,8 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
             </FormField>
 
             <FormField label="Tarifa IVA" required html-for="inv-vatrate">
-              <select id="inv-vatrate" v-model.number="form.vatRate" required>
+              <select id="inv-vatrate" v-model.number="form.vatRate" required :disabled="editingImported">
+                <option v-if="importedRateOutOfList" :value="form.vatRate">{{ form.vatRate }}%</option>
                 <option :value="15">15% (gravado)</option>
                 <option :value="0">0% (exento / no objeto)</option>
               </select>
@@ -361,17 +415,30 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
           <div class="calc-summary">
             <div class="calc-item">
               <small>Valor neto (USD) <span class="required-mark">*</span></small>
-              <input v-model.number="form.netAmount" type="number" step="0.01" min="0" required class="calc-input" />
+              <input v-model.number="form.netAmount" type="number" step="0.01" min="0" required class="calc-input" :disabled="editingImported" />
             </div>
             <div class="calc-item">
-              <small>IVA ({{ form.vatRate }}%)</small>
+              <small>{{ hasManyRates(importedInvoice) ? 'IVA' : `IVA (${form.vatRate}%)` }}</small>
               <strong>{{ formatMoney(formVat) }}</strong>
             </div>
+            <div v-if="importedInvoice && Number(importedInvoice.discount || 0) !== 0" class="calc-item">
+              <small>Descuento</small>
+              <strong>{{ formatMoney(importedInvoice.discount) }}</strong>
+            </div>
+            <div v-if="importedInvoice && Number(importedInvoice.otherCharges || 0) !== 0" class="calc-item">
+              <small>Otros cargos</small>
+              <strong>{{ formatMoney(importedInvoice.otherCharges) }}</strong>
+            </div>
             <div class="calc-item calc-total">
-              <small>Total con IVA</small>
+              <small>{{ importedInvoice ? 'Total del comprobante' : 'Total con IVA' }}</small>
               <strong>{{ formatMoney(formTotal) }}</strong>
             </div>
           </div>
+          <ul v-if="importedInvoice && hasManyRates(importedInvoice)" class="vat-breakdown">
+            <li v-for="(line, i) in importedInvoice.vatLines" :key="i">
+              {{ Number(line.rate) }}%: base {{ formatMoney(line.base) }}, IVA {{ formatMoney(line.vat) }}
+            </li>
+          </ul>
 
           <FormField label="Notas" html-for="inv-notes">
             <textarea id="inv-notes" v-model="form.notes" rows="2" placeholder="Observaciones…"></textarea>
@@ -410,6 +477,7 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
 
           <template #cell-doc="{ row }">
             <strong>{{ row.number || 'Sin número' }}</strong>
+            <span v-if="row.source === 'SRI_XML'" class="source-tag" :title="row.accessKey ? `Clave de acceso: ${row.accessKey}` : undefined">XML SRI</span>
             <div><small class="hint">{{ row.counterparty }}<template v-if="row.counterpartyTaxId"> · {{ row.counterpartyTaxId }}</template></small></div>
             <div v-if="row.description"><small class="hint">{{ row.description }}</small></div>
           </template>
@@ -418,7 +486,7 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
           <template #cell-net="{ row }">{{ formatMoney(row.netAmount) }}</template>
           <template #cell-vat="{ row }">
             {{ formatMoney(row.vatAmount) }}
-            <div><small class="hint">{{ Number(row.vatRate) }}%</small></div>
+            <div><small class="hint">{{ hasManyRates(row) ? 'Varias tarifas' : `${Number(row.vatRate)}%` }}</small></div>
           </template>
           <template #cell-total="{ row }"><strong>{{ formatMoney(row.total) }}</strong></template>
           <template #cell-status="{ row }">
@@ -534,6 +602,15 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
       </div>
     </PanelCard>
     </div>
+
+    <InvoiceImportModal
+      v-if="canWrite()"
+      :open="importOpen"
+      :entities="entityList"
+      :accounts="accountOptions"
+      @close="importOpen = false"
+      @imported="load"
+    />
   </section>
 </template>
 
@@ -572,6 +649,11 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
 .calc-item strong { font-size: 16px; color: #0f172a; }
 .calc-input { width: 140px; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; }
 .calc-total strong { color: #2563eb; font-size: 18px; }
+
+/* Facturas importadas desde XML */
+.imported-note { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: #64748b; }
+.vat-breakdown { list-style: none; margin: -6px 0 14px; padding: 0 14px; font-size: 12px; color: #64748b; }
+.source-tag { margin-left: 6px; padding: 1px 6px; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 10px; font-weight: 600; color: #64748b; white-space: nowrap; }
 
 /* Badges */
 .cat-pill.kind-sale { background: #ecfdf5; color: #047857; display: inline-flex; align-items: center; gap: 3px; }

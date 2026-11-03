@@ -123,12 +123,25 @@ attachmentsRouter.patch('/:id', async (req, res) => {
   res.json(row);
 });
 
+/** Cabecera Content-Disposition con el nombre saneado: sin comillas, separadores ni saltos de línea. */
+function contentDisposition(disposition: 'inline' | 'attachment', filename: string): string {
+  const clean = filename.replace(/[\x00-\x1f\x7f\\/:*?"<>|]/g, '').trim() || 'archivo';
+  const ascii = clean.replace(/[^\x20-\x7e]/g, '_');
+  const encoded = encodeURIComponent(clean).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
 attachmentsRouter.get('/:id/file', async (req, res) => {
   const id = Number(req.params.id);
   const row = await req.tenantPrisma!.attachment.findFirst({ where: { id, userId: req.tenantUserId! } });
   if (!row) return res.status(404).json({ message: 'No encontrado' });
+  // Solo se muestran en el navegador los tipos de ALLOWED. Lo demás (el XML de una factura
+  // importada, por ejemplo) sale como descarga si se abre esta URL. El frontend la lee como blob,
+  // donde esta cabecera no aplica, y por eso guarda esos archivos él mismo sin abrirlos.
+  const disposition = ALLOWED.includes(row.mimeType) ? 'inline' : 'attachment';
   res.setHeader('Content-Type', row.mimeType);
-  res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.filename)}"`);
+  res.setHeader('Content-Disposition', contentDisposition(disposition, row.filename));
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.send(Buffer.from(row.data));
 });
 

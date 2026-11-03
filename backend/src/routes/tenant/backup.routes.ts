@@ -242,11 +242,24 @@ backupRouter.post('/import', async (req, res) => {
       }
       // Facturas
       for (const inv of data.invoices || []) {
+        // Una factura solo cuenta como importada con su clave de 49 dígitos; si no, queda como manual.
+        const imported = inv.source === 'SRI_XML' && typeof inv.accessKey === 'string' && /^\d{49}$/.test(inv.accessKey);
+        const accessKey: string | null = imported ? inv.accessKey : null;
+        // Clave y tipo son únicos por usuario: si esa factura ya está aquí, se conserva la
+        // existente y se omite la del respaldo, con su comprobante (la existente tiene el suyo).
+        if (accessKey && await tx.invoice.findFirst({ where: { userId, accessKey, kind: inv.kind }, select: { id: true } })) {
+          bump('facturasOmitidas');
+          continue;
+        }
         const created = await tx.invoice.create({ data: {
           userId, kind: inv.kind, status: inv.status, number: inv.number ?? null, counterparty: inv.counterparty,
           counterpartyTaxId: inv.counterpartyTaxId ?? null, issueDate: toDate(inv.issueDate) ?? new Date(),
           netAmount: inv.netAmount ?? 0, vatRate: inv.vatRate ?? 0, vatAmount: inv.vatAmount ?? 0, total: inv.total ?? 0,
-          accountId: remap(mAccount, inv.accountId), entityId: remap(mEntity, inv.entityId), description: inv.description ?? null, notes: inv.notes ?? null
+          accountId: remap(mAccount, inv.accountId), entityId: remap(mEntity, inv.entityId), description: inv.description ?? null, notes: inv.notes ?? null,
+          source: imported ? 'SRI_XML' : 'MANUAL', accessKey,
+          discount: inv.discount ?? null, otherCharges: inv.otherCharges ?? null,
+          vatLines: inv.vatLines ?? undefined,
+          issuerTaxId: inv.issuerTaxId ?? null, buyerTaxId: inv.buyerTaxId ?? null
         } });
         mInvoice[inv.id] = created.id; bump('invoices');
       }

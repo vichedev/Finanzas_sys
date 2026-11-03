@@ -130,6 +130,21 @@ Los dumps se guardan en `/var/backups/finanzas/` con retención de 30 días.
 | Reportes | Agregado por categoría con barras de distribución |
 | Configuración (admin) | Perfil, Categorías, Usuarios y permisos, Servidor de correo |
 
+## Importar facturas (XML del SRI)
+
+Desde Facturas se suben los XML de facturas electrónicas del SRI (hasta 50 por lote), se revisan y se confirman.
+
+- **Se aceptan:** facturas de ambiente de producción con clave de acceso válida, con o sin la constancia de autorización.
+- **Aún no se aceptan:** notas de crédito, retenciones ni otros comprobantes.
+- **Venta o compra:** se deduce comparando el RUC del emisor y del comprador con las razones sociales de la empresa. Si no coincide ninguna, o coinciden varias, lo elige el usuario; si no coincide ninguna, además se le avisa para que lo revise antes de registrar.
+- **Factura entre dos razones propias:** se puede registrar una vez como venta y otra como compra.
+- **Consumidor final:** una compra a nombre de consumidor final no se importa, porque no sustenta crédito tributario.
+- **Duplicados:** la misma clave de acceso con el mismo tipo nunca se vuelve a crear. Otra factura del mismo tipo con el mismo establecimiento, punto de emisión y secuencial, y con el mismo RUC o sin RUC en una de las dos, solo pasa si el usuario lo autoriza.
+- **Valores:** salen siempre del documento; una factura importada no permite cambiar neto, tarifa, fecha, número, RUC de la contraparte ni tipo. El XML original queda como comprobante: la aplicación lo guarda como archivo, sin abrirlo en el navegador.
+- **Límites:** 20 peticiones por minuto por usuario y 2 importaciones simultáneas por proceso; lo que exceda recibe un 429.
+
+**Al desplegar:** esta función añade columnas y un índice único a `Invoice`, así que hay que correr `sync:tenants` (`sync:tenants:prod` en producción) para llevar el esquema a las empresas existentes. Pruebas: `npm run test:invoices`.
+
 ## Seguridad
 
 - BD/pgAdmin/backend bindeados a `127.0.0.1`. Solo el frontend (80) está expuesto.

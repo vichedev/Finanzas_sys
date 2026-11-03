@@ -27,19 +27,20 @@ export function periodOptions(now: Date = new Date()): PeriodOption[] {
   return opts;
 }
 
-// Años seleccionables (desde el de inicio hasta el próximo).
-export function yearOptions(now: Date = new Date()): number[] {
-  const max = Math.max(now.getFullYear() + 1, START_YEAR);
+// Años seleccionables (desde el de inicio hasta el próximo). `startYear` adelanta el inicio
+// en la vista que tenga datos anteriores (ej. facturas importadas); por defecto, el del sistema.
+export function yearOptions(now: Date = new Date(), startYear: number = START_YEAR): number[] {
+  const max = Math.max(now.getFullYear() + 1, startYear);
   const years: number[] = [];
-  for (let y = START_YEAR; y <= max; y++) years.push(y);
+  for (let y = startYear; y <= max; y++) years.push(y);
   return years;
 }
 
-// Meses válidos para un año dado (en el año de inicio, solo desde mayo).
-export function monthsForYear(year: number): { value: number; label: string }[] {
+// Meses válidos para un año dado (en el año de inicio, solo desde el mes de inicio).
+export function monthsForYear(year: number, startYear: number = START_YEAR, startMonth: number = START_MONTH): { value: number; label: string }[] {
   return MONTH_NAMES
     .map((label, i) => ({ value: i + 1, label }))
-    .filter((m) => year > START_YEAR || m.value >= START_MONTH);
+    .filter((m) => year > startYear || m.value >= startMonth);
 }
 
 // ¿Es el período el más antiguo permitido? (para deshabilitar "mes anterior")

@@ -459,7 +459,7 @@ model Invoice {
   netAmount         Decimal       @db.Decimal(14, 2) // Subtotal sin IVA
   vatRate           Decimal       @db.Decimal(5, 2) @default(15) // % IVA (15 u 0)
   vatAmount         Decimal       @db.Decimal(14, 2) // Valor de IVA
-  total             Decimal       @db.Decimal(14, 2) // netAmount + vatAmount
+  total             Decimal       @db.Decimal(14, 2) // Manual: netAmount + vatAmount. SRI_XML: importeTotal del documento
 
   accountId         Int?
   account           Account?      @relation(fields: [accountId], references: [id], onDelete: SetNull)
@@ -470,9 +470,19 @@ model Invoice {
   description        String?
   notes             String?
 
+  // Origen del dato. En SRI_XML los importes salen del documento y no se recalculan.
+  source            String        @default("MANUAL") // MANUAL | SRI_XML
+  accessKey         String?       // Clave de acceso del SRI (49 dígitos)
+  discount          Decimal?      @db.Decimal(14, 2)
+  otherCharges      Decimal?      @db.Decimal(14, 2) // ICE, propina y demás cargos
+  vatLines          Json?         // Desglose del IVA: [{ rate, rateCode, base, vat }]
+  issuerTaxId       String?
+  buyerTaxId        String?
+
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
 
+  @@unique([userId, accessKey, kind]) // una factura entre dos razones propias se registra en ambos lados
   @@index([userId, kind, issueDate])
   @@index([userId, issueDate])
 }

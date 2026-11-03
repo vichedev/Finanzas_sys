@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
@@ -45,6 +45,40 @@ function computeTotals(netAmount: number, vatRate: number) {
   const vatAmount = round2(netAmount * (vatRate / 100));
   const total = round2(netAmount + vatAmount);
   return { vatAmount, total };
+}
+
+/** Mensaje de error si la cuenta o la razón social indicadas no son del usuario; null si todo está bien. */
+async function foreignReference(req: Request, refs: { accountId?: number | null; entityId?: number | null }): Promise<string | null> {
+  const owned = async (model: 'account' | 'entity', id: number) => {
+    if (!Number.isInteger(id)) return false;
+    const where = { id, userId: req.tenantUserId! };
+    const row = model === 'account'
+      ? await req.tenantPrisma!.account.findFirst({ where, select: { id: true } })
+      : await req.tenantPrisma!.entity.findFirst({ where, select: { id: true } });
+    return row !== null;
+  };
+  if (refs.accountId && !(await owned('account', refs.accountId))) return 'La cuenta indicada no existe.';
+  if (refs.entityId && !(await owned('entity', refs.entityId))) return 'La razón social indicada no existe.';
+  return null;
+}
+
+const utcDay = (d: Date) => d.toISOString().slice(0, 10);
+const cleanText = (v: string | null | undefined) => v?.trim() || null;
+
+/**
+ * Datos del documento que una factura importada no deja cambiar. El formulario los reenvía
+ * siempre, así que se comparan por valor. Devuelve el primero que cambia, o null si ninguno.
+ */
+function changedDocumentField(
+  body: { netAmount?: number; vatRate?: number; issueDate?: Date; number?: string | null; counterpartyTaxId?: string | null },
+  stored: { netAmount: unknown; vatRate: unknown; issueDate: Date; number: string | null; counterpartyTaxId: string | null }
+): string | null {
+  if (body.netAmount !== undefined && body.netAmount !== Number(stored.netAmount)) return 'el valor neto';
+  if (body.vatRate !== undefined && body.vatRate !== Number(stored.vatRate)) return 'la tarifa de IVA';
+  if (body.issueDate !== undefined && utcDay(body.issueDate) !== utcDay(stored.issueDate)) return 'la fecha de emisión';
+  if (body.number !== undefined && cleanText(body.number) !== stored.number) return 'el número';
+  if (body.counterpartyTaxId !== undefined && cleanText(body.counterpartyTaxId) !== stored.counterpartyTaxId) return 'el RUC de la contraparte';
+  return null;
 }
 
 invoicesRouter.get('/', async (req, res) => {
@@ -137,6 +171,8 @@ invoicesRouter.get('/vat-summary', async (req, res) => {
 
 invoicesRouter.post('/', async (req, res) => {
   const body = schema.parse(req.body);
+  const foreign = await foreignReference(req, body);
+  if (foreign) return res.status(400).json({ message: foreign });
   const { vatAmount, total } = computeTotals(body.netAmount, body.vatRate);
 
   const row = await req.tenantPrisma!.invoice.create({
@@ -167,26 +203,43 @@ invoicesRouter.put('/:id', async (req, res) => {
 
   const existing = await req.tenantPrisma!.invoice.findUnique({
     where: { id },
-    select: { userId: true, netAmount: true, vatRate: true }
+    select: {
+      userId: true, netAmount: true, vatRate: true, source: true, kind: true,
+      issueDate: true, number: true, counterpartyTaxId: true
+    }
   });
   if (!existing || existing.userId !== req.tenantUserId!) {
     return res.status(404).json({ message: 'Recurso no encontrado' });
   }
 
+  const imported = existing.source === 'SRI_XML';
+  if (imported) {
+    const changed = changedDocumentField(body, existing);
+    if (changed) {
+      return res.status(409).json({ message: `Esta factura se importó del SRI: no se puede cambiar ${changed}. Si está mal, elimínala y vuelve a importarla.` });
+    }
+    if (body.kind !== undefined && body.kind !== existing.kind) {
+      return res.status(409).json({ message: 'Esta factura se importó del SRI: no se puede cambiar entre venta y compra. Elimínala y vuelve a importarla con el tipo correcto.' });
+    }
+  }
+
+  const foreign = await foreignReference(req, body);
+  if (foreign) return res.status(400).json({ message: foreign });
+
   const data: Record<string, unknown> = {};
   if (body.kind !== undefined) data.kind = body.kind;
   if (body.status !== undefined) data.status = body.status;
-  if (body.number !== undefined) data.number = body.number?.trim() || null;
+  if (!imported && body.number !== undefined) data.number = body.number?.trim() || null;
   if (body.counterparty !== undefined) data.counterparty = body.counterparty.trim();
-  if (body.counterpartyTaxId !== undefined) data.counterpartyTaxId = body.counterpartyTaxId?.trim() || null;
-  if (body.issueDate !== undefined) data.issueDate = body.issueDate;
+  if (!imported && body.counterpartyTaxId !== undefined) data.counterpartyTaxId = body.counterpartyTaxId?.trim() || null;
+  if (!imported && body.issueDate !== undefined) data.issueDate = body.issueDate;
   if (body.description !== undefined) data.description = body.description?.trim() || null;
   if (body.accountId !== undefined) data.accountId = body.accountId || null;
   if (body.entityId !== undefined) data.entityId = body.entityId || null;
   if (body.notes !== undefined) data.notes = body.notes?.trim() || null;
 
-  // Si cambia el neto o la tarifa, recalculamos IVA y total.
-  if (body.netAmount !== undefined || body.vatRate !== undefined) {
+  // Si cambia el neto o la tarifa, recalculamos IVA y total. Lo importado conserva los del documento.
+  if (!imported && (body.netAmount !== undefined || body.vatRate !== undefined)) {
     const net = body.netAmount ?? Number(existing.netAmount);
     const rate = body.vatRate ?? Number(existing.vatRate);
     const { vatAmount, total } = computeTotals(net, rate);

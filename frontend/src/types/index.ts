@@ -113,6 +113,13 @@ export interface Invoice {
   entity?: { id: number; name: string; kind: EntityKind } | null;
   description?: string | null;
   notes?: string | null;
+  source?: 'MANUAL' | 'SRI_XML';
+  accessKey?: string | null;
+  discount?: number | string;
+  otherCharges?: number | string;
+  vatLines?: { rate: number; rateCode: string; base: number; vat: number }[] | null;
+  issuerTaxId?: string | null;
+  buyerTaxId?: string | null;
 }
 
 export interface InvoicePayload {

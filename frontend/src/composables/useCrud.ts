@@ -25,6 +25,8 @@ export interface UseCrudOptions<T extends { id: number }, F> {
   toPayload?: (form: F) => F;
   /** Devuelve un mensaje de error si el formulario es inválido, o null. */
   validate?: (form: F) => string | null;
+  /** Atiende un error al guardar. Si devuelve true, ya se avisó al usuario y no sale el aviso genérico. */
+  onSaveError?: (err: unknown) => boolean | Promise<boolean>;
   labels?: CrudLabels;
 }
 
@@ -89,8 +91,8 @@ export function useCrud<T extends { id: number }, F>(opts: UseCrudOptions<T, F>)
       }
       resetForm();
       await load();
-    } catch {
-      toast.error(opts.labels?.saveError ?? 'No se pudo guardar.');
+    } catch (err) {
+      if (!(await opts.onSaveError?.(err))) toast.error(opts.labels?.saveError ?? 'No se pudo guardar.');
     } finally {
       saving.value = false;
     }
