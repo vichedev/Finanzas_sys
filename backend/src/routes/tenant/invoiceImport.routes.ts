@@ -1,4 +1,5 @@
 import express, { Router, type NextFunction, type Request, type RequestHandler, type Response } from 'express';
+import { boundedJson } from '../../middleware/bodyLimits';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { requirePermission } from '../../middleware/permissions';
@@ -57,7 +58,7 @@ invoiceImportRouter.use(
   requireTenantUser,
   perUserLimit,
   limitConcurrency,
-  express.json({ limit: '12mb' })
+  boundedJson({ limit: '12mb', maxContainers: 1000 })
 );
 
 // Lista sin validar elemento a elemento: un archivo malo da un error en su ítem, no un 400 del lote.

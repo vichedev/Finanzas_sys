@@ -2,6 +2,7 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
+import { settleVatByEntity } from '../../lib/vat';
 
 export const invoicesRouter = Router();
 invoicesRouter.use(requireAuth, (req, res, next) =>
@@ -96,7 +97,8 @@ invoicesRouter.get('/', async (req, res) => {
 
 /**
  * Resumen de IVA del período tributario (year/month por fecha de emisión).
- * IVA a pagar = IVA cobrado en ventas − IVA crédito en compras.
+ * Por cada razón social: IVA a pagar = IVA cobrado en ventas − IVA crédito en compras.
+ * El crédito de una razón social no reduce lo que debe otra.
  * Se declara y paga el mes siguiente.
  */
 invoicesRouter.get('/vat-summary', async (req, res) => {
@@ -129,7 +131,6 @@ invoicesRouter.get('/vat-summary', async (req, res) => {
   const purchasesTotal = Number(purchase?._sum.total || 0);
   const purchasesCount = purchase?._count._all || 0;
 
-  const netVat = round2(salesVat - purchasesVat); // + a pagar, − crédito a favor
   const pay = shiftMonth(year, month, 1); // se declara el mes siguiente
 
   // Desglose de IVA por razón social (cuánto declara/paga cada entidad).
@@ -157,14 +158,15 @@ invoicesRouter.get('/vat-summary', async (req, res) => {
     return { ...r, salesVat: round2(r.salesVat), purchasesVat: round2(r.purchasesVat), vatToPay: net > 0 ? net : 0, vatCredit: net < 0 ? round2(-net) : 0, netVat: net };
   }).sort((a, b) => b.vatToPay - a.vatToPay);
 
+  const { vatToPay, vatCredit } = settleVatByEntity(byEntityRaw);
+
   res.json({
     period: { year, month, label: `${MONTH_LABEL[month - 1]} ${year}` },
     paymentPeriod: { year: pay.year, month: pay.month, label: `${MONTH_LABEL[pay.month - 1]} ${pay.year}` },
     sales: { net: salesNet, vat: salesVat, total: salesTotal, count: salesCount },
     purchases: { net: purchasesNet, vat: purchasesVat, total: purchasesTotal, count: purchasesCount },
-    vatToPay: netVat > 0 ? netVat : 0,
-    vatCredit: netVat < 0 ? round2(-netVat) : 0,
-    netVat,
+    vatToPay,
+    vatCredit,
     byEntity
   });
 });

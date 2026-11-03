@@ -24,6 +24,7 @@ import { debtsRouter } from './routes/tenant/debts.routes';
 import { recurringsRouter } from './routes/tenant/recurrings.routes';
 import { invoicesRouter } from './routes/tenant/invoices.routes';
 import { invoiceImportRouter, jsonExceptInvoiceImport } from './routes/tenant/invoiceImport.routes';
+import { boundedJson, createBodyGate, LARGE_BODY_ROUTES, skipBodyFor } from './middleware/bodyLimits';
 import { dashboardRouter } from './routes/tenant/dashboard.routes';
 import { onboardingRouter } from './routes/tenant/onboarding.routes';
 import { notificationsRouter } from './routes/tenant/notifications.routes';
@@ -77,13 +78,9 @@ app.use(cors({
   },
   credentials: true
 }));
-// Parsers de mayor tamaño para subir comprobantes e importar respaldos
-// (deben ir ANTES del json global de 256kb; express.json no re-parsea si el body ya se leyó).
-app.use('/api/attachments', express.json({ limit: '12mb' }));
-app.use('/api/branding', express.json({ limit: '6mb' }));
-app.use('/api/backup/import', express.json({ limit: '256mb' }));
-// La importación de facturas lee su cuerpo dentro de su router, después de autenticar y autorizar.
-app.use(jsonExceptInvoiceImport('256kb'));
+// Las rutas con cuerpo grande (adjuntos, identidad, respaldos e importación de facturas)
+// lo leen en su montaje, después de autenticar: un anónimo no debe poder llenar la memoria.
+app.use(skipBodyFor(LARGE_BODY_ROUTES, jsonExceptInvoiceImport('256kb')));
 app.use(pinoHttp({
   logger,
   customLogLevel: (_req, res, err) => {
@@ -125,6 +122,7 @@ app.use('/api/security', securityRouter);
 
 // Todas las rutas /api/* (excepto auth y super-admin) requieren auth + tenant context
 const tenantScope = [requireAuth, tenantContext];
+const uploadGate = createBodyGate(4, 'El servidor está procesando otras subidas. Inténtalo de nuevo en unos segundos.');
 app.use('/api/accounts',   tenantScope, accountsRouter);
 app.use('/api/cards',      tenantScope, cardsRouter);
 app.use('/api/categories', tenantScope, categoriesRouter);
@@ -140,9 +138,9 @@ app.use('/api/invoices',   tenantScope, invoicesRouter);
 app.use('/api/dashboard',  tenantScope, dashboardRouter);
 app.use('/api/onboarding', tenantScope, onboardingRouter);
 app.use('/api/notifications', tenantScope, notificationsRouter);
-app.use('/api/attachments', tenantScope, attachmentsRouter);
+app.use('/api/attachments', tenantScope, uploadGate, boundedJson({ limit: '12mb', maxContainers: 1000 }), attachmentsRouter);
 app.use('/api/backup',      tenantScope, backupRouter);
-app.use('/api/branding',    tenantScope, brandingRouter);
+app.use('/api/branding',    tenantScope, uploadGate, boundedJson({ limit: '6mb', maxContainers: 1000 }), brandingRouter);
 app.use('/api/admin',      tenantScope, adminWriteLimiter, tenantAdminRouter);
 app.use('/api/reports',    tenantScope, reportsRouter);
 app.use('/api/budgets',    tenantScope, budgetsRouter);
@@ -156,11 +154,11 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     return res.status(400).json({ message: 'Datos inválidos', errors: err.flatten() });
   }
   const e = err as { type?: string; code?: string; message?: string; status?: number };
+  if (e?.type === 'entity.too.large') return res.status(413).json({ message: 'El contenido enviado es demasiado grande.' });
   if (typeof e?.status === 'number' && e.status >= 400 && e.status < 600) {
     return res.status(e.status).json({ message: e.message || 'Error' });
   }
   if (e?.type === 'entity.parse.failed') return res.status(400).json({ message: 'JSON inválido' });
-  if (e?.type === 'entity.too.large') return res.status(413).json({ message: 'Carga demasiado grande' });
   if (e?.code === 'P2025') return res.status(404).json({ message: 'Recurso no encontrado' });
   if (e?.code === 'P2002') return res.status(409).json({ message: 'Registro duplicado' });
   if (e?.code === 'P2003') return res.status(409).json({ message: 'No se puede eliminar: hay registros que dependen de este.' });

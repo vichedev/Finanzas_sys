@@ -5,6 +5,9 @@ import { http } from './http';
 // que el servidor termine (el timeout global es de solo 15s).
 const BACKUP_TIMEOUT = 5 * 60 * 1000; // 5 min
 
+// Debe coincidir con RESTORE_LIMIT del backend y client_max_body_size de nginx.
+export const MAX_RESTORE_BYTES = 32 * 1024 * 1024;
+
 export const backupApi = {
   async exportData(): Promise<Blob> {
     const { data } = await http.get('/backup/export', { responseType: 'blob', timeout: BACKUP_TIMEOUT });

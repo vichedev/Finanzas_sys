@@ -7,7 +7,7 @@ import { useAuthStore } from '../stores/auth';
 import { useBrandingStore } from '../stores/branding';
 import { useEntitiesStore } from '../stores/entities';
 import { http } from '../api/http';
-import { backupApi } from '../api/backup';
+import { backupApi, MAX_RESTORE_BYTES } from '../api/backup';
 import { aiApi } from '../api/ai';
 import { whatsappApi, type WhatsappStatus } from '../api/whatsapp';
 import { mailApi, type MailConfig } from '../api/mail';
@@ -952,7 +952,9 @@ async function exportBackup() {
     a.download = `respaldo-finanzas-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30_000);
-    backupMsg.value = 'Respaldo descargado correctamente.';
+    backupMsg.value = blob.size > MAX_RESTORE_BYTES
+      ? `Respaldo descargado (${Math.ceil(blob.size / 1048576)} MB). Supera los ${MAX_RESTORE_BYTES / 1048576} MB que se pueden restaurar desde el panel: consérvalo y consulta al soporte si necesitas restaurarlo.`
+      : 'Respaldo descargado correctamente.';
   } catch (e: unknown) {
     // Al ser responseType blob, el error del backend viene como Blob: lo leemos.
     const err = e as { response?: { data?: unknown; status?: number }; message?: string };
@@ -975,6 +977,10 @@ async function onImportFile(e: Event) {
   const file = input.files?.[0];
   input.value = '';
   if (!file) return;
+  if (file.size > MAX_RESTORE_BYTES) {
+    backupErr.value = `Este respaldo pesa ${Math.ceil(file.size / 1048576)} MB y el máximo para restaurar es ${MAX_RESTORE_BYTES / 1048576} MB.`;
+    return;
+  }
   if (!(await confirm({ title: 'Importar respaldo', message: 'Vas a IMPORTAR datos desde un respaldo. Se AGREGARÁN a la empresa actual (lo ideal es importar en una empresa vacía). ¿Continuar?', confirmText: 'Importar' }))) return;
   importBusy.value = true; backupErr.value = ''; backupMsg.value = '';
   try {
@@ -1778,7 +1784,7 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
         <div class="backup-card">
           <div class="backup-ic"><Download :size="22" /></div>
           <strong>Exportar respaldo</strong>
-          <small>Descarga un archivo JSON con TODOS tus datos: comprobantes, presupuestos, identidad y ajustes de FinancIA incluidos.</small>
+          <small>Descarga un archivo JSON con TODOS tus datos: comprobantes, presupuestos, identidad y ajustes de FinancIA incluidos. Desde aquí solo se pueden restaurar respaldos de hasta 32 MB.</small>
           <button type="button" @click="exportBackup" :disabled="backupBusy">
             <Download :size="16" /> {{ backupBusy ? 'Generando…' : 'Descargar respaldo' }}
           </button>
@@ -1786,7 +1792,7 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
         <div class="backup-card">
           <div class="backup-ic up"><Upload :size="22" /></div>
           <strong>Importar respaldo</strong>
-          <small>Restaura desde un archivo de respaldo. Los datos se agregan a la empresa actual.</small>
+          <small>Restaura desde un archivo de respaldo de hasta 32 MB. Los datos se agregan a la empresa actual.</small>
           <input ref="importInput" type="file" accept="application/json,.json" class="backup-file" @change="onImportFile" />
           <button type="button" class="secondary" @click="pickImport" :disabled="importBusy">
             <Upload :size="16" /> {{ importBusy ? 'Importando…' : 'Seleccionar archivo…' }}

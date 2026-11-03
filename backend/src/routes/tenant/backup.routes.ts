@@ -1,10 +1,24 @@
-import { Router, Response } from 'express';
+import { NextFunction, Request, Router, Response } from 'express';
 import { logger } from '../../lib/logger';
+import { boundedJson, createBodyGate, holdBodyGate } from '../../middleware/bodyLimits';
 
 // Respaldos: exporta TODOS los datos del usuario a JSON y los reimporta
 // (remapeando IDs) para migrar entre empresas o restaurar. auth + tenantContext
 // vienen del montaje (tenantScope) en index.ts.
 export const backupRouter = Router();
+
+// Medido con 256 MB de memoria de Node: 32 MB con 1 millón de objetos se procesan bien, pero
+// llenos de `{},` (unos 10 millones) agotan la memoria. Un respaldo real de 32 MB ronda los
+// 250.000 registros. El tamaño coincide con nginx (client_max_body_size).
+const RESTORE_BODY = { limit: '32mb', maxContainers: 500_000 };
+const restoreGate = createBodyGate(1, 'Ya hay una restauración en curso. Inténtalo cuando termine.');
+
+function requireRestoreAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.auth?.kind !== 'tenant' || req.auth.role !== 'ADMIN_EMPRESA' || req.tenantUserId == null) {
+    return res.status(403).json({ message: 'Solo el administrador de la empresa puede restaurar un respaldo.' });
+  }
+  return next();
+}
 
 type IdMap = Record<number, number>;
 const remap = (m: IdMap, id: number | null | undefined): number | null =>
@@ -131,13 +145,15 @@ async function streamBinaryArray(
   await write(res, ']');
 }
 
-backupRouter.post('/import', async (req, res) => {
+backupRouter.post('/import', requireRestoreAdmin, restoreGate, boundedJson(RESTORE_BODY), async (req, res) => {
   const data = req.body;
   if (!data || data.format !== 'finanzas-backup' || !Array.isArray(data.movements)) {
     return res.status(400).json({ message: 'Archivo de respaldo inválido.' });
   }
   const userId = req.tenantUserId!;
   const p = req.tenantPrisma!;
+  // La restauración sigue aunque el cliente se vaya: el cupo se libera al terminarla.
+  const releaseGate = holdBodyGate(res);
 
   try {
     const imported = await p.$transaction(async (tx) => {
@@ -354,5 +370,7 @@ backupRouter.post('/import', async (req, res) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ message: `No se pudo importar el respaldo: ${msg}` });
+  } finally {
+    releaseGate();
   }
 });

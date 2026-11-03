@@ -465,7 +465,43 @@ test('con dos tarifas, IVA y total son exactos y la vat-summary los suma', async
   assert.equal(summary.sales.vat, 17.5);
   assert.equal(summary.sales.total, 167.5);
   assert.equal(summary.sales.count, 1);
-  assert.equal(summary.netVat, 17.5);
+  assert.equal(summary.vatToPay, 17.5);
+});
+
+test('el crédito de una razón social no compensa lo que debe otra', async () => {
+  const user = await newUser();
+  const seller = await addEntity(user, ISSUER);
+  const buyer = await addEntity(user, BUYER);
+  const invoice = (entityId: number, kind: 'SALE' | 'PURCHASE', net: number) => call('POST', '/invoices', user, {
+    kind, counterparty: 'Tercero', issueDate: '2026-04-10', netAmount: net, vatRate: 15, entityId
+  });
+  assert.equal((await invoice(seller.id, 'SALE', 100)).status, 201);
+  assert.equal((await invoice(buyer.id, 'PURCHASE', 100)).status, 201);
+
+  const summary = await vatSummary(user, 2026, 4);
+  assert.equal(summary.vatToPay, 15);
+  assert.equal(summary.vatCredit, 15);
+  assert.equal(summary.netVat, undefined);
+  assert.deepEqual(
+    summary.byEntity.map((e: { name: string; vatToPay: number; vatCredit: number }) => [e.name, e.vatToPay, e.vatCredit]),
+    [[seller.name, 15, 0], [buyer.name, 0, 15]]
+  );
+});
+
+test('dentro de una misma razón social, y sin razón social, el crédito sí se compensa', async () => {
+  const user = await newUser();
+  const entity = await addEntity(user, ISSUER);
+  const invoice = (entityId: number | null, kind: 'SALE' | 'PURCHASE', net: number) => call('POST', '/invoices', user, {
+    kind, counterparty: 'Tercero', issueDate: '2026-04-10', netAmount: net, vatRate: 15, entityId
+  });
+  await invoice(entity.id, 'SALE', 100);
+  await invoice(entity.id, 'PURCHASE', 40);
+  await invoice(null, 'SALE', 20);
+  await invoice(null, 'PURCHASE', 100);
+
+  const summary = await vatSummary(user, 2026, 4);
+  assert.equal(summary.vatToPay, 9);
+  assert.equal(summary.vatCredit, 12);
 });
 
 test('la factura del último día del mes cae en su período, y la del primero en el suyo', async () => {

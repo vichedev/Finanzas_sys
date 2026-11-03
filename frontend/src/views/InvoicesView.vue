@@ -218,13 +218,13 @@ const summary = computed(() => {
       purchasesNet += Number(r.netAmount); purchasesVat += Number(r.vatAmount); purchasesTotal += Number(r.total); purchasesCount++;
     }
   }
-  const netVat = round2(salesVat - purchasesVat);
   const pay = new Date(period.value.year, period.value.month, 1); // mes siguiente
   return {
     sales: { net: salesNet, vat: salesVat, total: round2(salesTotal), count: salesCount },
     purchases: { net: purchasesNet, vat: purchasesVat, total: round2(purchasesTotal), count: purchasesCount },
-    vatToPay: netVat > 0 ? netVat : 0,
-    vatCredit: netVat < 0 ? round2(-netVat) : 0,
+    // Se liquida por razón social: el crédito de una no compensa lo que debe otra.
+    vatToPay: round2(vatByEntity.value.reduce((sum, e) => sum + e.vatToPay, 0)),
+    vatCredit: round2(vatByEntity.value.reduce((sum, e) => sum + e.vatCredit, 0)),
     paymentLabel: `${MONTHS[pay.getMonth()]} ${pay.getFullYear()}`
   };
 });
@@ -261,16 +261,21 @@ const monthlySeries = computed(() => {
     });
   }
   const byKey = new Map(buckets.map((b) => [b.key, b]));
+  const balances = new Map<string, Map<number, number>>(); // por mes y razón social
   for (const r of validRows.value) {
     const b = byKey.get(ym(r.issueDate));
     if (!b) continue;
+    const entityKey = r.entity?.id ?? -1;
+    const monthBalances = balances.get(b.key) ?? new Map<number, number>();
+    balances.set(b.key, monthBalances);
+    monthBalances.set(entityKey, (monthBalances.get(entityKey) ?? 0) + (r.kind === 'SALE' ? 1 : -1) * Number(r.vatAmount));
     if (r.kind === 'SALE') { b.salesNet += Number(r.netAmount); b.salesVat += Number(r.vatAmount); b.salesGross += Number(r.total); }
     else { b.purchasesNet += Number(r.netAmount); b.purchasesVat += Number(r.vatAmount); }
   }
   return buckets.map((b) => ({
     ...b,
     salesTotal: round2(b.salesGross),
-    vatToPay: Math.max(0, round2(b.salesVat - b.purchasesVat))
+    vatToPay: round2([...(balances.get(b.key)?.values() ?? [])].reduce((sum, net) => sum + Math.max(0, round2(net)), 0))
   }));
 });
 
@@ -538,6 +543,9 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
           <strong class="vat-value">{{ formatMoney(summary.vatToPay > 0 ? summary.vatToPay : summary.vatCredit) }}</strong>
           <small v-if="summary.vatToPay > 0">Se declara y paga en <strong>{{ summary.paymentLabel }}</strong></small>
           <small v-else>Se traslada al siguiente período</small>
+          <small v-if="summary.vatToPay > 0 && summary.vatCredit > 0" class="vat-note">
+            Hay {{ formatMoney(summary.vatCredit) }} de crédito en otra razón social o sin razón social: no reduce este pago.
+          </small>
         </div>
       </div>
 
@@ -627,6 +635,7 @@ onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()])
 .vat-value.pos { color: #047857; }
 .vat-value.neg { color: #b45309; }
 .vat-card small { color: #64748b; font-size: 11px; }
+.vat-card small.vat-note { display: block; margin-top: 4px; }
 .vat-op { display: flex; align-items: center; font-size: 24px; font-weight: 700; color: #94a3b8; }
 .vat-result.to-pay { background: #fef2f2; border-color: #fecaca; }
 .vat-result.to-pay .vat-value { color: #dc2626; }

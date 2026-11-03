@@ -109,6 +109,10 @@ Detecta automáticamente si cambió el schema de Prisma: aplica `db push` al sch
 global y, si cambió el schema **tenant**, sincroniza la tabla nueva en todas las
 empresas (`npm run sync:tenants:prod`).
 
+## Restaurar un respaldo
+
+Solo el administrador de la empresa puede restaurar desde **Configuración → Respaldos**, de uno en uno, hasta 32 MB y 500.000 registros. Un archivo más grande se rechaza, porque el backend tiene 512 MB de memoria y no podría procesarlo. **La descarga no tiene ese límite: un respaldo de más de 32 MB hoy no se puede restaurar desde el panel.**
+
 ## Backup manual
 
 ```bash

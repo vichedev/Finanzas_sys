@@ -144,7 +144,6 @@ export interface VatSummary {
   purchases: { net: number; vat: number; total: number; count: number };
   vatToPay: number;
   vatCredit: number;
-  netVat: number;
   byEntity?: Array<{ entityId: number | null; name: string; kind: string | null; salesVat: number; purchasesVat: number; vatToPay: number; vatCredit: number; netVat: number }>;
 }
 

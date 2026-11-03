@@ -2,6 +2,7 @@ import { globalPrisma } from './globalPrisma';
 import { getTenantPrisma, type TenantPrisma } from './tenantPrisma';
 import { createNotification } from './notifications';
 import { logger } from './logger';
+import { settleVatByEntity } from './vat';
 
 const MONTH_LABEL = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const DAYS_AHEAD = 3;
@@ -74,13 +75,11 @@ async function scanTenant(prisma: TenantPrisma) {
       const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
       const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
       const grouped = await prisma.invoice.groupBy({
-        by: ['kind'],
+        by: ['entityId', 'kind'],
         where: { userId, status: { not: 'VOID' }, issueDate: { gte: start, lt: end } },
         _sum: { vatAmount: true }
       });
-      const salesVat = Number(grouped.find((g) => g.kind === 'SALE')?._sum.vatAmount || 0);
-      const purchVat = Number(grouped.find((g) => g.kind === 'PURCHASE')?._sum.vatAmount || 0);
-      const toPay = salesVat - purchVat;
+      const { vatToPay: toPay } = settleVatByEntity(grouped);
       if (toPay > 0) {
         const label = `${MONTH_LABEL[start.getUTCMonth()]} ${start.getUTCFullYear()}`;
         await createNotification(prisma, {
