@@ -9,6 +9,16 @@ const auth = useAuthStore();
 const { confirm, alert } = useConfirm();
 
 const PAGE_SIZES = [10, 25, 50, 100];
+const PAGE_SIZE_KEY = 'security.eventsPageSize';
+
+function savedPageSize(): number {
+  try {
+    const saved = Number(localStorage.getItem(PAGE_SIZE_KEY));
+    return PAGE_SIZES.includes(saved) ? saved : 10;
+  } catch {
+    return 10;
+  }
+}
 
 const EVENT_LABEL: Record<LoginEventType, string> = {
   LOGIN_SUCCESS: 'Acceso correcto',
@@ -43,7 +53,7 @@ const ips = ref<BlockedIp[]>([]);
 const typeFilter = ref<LoginEventType | ''>('');
 const search = ref('');
 const offset = ref(0);
-const pageSize = ref(10);
+const pageSize = ref(savedPageSize());
 const loading = ref(false);
 const errorMsg = ref('');
 const currentIp = ref<string | null>(null);
@@ -138,6 +148,13 @@ function movePage(delta: number) {
 }
 
 watch([typeFilter, pageSize], applyFilters);
+watch(pageSize, (size) => {
+  try {
+    localStorage.setItem(PAGE_SIZE_KEY, String(size));
+  } catch {
+    // Sin almacenamiento disponible solo se pierde la preferencia al recargar.
+  }
+});
 
 async function unlockAccount(account: LockedAccount) {
   const accepted = await confirm({
