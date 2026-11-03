@@ -8,7 +8,7 @@ import AppModal from '../components/AppModal.vue';
 const auth = useAuthStore();
 const { confirm, alert } = useConfirm();
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 const EVENT_LABEL: Record<LoginEventType, string> = {
   LOGIN_SUCCESS: 'Acceso correcto',
