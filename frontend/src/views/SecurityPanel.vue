@@ -58,11 +58,33 @@ const formatDate = (value: string) => dateFormat.format(new Date(value));
 function eventDetail(event: LoginEvent): string {
   if (event.reason) return REASON_LABEL[event.reason] ?? event.reason;
   const meta = event.metadata;
-  if (event.type === 'IP_BLOCKED' && meta) {
-    return `${meta.failures} fallos en ${meta.accounts} cuentas, hasta ${formatDate(String(meta.until))}`;
-  }
+  if (event.type === 'IP_BLOCKED' && meta) return `${meta.failures} fallos en ${meta.accounts} cuentas`;
+  if (event.type === 'ACCOUNT_LOCKED') return '5 intentos fallidos en 15 minutos';
   if (meta?.by) return `Por ${meta.by}`;
   return '';
+}
+
+function eventAction(event: LoginEvent): string {
+  switch (event.type) {
+    case 'LOGIN_SUCCESS':
+      return 'Acceso permitido; se reinician los fallos de la cuenta';
+    case 'LOGIN_FAILED':
+      return event.reason === 'BAD_CREDENTIALS'
+        ? 'Acceso denegado; suma un fallo a la cuenta y a la IP'
+        : 'Acceso denegado; suma un fallo a la IP';
+    case 'LOCKED_ATTEMPT':
+      return 'Rechazado sin comprobar la contraseña; suma un fallo a la IP; el bloqueo no se alarga';
+    case 'ACCOUNT_LOCKED':
+      return 'Cuenta bloqueada 15 minutos';
+    case 'ACCOUNT_UNLOCKED':
+      return 'Bloqueo levantado y fallos de la cuenta en cero';
+    case 'IP_BLOCKED':
+      return event.metadata?.until
+        ? `Todo acceso desde esta IP se rechaza hasta ${formatDate(String(event.metadata.until))}`
+        : 'Todo acceso desde esta IP se rechaza';
+    case 'IP_UNBLOCKED':
+      return 'Bloqueo levantado y reincidencia perdonada';
+  }
 }
 
 async function load() {
@@ -211,7 +233,7 @@ onMounted(load);
       <div v-else class="table-scroll">
         <table>
           <thead>
-            <tr><th>Fecha</th><th>Evento</th><th>Cuenta</th><th>IP</th><th>Detalle</th></tr>
+            <tr><th>Fecha</th><th>Evento</th><th>Cuenta</th><th>IP</th><th>Detalle</th><th>Acción tomada</th></tr>
           </thead>
           <tbody>
             <tr v-for="event in events" :key="event.id">
@@ -220,6 +242,7 @@ onMounted(load);
               <td>{{ event.email || '—' }}</td>
               <td class="nowrap">{{ event.ip || '—' }}</td>
               <td>{{ eventDetail(event) }}</td>
+              <td>{{ eventAction(event) }}</td>
             </tr>
           </tbody>
         </table>
