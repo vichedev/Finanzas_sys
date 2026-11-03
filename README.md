@@ -213,6 +213,31 @@ Pruebas: `cd backend && npm run test:security` (crea y borra su propia base de d
 └── README.md
 ```
 
+## Medir la IA del asistente
+
+`npm run eval:ai` (en `backend/`) compara lo que entiende la IA con lo que debería entender, usando los casos de `backend/evals/cases.json` y un catálogo inventado. No usa la base de datos.
+
+```powershell
+$env:GROQ_API_KEY = "tu-clave"
+npm run eval:ai -- --limit 10 --repeat 1                # prueba rápida
+npm run eval:ai -- --model modelo-a,modelo-b --repeat 3 # comparar modelos
+```
+
+- **Consume la clave de Groq:** hace una llamada por caso, repetición y modelo, con 1 s de pausa (`--delay`). La medición completa son unas 276 llamadas por modelo. La clave se lee solo de `GROQ_API_KEY`; sin ella, el comando no hace nada y sale con código 2.
+- **Otras opciones:** `--tag etiqueta`, `--cases archivo`, `--out archivo.json`. El resultado completo queda en `backend/evals/results/`, que git ignora.
+- **Qué informa:** la cifra principal es el porcentaje de **erróneos silenciosos**: campos con un valor equivocado que nadie pregunta. Cada campo cuenta como correcto, pregunta (quitado o con duda pendiente) o erróneo silencioso, tanto para la IA como después de la validación; ahí se ve lo que aporta la validación. Además: aciertos totales, por campo y por etiqueta; consistencia entre repeticiones; latencia; cada fallo con lo esperado y lo obtenido; y la comparación entre modelos. Los errores de la API se cuentan aparte, no como fallos de interpretación.
+- **Qué NO mide:** el enrutado de `classifyTarget` (deudas, recurrentes, presupuestos), el historial de montos y la memoria de correcciones, porque corre sin base de datos.
+- **Resultados y datos reales:** avisa si `--out` o `--cases` apuntan fuera de `evals/results` y de lo que git ignora, porque ahí pueden quedar casos reales.
+- **Casos reales:** se añaden en `backend/evals/cases.local.json`, que git ignora, con el mismo formato de `cases.json`, y la medición los incluye sola con la etiqueta `local`. Cuentas y categorías van por su nombre en `backend/evals/catalog.ts`, así que hay que cambiar las reales por las de ese catálogo. Un campo ausente no se evalúa y `null` exige que quede vacío. `date` admite `"hoy"`, `"ayer"` y `"hoy-N"`.
+
+```json
+[{ "id": "real-01", "text": "gasté 20 en el súper con ahorros andino", "tags": ["real"], "expect": { "type": "EXPENSE", "amount": 20, "account": "Ahorros Andino", "category": "Alimentación" } }]
+```
+
+Pruebas del flujo del asistente, de la validación y de la memoria, sin clave ni llamadas a la IA: `npm run test:ai` (crea bases temporales en el PostgreSQL de `.env.dev` y las borra al terminar).
+
+**Al desplegar:** la memoria de correcciones añade la tabla `AiCategoryMemory`, así que hay que correr `sync:tenants` (`sync:tenants:prod` en producción) para llevarla a las empresas existentes. `update.sh` ya lo ejecuta.
+
 ## Próximas mejoras
 
 - TLS público con Cloudflare Tunnel o Let's Encrypt

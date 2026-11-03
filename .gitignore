@@ -58,3 +58,7 @@ coverage/
 
 # Vite
 .vite/
+
+# Mediciones de la IA: casos reales del usuario y resultados
+backend/evals/cases.local.json
+backend/evals/results/

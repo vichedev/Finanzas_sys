@@ -13,8 +13,12 @@ import { getTenantPrisma } from '../lib/tenantPrisma';
 import { getTranscribeCreds } from './llm';
 import { transcribeAudio } from './transcribe';
 import { parseMovement, type ParsedMovement, type MovType } from './parser';
+import { normalizeMemoryKey, recordCategoryCorrection } from './aiMemory';
+import { BARE_NO, CANCEL_REQUEST, STRICT_NO, STRICT_YES, isValidCategoryName, parseAmountReply, parseDateReply, parseOptionIndex, readNumber } from './replies';
+import type { ReviewIssue } from './reviewParsed';
+import { todayEcuador } from '../lib/ecuadorDate';
 import { answerQuestion } from './assistant';
-import { classifyTarget, startEntity, continueEntity, clearEntityDraft } from './entities';
+import { classifyTarget, startEntity, continueEntity, clearEntityDraft, hasEntityDraft } from './entities';
 import { createMovement, MOVE_LABEL } from '../routes/tenant/movements.routes';
 import { createNotification } from '../lib/notifications';
 import { optimizeImage } from '../lib/imageOptimize';
@@ -26,7 +30,7 @@ const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s+/g
 type Img = { buffer: Buffer; mimetype: string };
 type Patch = Record<string, unknown>;
 interface Option { label: string; patch: Patch; action?: 'showAllCats' | 'transferToPerson' | 'newCategory' }
-interface Question { key: string; text: string; options?: Option[]; free?: 'amount' | 'description'; resolveKey?: string }
+interface Question { key: string; text: string; options?: Option[]; free?: 'amount' | 'description' | 'date'; resolveKey?: string }
 interface Ctx { accounts: any[]; creditCards: any[]; wallets: any[]; categories: any[] }
 interface Draft {
   payload: Record<string, unknown>;
@@ -41,6 +45,12 @@ interface Draft {
   userId: number;
   at: number;
   pendingImages: Img[];
+  pendingChecks: ReviewIssue[];    // dudas de la revisión: se preguntan antes que nada
+  proposedCategoryId: number | null; // la que propuso la IA o la memoria
+  categoryChosenByUser: boolean;   // el usuario la eligió en este borrador (para aprender)
+  vendor: string | null;           // comercio entendido, aunque el tipo no lo guarde
+  originalText: string;            // lo que escribió o dijo el usuario
+  memoryCategoryId: number | null; // la categoría que salió de un recuerdo
 }
 
 const drafts = new Map<string, Draft>();
@@ -61,9 +71,14 @@ function getLast(chatId: string) {
   return l;
 }
 
-const AFFIRM = /^\s*(s[ií]|si|dale|ok(ay)?|conf[ií]rmo|correcto|listo|va|h[aá]zlo|reg[ií]stralo?|de una|👍|✅)\b/i;
-const NEGATE = /^\s*(no|nel|nop|cancela(r)?|olv[ií]dalo|❌)\b/i;
+// En preguntas corrientes basta con que empiece así; en la confirmación se usa STRICT_NO.
+const NEGATE = /^\s*(no|nel|nop|cancela(r)?|olv[ií]dalo|❌)(?![\p{L}\p{N}_])/iu;
+const YES_PREFIX = /^\s*(s[ií]|ok(ay)?|dale)[\s,]/iu;
+const BARE_NUMBER = /(?:^|\s)\d+(?:[.,]\d+)*(?:\s|$)/;
+const MAX_TEXT = 2000;
 const HELPREQ = /^\s*(ayuda|help|men[uú]|c[oó]mo funciona|hola|buenas|\?)\s*$/i;
+const CHANGE_CATEGORY = /^\s*(cambiar?\s+(la\s+)?)?categor[ií]a\s*[.!]?\s*$/i;
+const CHECK_KEY = 'check:';
 
 const HELP = `👋 *Asistente de finanzas* — responde con el *número* de lo que quieres hacer (o descríbelo por audio/texto):
 
@@ -90,10 +105,6 @@ const MENU_PROMPT: Record<string, string> = {
 
 const METHOD_LABEL: Record<string, string> = { CASH: 'Efectivo', BANK_TRANSFER: 'Transferencia', DEPOSIT: 'Depósito', DEBIT_CARD: 'Tarjeta de débito', CREDIT_CARD: 'Tarjeta de crédito', WALLET: 'Billetera', OTHER: 'Otro' };
 
-function todayYmd(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 function fmtDate(ymd: string): string { const [y, m, d] = ymd.split('-'); return d && m && y ? `${d}/${m}/${y}` : ymd; }
 function accLabel(a: any): string {
   const parts: string[] = [a.name];
@@ -115,22 +126,7 @@ function cardLabel(c: any): string {
  */
 function parseAmount(text: string): number {
   const m = String(text).match(/-?\d[\d.,]*/);
-  if (!m) return NaN;
-  let s = m[0];
-  const hasDot = s.includes('.'), hasComma = s.includes(',');
-  if (hasDot && hasComma) {
-    // El último separador es el decimal; el otro, miles.
-    if (s.lastIndexOf(',') > s.lastIndexOf('.')) s = s.replace(/\./g, '').replace(',', '.');
-    else s = s.replace(/,/g, '');
-  } else if (hasComma) {
-    const parts = s.split(',');
-    s = (parts.length === 2 && parts[1].length <= 2) ? s.replace(',', '.') : s.replace(/,/g, '');
-  } else if (hasDot) {
-    const parts = s.split('.');
-    if (!(parts.length === 2 && parts[1].length <= 2)) s = s.replace(/\./g, '');
-  }
-  const n = Number(s);
-  return isNaN(n) ? NaN : n;
+  return m ? readNumber(m[0]) : NaN;
 }
 
 // ---- Comprobantes (imagen) ----
@@ -207,6 +203,48 @@ function categoryQ(d: Draft): Question {
   return { key: 'category', text: `🏷️ ¿Qué *categoría*?${hint}`, options, resolveKey: 'category' };
 }
 
+/** Traduce el cambio de una duda de revisión a los campos del movimiento. */
+function checkPatch(patch: ReviewIssue['options'][number]['patch']): Patch {
+  const out: Patch = {};
+  if (patch.amount !== undefined) out.amount = Number(patch.amount) > 0 ? Number(patch.amount) : null;
+  if (patch.date !== undefined) out.movementDate = patch.date && /^\d{4}-\d{2}-\d{2}$/.test(patch.date) ? patch.date : todayEcuador();
+  return out;
+}
+function checkQ(issue: ReviewIssue): Question {
+  // En una duda de monto o de fecha se puede escribir el dato, aunque no sea una de las opciones.
+  const free = issue.free ?? (issue.code.startsWith('AMOUNT_') ? 'amount' : issue.code.startsWith('DATE_') ? 'date' : undefined);
+  return { key: CHECK_KEY + issue.code, text: issue.question, free, options: issue.options.map((o) => ({ label: o.label, patch: checkPatch(o.patch) })) };
+}
+
+type CheckAnswer = { patch: Patch } | { cancel: true } | { badDate: true } | null;
+
+/**
+ * Respuesta a una duda de revisión. Solo vale un mensaje que sea entero una opción, un dato o
+ * una salida: "pagué 15 de taxi" o "sí, pero son 30" devuelven null y se vuelve a preguntar.
+ */
+function resolveCheckAnswer(q: Question, text: string): CheckAnswer {
+  const options = q.options || [];
+  const index = parseOptionIndex(text);
+  if (index !== null && index >= 1 && index <= options.length) return { patch: options[index - 1].patch };
+  if (CANCEL_REQUEST.test(text)) return { cancel: true };
+  if (q.free === 'amount') {
+    const amount = parseAmountReply(text);
+    if (amount !== null) return { patch: { amount } };
+  }
+  if (q.free === 'date') {
+    const date = parseDateReply(text, todayEcuador());
+    if (date) return 'date' in date ? { patch: { movementDate: date.date } } : { badDate: true };
+  }
+  // "no, usar hoy" se compara como "usar hoy".
+  const t = norm(text).replace(/^(no|nel|nop)\b[\s,.:-]*/, '');
+  if (t.length >= 3) { const hits = options.filter((o) => norm(o.label).includes(t) || t.includes(norm(o.label))); if (hits.length === 1) return { patch: hits[0].patch }; }
+  // Un "no" suelto elige la única opción que empieza por "No".
+  if (BARE_NO.test(text)) { const noes = options.filter((o) => /^no\b/i.test(o.label)); if (noes.length === 1) return { patch: noes[0].patch }; }
+  // La primera opción conserva lo entendido: "sí" significa dejarlo como está.
+  if (options.length && STRICT_YES.test(text)) return { patch: options[0].patch };
+  return null;
+}
+
 /** Ajusta campos derivados al elegir el tipo de movimiento (cuando se pregunta el tipo). */
 function applyTypeDefaults(d: Draft): void {
   const t = d.payload.type as MovType;
@@ -220,6 +258,7 @@ function computeNext(d: Draft): Question | null {
   for (let i = 0; i < 25; i++) {
     const q = rawNext(d);
     if (!q) return null;
+    if (q.key.startsWith(CHECK_KEY)) return q; // las dudas siempre las responde el usuario
     if (q.options && q.options.length === 0) { if (q.resolveKey) d.resolved.add(q.resolveKey); else break; continue; }
     if (q.options && q.options.length === 1 && q.key !== 'method') {
       Object.assign(d.payload, q.options[0].patch);
@@ -231,6 +270,7 @@ function computeNext(d: Draft): Question | null {
   return null;
 }
 function rawNext(d: Draft): Question | null {
+  if (d.pendingChecks.length) return checkQ(d.pendingChecks[0]);
   const p = d.payload;
   const type = p.type as MovType;
   if (!type) return { key: 'movtype', text: '¿Qué *tipo de movimiento* quieres registrar?', options: [
@@ -263,25 +303,35 @@ function rawNext(d: Draft): Question | null {
   if ((m === 'BANK_TRANSFER' || m === 'DEPOSIT' || m === 'DEBIT_CARD') && !p.accountId) return accountQ('account', '🏦 ¿De qué *cuenta*?', d.ctx.accounts, d.bankHint, 'accountId');
   if (m === 'CREDIT_CARD' && !p.cardId) return cardQ(d.ctx.creditCards, d.bankHint);
   if (m === 'WALLET' && !p.walletId) return walletQ(d.ctx.wallets);
-  if (!d.resolved.has('category') && (type === 'EXPENSE' || type === 'INCOME' || type === 'PURCHASE')) return categoryQ(d);
+  if (!d.resolved.has('category') && hasCategory(type)) return categoryQ(d);
   return null;
 }
 
+function hasCategory(type: unknown): boolean { return type === 'EXPENSE' || type === 'INCOME' || type === 'PURCHASE'; }
+
 function renderQuestion(q: Question): string {
-  if (q.free) return q.text;
+  if (q.free && !q.options?.length) return q.text;
   const lines = (q.options || []).map((o, i) => `${i + 1}. ${o.label}`);
-  return `${q.text}\n${lines.join('\n')}\n\n_Responde con el número._`;
+  const how = q.free === 'amount' ? 'Responde con el número de la opción o escribe el monto correcto.'
+    : q.free === 'date' ? 'Responde con el número de la opción o escribe la fecha (ej: *ayer* o *15/03*).'
+    : 'Responde con el número.';
+  return `${q.text}\n${lines.join('\n')}\n\n_${how}_`;
 }
 function resolveChoice(q: Question, text: string): Option | null {
-  const numMatch = text.match(/\d+/);
-  if (numMatch) { const n = parseInt(numMatch[0], 10); if (q.options && n >= 1 && n <= q.options.length) return q.options[n - 1]; }
+  const n = parseOptionIndex(text);
+  if (n !== null && q.options && n >= 1 && n <= q.options.length) return q.options[n - 1];
   const t = norm(text);
   if (t.length >= 3 && q.options) { const hits = q.options.filter((o) => norm(o.label).includes(t) || t.includes(norm(o.label))); if (hits.length === 1) return hits[0]; }
   return null;
 }
 
+/** Texto limpio de un campo de la IA, que puede venir vacío o no ser texto. */
+function textOf(value: unknown): string | null {
+  return typeof value === 'string' ? value.trim() || null : null;
+}
+
 /** Arma el payload inicial + contexto desde lo que la IA entendió. */
-async function buildRegister(prisma: any, userId: number, p: ParsedMovement): Promise<Draft | { ask: string }> {
+async function buildRegister(prisma: any, userId: number, p: ParsedMovement, originalText: string): Promise<Draft | { ask: string }> {
   const type = p.type as MovType;
   const [accounts, creditCards, wallets, categories] = await Promise.all([
     prisma.account.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, accountKind: true, accountNumber: true }, orderBy: { name: 'asc' } }),
@@ -293,16 +343,16 @@ async function buildRegister(prisma: any, userId: number, p: ParsedMovement): Pr
     return { ask: 'No tienes cuentas registradas. Créalas en la sección *Cuentas* y vuelve a intentar.' };
   }
 
-  const date = p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : todayYmd();
+  const date = p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : todayEcuador();
   const payload: Record<string, unknown> = {
     type, amount: Number(p.amount) > 0 ? Number(p.amount) : null,
-    movementDate: date, description: (p.description || '').trim() || null,
+    movementDate: date, description: textOf(p.description),
     paymentMethod: null, accountId: null, toAccountId: null, cardId: null, walletId: null, categoryId: null,
     expenseKind: type === 'EXPENSE' ? 'VARIABLE' : null,
     isCredit: type === 'PURCHASE' ? !!p.isCredit : false,
-    vendor: type === 'PURCHASE' ? (p.vendor || null) : null,
-    familyMember: p.familyMember?.trim() || null,
-    notes: p.notes?.trim() || null
+    vendor: type === 'PURCHASE' ? textOf(p.vendor) : null,
+    familyMember: textOf(p.familyMember),
+    notes: textOf(p.notes)
   };
   const resolved = new Set<string>();
 
@@ -342,7 +392,7 @@ async function buildRegister(prisma: any, userId: number, p: ParsedMovement): Pr
     if (cat) { payload.categoryId = cat.id; resolved.add('category'); }
   }
 
-  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, categoryCandidates: p.categoryCandidates || [], showAllCats: false, awaitingNewCategory: false, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [] };
+  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, categoryCandidates: p.categoryCandidates || [], showAllCats: false, awaitingNewCategory: false, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [], pendingChecks: [...(p.reviewIssues || [])], proposedCategoryId: cat?.id ?? null, categoryChosenByUser: false, vendor: textOf(p.vendor), originalText, memoryCategoryId: p.categoryFromMemory ? p.categoryId : null };
 }
 
 async function balanceReadback(prisma: any, userId: number, payload: Record<string, unknown>): Promise<string> {
@@ -369,14 +419,21 @@ async function finalize(prisma: any, msg: IncomingMessage, d: Draft): Promise<vo
     const via = card ? `💳 ${card.name}` : wallet ? `👛 ${wallet.name}` : acc ? `🏦 ${accLabel(acc)}` : '💵 Efectivo';
     lines.push(`${METHOD_LABEL[String(p.paymentMethod)] || p.paymentMethod} · ${via}`);
   }
-  if (type === 'EXPENSE' || type === 'INCOME' || type === 'PURCHASE') lines.push(`🏷️ ${cat ? cat.name : 'Sin categoría'}`);
+  if (hasCategory(type)) lines.push(`🏷️ ${cat ? cat.name : 'Sin categoría'}${cat && p.categoryId === d.memoryCategoryId ? ' (recordada)' : ''}`);
   if (p.familyMember) lines.push(`👤 ${p.familyMember}`);
   if (type === 'PURCHASE' && p.isCredit) lines.push('🕒 Compra fiada (se paga después)');
   lines.push(`📅 ${fmtDate(String(p.movementDate))}`);
 
   d.awaiting = 'confirm'; d.current = null; d.at = Date.now();
   const extra = d.pendingImages.length ? '\n📎 Adjuntaré la foto del comprobante al confirmar.' : '';
-  await msg.reply(`${lines.join('\n')}${extra}\n\n¿Lo registro? Responde *SÍ* o *NO*.`);
+  await msg.reply(`${lines.join('\n')}${extra}\n\n¿Lo registro? Responde *SÍ* o *NO*${hasCategory(type) ? ', o *CATEGORÍA* para cambiarla' : ''}.`);
+}
+
+/** Lo que el borrador está esperando, para repetirlo. */
+function pendingPrompt(d: Draft): string {
+  if (d.awaitingNewCategory) return '➕ Escribe el *nombre* de la nueva categoría (ej: *Mascotas*, *Educación*).';
+  if (d.awaiting === 'question' && d.current) return renderQuestion(d.current);
+  return hasCategory(d.payload.type) ? 'Responde *SÍ*, *NO* o *CATEGORÍA*.' : 'Responde *SÍ* o *NO*.';
 }
 
 async function advance(prisma: any, msg: IncomingMessage, d: Draft): Promise<void> {
@@ -402,7 +459,12 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
     if (!text) { await msg.reply('No entendí el audio 😕. Intenta de nuevo, más claro.\n\n' + HELP); return; }
   }
 
+  text = text.slice(0, MAX_TEXT);
+
   const draft = getDraft(msg.chatId);
+
+  // Un pie de foto nunca es una respuesta a lo que esté pendiente.
+  if (image && text && !fromAudio && hasEntityDraft(msg.chatId)) { await msg.reply('📎 No puedo guardar la foto en este registro. Responde sin foto a lo que te pregunté, o escribe *no* para salir.'); return; }
 
   // Si hay un flujo de ENTIDAD en curso (deuda/recurrente/presupuesto/cuenta),
   // la respuesta de texto va ahí (devuelve false si no hay borrador de entidad).
@@ -411,20 +473,46 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
   if (image && !text && !fromAudio) { await handleVoucher(prisma, msg, image, draft); return; }
   if (text && HELPREQ.test(text) && !draft) { await msg.reply(HELP); return; }
 
-  // Borrador en curso + respuesta de texto.
-  if (draft && !fromAudio) {
-    if (image) draft.pendingImages.push(image);
-    if (NEGATE.test(text)) { drafts.delete(msg.chatId); await msg.reply('❌ Cancelado. No registré nada.'); return; }
+  // Borrador en curso + respuesta de texto. Por audio solo se responde a la confirmación y a
+  // las dudas: en esos puntos un audio tampoco debe reemplazar el borrador sin decir nada.
+  const checking = !!draft && draft.awaiting === 'question' && !!draft.current?.key.startsWith(CHECK_KEY);
+  if (draft && (!fromAudio || draft.awaiting === 'confirm' || checking)) {
+    if (fromAudio) await msg.reply(`📝 Entendí: "${text}"`);
+    if (image) {
+      draft.pendingImages.push(image); draft.at = Date.now();
+      await msg.reply(`📎 Foto guardada; la adjuntaré al confirmar. El texto de la foto no cuenta como respuesta.\n${pendingPrompt(draft)}`);
+      return;
+    }
+
+    // Duda de la revisión: nada fuera de una respuesta completa toca el borrador.
+    if (checking) {
+      const question = draft.current!;
+      const answer = resolveCheckAnswer(question, text);
+      if (answer && 'cancel' in answer) { drafts.delete(msg.chatId); await msg.reply('❌ Cancelado. No registré nada.'); return; }
+      if (answer && 'badDate' in answer) { await msg.reply('🤔 Esa fecha es futura o tiene más de un año.\n' + renderQuestion(question)); return; }
+      if (!answer) { await msg.reply('🤔 No te entendí. Para anular el movimiento escribe *cancelar*.\n' + renderQuestion(question)); return; }
+      Object.assign(draft.payload, answer.patch);
+      const issue = draft.pendingChecks.shift();
+      // Una vez aclarado el monto, no se vuelve a preguntar por el mismo monto.
+      if (issue?.code.startsWith('AMOUNT_')) draft.pendingChecks = draft.pendingChecks.filter((c) => !c.code.startsWith('AMOUNT_'));
+      draft.at = Date.now();
+      await advance(prisma, msg, draft);
+      return;
+    }
+
+    // En la pregunta de categoría, un "no" suelto no anula: se repregunta.
+    const inCategory = draft.awaiting === 'question' && draft.current?.key === 'category';
+    if (draft.awaiting === 'question' && NEGATE.test(text) && !(inCategory && BARE_NO.test(text))) { drafts.delete(msg.chatId); await msg.reply('❌ Cancelado. No registré nada.'); return; }
 
     // Esperando el nombre de una categoría nueva a crear.
     if (draft.awaitingNewCategory) {
       const name = text.trim();
-      if (name.length < 2) { await msg.reply('🤔 El nombre es muy corto. Escribe el *nombre* de la categoría.'); return; }
+      if (!isValidCategoryName(name)) { await msg.reply('🤔 Ese nombre no me sirve: usa hasta 4 palabras y 40 caracteres, sin signos. Escribe el *nombre* de la categoría.'); return; }
       draft.awaitingNewCategory = false;
       try {
         const cat = await findOrCreateCategory(prisma, userId, name);
         draft.ctx.categories.push(cat);
-        draft.payload.categoryId = cat.id; draft.resolved.add('category');
+        draft.payload.categoryId = cat.id; draft.resolved.add('category'); draft.categoryChosenByUser = true;
         await msg.reply(`🏷️ Categoría *${cat.name}* lista.`);
         draft.at = Date.now(); await advance(prisma, msg, draft);
       } catch (e: any) {
@@ -445,18 +533,28 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
         if (desc.length < 2) { await msg.reply('🤔 El detalle es muy corto, dime algo más.'); return; }
         draft.payload.description = desc;
       } else {
-        let opt = resolveChoice(q, text);
-        // En categorías, permite escribir el NOMBRE: si existe la usa; si no, la CREA al vuelo.
-        if (!opt && q.key === 'category') {
+        let createdByText = false;
+        // Al reabrir la categoría, un "sí" exacto deja la que estaba.
+        if (q.key === 'category' && draft.payload.categoryId && STRICT_YES.test(text)) {
+          draft.resolved.add('category'); draft.at = Date.now();
+          await advance(prisma, msg, draft);
+          return;
+        }
+        // Una frase con cifras en la pregunta de categoría no es una respuesta ("gasté 15 en salud").
+        const isPhrase = q.key === 'category' && parseOptionIndex(text) === null && BARE_NUMBER.test(text);
+        let opt = isPhrase ? null : resolveChoice(q, text);
+        // En categorías, permite escribir el NOMBRE: si existe la usa; si es un nombre válido, la CREA al vuelo.
+        if (!opt && !isPhrase && q.key === 'category' && !BARE_NO.test(text)) {
           const t = norm(text);
           const hit = t.length >= 3 ? draft.ctx.categories.find((c: any) => norm(c.name).includes(t) || t.includes(norm(c.name))) : null;
           if (hit) opt = { label: hit.name, patch: { categoryId: hit.id } };
-          else if (/[a-záéíóúñ]/i.test(text) && text.trim().length >= 3) {
+          else if (!YES_PREFIX.test(text) && text.trim().length >= 3 && isValidCategoryName(text)) {
             try {
               const cat = await findOrCreateCategory(prisma, userId, text.trim());
               draft.ctx.categories.push(cat);
               await msg.reply(`🏷️ Categoría *${cat.name}* creada.`);
               opt = { label: cat.name, patch: { categoryId: cat.id } };
+              createdByText = true;
             } catch (e: any) { logger.error({ e: e?.message }, 'wa: fallo creando categoría'); }
           }
         }
@@ -479,6 +577,8 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
         }
         Object.assign(draft.payload, opt.patch);
         if (q.resolveKey) draft.resolved.add(q.resolveKey);
+        // Lo escrito a mano puede ser una errata: no se aprende de una categoría creada así.
+        if (q.key === 'category') draft.categoryChosenByUser = opt.patch.categoryId != null && !createdByText;
         if (q.key === 'movtype') applyTypeDefaults(draft);
       }
       draft.at = Date.now();
@@ -486,8 +586,17 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
       return;
     }
     if (draft.awaiting === 'confirm') {
-      if (AFFIRM.test(text)) { await confirmAndCreate(prisma, msg, draft); return; }
-      // No es sí/no → instrucción nueva (reemplaza el borrador).
+      if (STRICT_YES.test(text)) { await confirmAndCreate(prisma, msg, draft); return; }
+      if (STRICT_NO.test(text)) { drafts.delete(msg.chatId); await msg.reply('❌ Cancelado. No registré nada.'); return; }
+      if (CHANGE_CATEGORY.test(text) && hasCategory(draft.payload.type)) {
+        draft.resolved.delete('category'); draft.showAllCats = false; draft.at = Date.now();
+        await advance(prisma, msg, draft);
+        return;
+      }
+      // Cualquier otra cosa no registra ni reemplaza el borrador, ni siquiera una instrucción nueva.
+      draft.at = Date.now();
+      await msg.reply(`⚠️ Aún no registré nada. ${pendingPrompt(draft)}`);
+      return;
     }
   }
 
@@ -527,7 +636,7 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
 
   // Aunque falte el tipo o el monto, ARRANCAMOS el flujo: el bot pide lo que falte
   // (tipo → monto → detalle → método → cuenta/tarjeta → categoría) paso a paso.
-  const built = await buildRegister(prisma, userId, parsed);
+  const built = await buildRegister(prisma, userId, parsed, text);
   if ('ask' in built) { await msg.reply(built.ask); return; }
   built.pendingImages = image ? [image] : [];
   clearEntityDraft(msg.chatId);           // por si quedó uno de entidad abandonado
@@ -546,10 +655,25 @@ async function handleVoucher(prisma: any, msg: IncomingMessage, image: Img, draf
   await msg.reply('📎 Recibí una foto, pero no hay un movimiento reciente al cual adjuntarla.\nDime primero el movimiento (audio o texto) y luego envíame el comprobante.');
 }
 
+/** Recuerda la categoría que el usuario eligió y la IA no propuso. No se espera ni puede fallar. */
+function learnCategory(prisma: any, draft: Draft): void {
+  const categoryId = draft.payload.categoryId as number | null;
+  if (!draft.categoryChosenByUser || !categoryId || categoryId === draft.proposedCategoryId) return;
+  // El comercio solo se aprende si el usuario lo dijo: la IA podría haberlo supuesto.
+  const textKey = normalizeMemoryKey(draft.originalText);
+  const vendorKey = normalizeMemoryKey(draft.vendor);
+  const vendor = textKey && vendorKey && ` ${textKey} `.includes(` ${vendorKey} `) ? draft.vendor : null;
+  const input = { description: textOf(draft.payload.description), vendor, categoryId, type: draft.payload.type as string };
+  void Promise.resolve()
+    .then(() => recordCategoryCorrection(prisma, draft.userId, input))
+    .catch((e: any) => logger.warn({ e: e?.message }, 'wa: no se pudo recordar la categoría'));
+}
+
 async function confirmAndCreate(prisma: any, msg: IncomingMessage, draft: Draft): Promise<void> {
   drafts.delete(msg.chatId);
   try {
     const row = await createMovement(prisma, draft.userId, draft.payload);
+    learnCategory(prisma, draft);
     const label = MOVE_LABEL[String(draft.payload.type)] || 'Movimiento';
     let attached = 0;
     for (const img of draft.pendingImages) if ((await attachToMovement(prisma, draft.userId, row.id, img)) === 'ok') attached++;

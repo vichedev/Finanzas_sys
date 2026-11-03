@@ -9,6 +9,8 @@
 import { logger } from '../lib/logger';
 import { getBrainCreds, chatComplete } from './llm';
 import { createNotification } from '../lib/notifications';
+import { todayEcuador } from '../lib/ecuadorDate';
+import { STRICT_YES } from './replies';
 import type { IncomingMessage } from './gateway';
 
 export type Target = 'movement' | 'debt' | 'recurring' | 'budget' | 'account' | 'card' | 'query';
@@ -17,10 +19,7 @@ type EntityKind = 'debt' | 'recurring' | 'budget' | 'account';
 const fmt = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
 const norm = (s: unknown) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
 
-function todayYmd(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
+const todayYmd = () => todayEcuador();
 function fmtDate(ymd: string): string { const [y, m, d] = ymd.split('-'); return d && m && y ? `${d}/${m}/${y}` : ymd; }
 /** Monto tolerante a miles/decimales latino o anglosajón (ver pipeline.parseAmount). */
 function parseAmount(text: string): number {
@@ -48,7 +47,7 @@ function parseDateLoose(text: string): string | null | undefined {
   if (/^(sin fecha|no|ninguna|nada|omitir|luego)$/.test(t)) return null;
   const m = t.match(/(\d{1,2})\s*[/\-.]\s*(\d{1,2})(?:\s*[/\-.]\s*(\d{2,4}))?/);
   if (m) {
-    const d = Number(m[1]); const mo = Number(m[2]); let y = m[3] ? Number(m[3]) : new Date().getFullYear();
+    const d = Number(m[1]); const mo = Number(m[2]); let y = m[3] ? Number(m[3]) : Number(todayYmd().slice(0, 4));
     if (y < 100) y += 2000;
     if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   }
@@ -110,7 +109,6 @@ function getEDraft(chatId: string): EDraft | null {
 export function hasEntityDraft(chatId: string): boolean { return !!getEDraft(chatId); }
 export function clearEntityDraft(chatId: string): void { eDrafts.delete(chatId); }
 
-const AFFIRM = /^\s*(s[ií]|si|dale|ok(ay)?|conf[ií]rmo|correcto|listo|va|h[aá]zlo|reg[ií]stralo?|de una|👍|✅)\b/i;
 const NEGATE = /^\s*(no|nel|nop|cancela(r)?|olv[ií]dalo|❌)\b/i;
 
 function renderSlot(s: Slot): string {
@@ -380,7 +378,7 @@ export async function continueEntity(prisma: any, msg: IncomingMessage, text: st
   if (NEGATE.test(text)) { eDrafts.delete(msg.chatId); await msg.reply('❌ Cancelado. No registré nada.'); return true; }
 
   if (d.awaiting === 'confirm') {
-    if (AFFIRM.test(text)) {
+    if (STRICT_YES.test(text)) {
       eDrafts.delete(msg.chatId);
       try {
         const r = await spec.create(prisma, d.userId, d.data);

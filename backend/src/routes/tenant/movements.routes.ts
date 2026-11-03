@@ -7,6 +7,7 @@ import { createNotification } from '../../lib/notifications';
 import { auditFromReq } from '../../lib/tenantAudit';
 import { accountBelongsToDebitCard } from '../../lib/debitCard';
 import type { TenantPrisma } from '../../lib/tenantPrisma';
+import { recordCategoryCorrection } from '../../whatsapp/aiMemory';
 
 export const MOVE_LABEL: Record<string, string> = { INCOME: 'Ingreso', EXPENSE: 'Gasto', TRANSFER: 'Transferencia', WITHDRAWAL: 'Retiro', PURCHASE: 'Compra', CARD_PAYMENT: 'Pago de tarjeta', ADJUSTMENT: 'Ajuste' };
 const fmtMoney = (v: unknown) => new Intl.NumberFormat('es-EC', { style: 'currency', currency: 'USD' }).format(Number(v || 0));
@@ -314,10 +315,12 @@ movementsRouter.put('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const body = movementSchema.parse(req.body);
   const userId = req.tenantUserId!;
+  let prevCategoryId: number | null = null;
 
   const row = await req.tenantPrisma!.$transaction(async (tx) => {
     const prev = await tx.movement.findUnique({ where: { id } });
     if (!prev || prev.userId !== userId) throw Object.assign(new Error('Not found'), { code: 'P2025' });
+    prevCategoryId = prev.categoryId;
     await assertOwnership(tx, userId, body);
     await assertDebitCardHasAccount(tx, userId, body);
     await revertDeltas(tx, userId, prev);
@@ -330,6 +333,12 @@ movementsRouter.put('/:id', async (req, res) => {
   });
 
   void auditFromReq(req, 'UPDATE', 'movement', id, `${MOVE_LABEL[row.type] || row.type}: "${row.description}" · ${fmtMoney(row.amount)}`);
+  if (row.categoryId != null && row.categoryId !== prevCategoryId) {
+    // La memoria de la IA aprende en segundo plano: un fallo no afecta a la respuesta.
+    void recordCategoryCorrection(req.tenantPrisma!, userId, {
+      description: row.description, vendor: row.vendor, categoryId: row.categoryId, type: row.type
+    }).catch(() => { /* no debería lanzar */ });
+  }
   res.json(row);
 });
 

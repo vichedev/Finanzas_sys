@@ -134,6 +134,7 @@ model User {
   notifications Notification[]
   attachments Attachment[]
   budgets    Budget[]
+  aiMemories AiCategoryMemory[]
 }
 
 model Branding {
@@ -276,9 +277,26 @@ model Category {
   movements Movement[]
   recurrings RecurringRule[]
   budgets   Budget[]
+  aiMemories AiCategoryMemory[]
 
   @@unique([userId, name])
   @@index([userId])
+}
+
+// Memoria de correcciones de la IA: qué categoría eligió el usuario para un comercio o detalle.
+model AiCategoryMemory {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key        String   // detalle o comercio normalizado (normalizeMemoryKey)
+  categoryId Int
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  hits       Int      @default(1)
+  lastUsedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, key])
+  @@index([userId, lastUsedAt])
 }
 
 model Movement {
