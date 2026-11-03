@@ -158,6 +158,8 @@ Los eventos y bloqueos se ven en **Configuración → Seguridad** y se conservan
 - **SuperAdmin:** ve todos los eventos, desbloquea cuentas y levanta bloqueos de IP.
 - **Admin de empresa:** ve los eventos de su empresa y desbloquea sus usuarios.
 
+Cada empresa tiene su propia credencial: un correo presente en varias empresas solo entra a aquellas cuya contraseña coincide.
+
 `TRUST_PROXY` (en `backend/.env`) indica cuántos proxies hay delante del backend. Vale `1` con el nginx del proyecto; súbelo a `2` si pones otro delante (Cloudflare, Caddy). Si no coincide, todos los usuarios pueden contar como una sola IP.
 
 Si la IP del administrador queda bloqueada, espera a que venza o levántalo por SQL:

@@ -50,6 +50,19 @@ export async function claimAttempt(table: AccountTable, id: string): Promise<Att
   return rows.length ? { claimed: true, lockedNow: rows[0].locked_now } : { claimed: false, lockedNow: false };
 }
 
+/**
+ * Devuelve un intento reservado que resultó no ser un fallo: el login fue correcto
+ * con otra credencial del mismo correo. Deshace también el bloqueo si lo causó este intento.
+ */
+export async function releaseAttempt(table: AccountTable, id: string, lockedNow: boolean): Promise<void> {
+  await globalPrisma.$executeRawUnsafe(
+    lockedNow
+      ? `UPDATE "${table}" SET "failedAttempts" = ${MAX_FAILED_ATTEMPTS - 1}, "lockedUntil" = NULL WHERE id = $1`
+      : `UPDATE "${table}" SET "failedAttempts" = GREATEST("failedAttempts" - 1, 0) WHERE id = $1`,
+    id
+  );
+}
+
 /** Normaliza la IP: IPv4 mapeada a IPv4 e IPv6 a su /64, que es lo que controla un solo cliente. */
 export function normalizeIp(raw: string | undefined | null): string | null {
   if (!raw) return null;

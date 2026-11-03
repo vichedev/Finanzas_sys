@@ -248,6 +248,88 @@ test('el superadmin ve los eventos de todas las empresas', async () => {
   assert.equal(filtered.total, 1);
 });
 
+const selectTenant = (bearer: string, choice: string) => fetch(`${base}/api/auth/select-tenant`, {
+  method: 'POST',
+  headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ choice })
+});
+
+async function addMemberWithPassword(email: string, tenantId: string, password: string) {
+  return prisma.tenantMembership.create({
+    data: { email, passwordHash: await bcrypt.hash(password, 12), name: 'Prueba', tenantId, role: 'ADMIN_EMPRESA' }
+  });
+}
+
+test('un usuario creado con el correo de otra empresa no da acceso a esa empresa', async () => {
+  await addMember('victima@prueba.example', tenantB);
+  await addMemberWithPassword('victima@prueba.example', tenantA, 'clave-de-la-trampa');
+
+  const res = await login('victima@prueba.example', 'clave-de-la-trampa', nextIp());
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.pending, undefined);
+  assert.equal(data.user.tenant.id, tenantA);
+  assert.equal((await selectTenant(data.token, tenantB)).status, 400);
+});
+
+test('el dueño real entra solo a la empresa de su contraseña', async () => {
+  await addMember('victima@prueba.example', tenantB);
+  await addMemberWithPassword('victima@prueba.example', tenantA, 'clave-de-la-trampa');
+  const data = await (await login('victima@prueba.example', PASSWORD, nextIp())).json();
+  assert.equal(data.user.tenant.id, tenantB);
+});
+
+test('con la misma contraseña en dos empresas se puede elegir entre ambas', async () => {
+  await addMember('doble@prueba.example', tenantA);
+  await addMember('doble@prueba.example', tenantB);
+  const data = await (await login('doble@prueba.example', PASSWORD, nextIp())).json();
+  assert.equal(data.pending, true);
+  assert.deepEqual(data.tenants.map((t: { id: string }) => t.id).sort(), [tenantA, tenantB].sort());
+  assert.equal((await selectTenant(data.token, tenantB)).status, 200);
+});
+
+test('no se ofrece una empresa bloqueada aunque la contraseña coincida', async () => {
+  await addMember('doble@prueba.example', tenantA);
+  const b = await addMember('doble@prueba.example', tenantB);
+  await prisma.tenantMembership.update({ where: { id: b.id }, data: { lockedUntil: new Date(Date.now() + 600_000) } });
+  const data = await (await login('doble@prueba.example', PASSWORD, nextIp())).json();
+  assert.equal(data.user.tenant.id, tenantA);
+});
+
+test('una cuenta con el correo del superadmin no da acceso de superadmin', async () => {
+  await prisma.superAdmin.create({ data: { email: 's@prueba.example', passwordHash: hash, name: 'Super' } });
+  await addMemberWithPassword('s@prueba.example', tenantA, 'clave-de-la-trampa');
+  const data = await (await login('s@prueba.example', 'clave-de-la-trampa', nextIp())).json();
+  assert.equal(data.user.kind, 'tenant');
+  assert.equal(data.superAvailable, undefined);
+  assert.equal((await selectTenant(data.token, 'super')).status, 400);
+});
+
+test('un superadmin inactivo no entra a una empresa con su contraseña de plataforma', async () => {
+  await prisma.superAdmin.create({ data: { email: 's@prueba.example', passwordHash: hash, name: 'Super', isActive: false } });
+  await addMemberWithPassword('s@prueba.example', tenantA, 'otra-clave-distinta');
+  assert.equal((await login('s@prueba.example', PASSWORD, nextIp())).status, 401);
+});
+
+test('entrar con la clave de una empresa no limpia ni bloquea la cuenta de la otra', async () => {
+  const victim = await addMember('victima@prueba.example', tenantB);
+  await addMemberWithPassword('victima@prueba.example', tenantA, 'clave-de-la-trampa');
+  const ip = nextIp();
+
+  for (let i = 0; i < 3; i++) await login('victima@prueba.example', 'mal', ip);
+  assert.equal((await login('victima@prueba.example', 'clave-de-la-trampa', ip)).status, 200);
+  assert.equal((await prisma.tenantMembership.findUniqueOrThrow({ where: { id: victim.id } })).failedAttempts, 3);
+
+  await login('victima@prueba.example', 'mal', ip);
+  assert.equal((await login('victima@prueba.example', 'clave-de-la-trampa', ip)).status, 200);
+  const state = await prisma.tenantMembership.findUniqueOrThrow({ where: { id: victim.id } });
+  assert.equal(state.failedAttempts, 4);
+  assert.equal(state.lockedUntil, null);
+
+  await login('victima@prueba.example', 'mal', ip);
+  assert.ok((await prisma.tenantMembership.findUniqueOrThrow({ where: { id: victim.id } })).lockedUntil);
+});
+
 test('la retención borra solo lo antiguo', async () => {
   const old = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000);
   await prisma.loginEvent.create({ data: { type: 'LOGIN_FAILED', createdAt: old } });

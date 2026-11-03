@@ -6,7 +6,7 @@ import { signToken, verifyToken, type PendingPayload, type SuperAdminPayload, ty
 import { requireAuth } from '../../middleware/auth';
 import { logSuperAccess } from '../../lib/auditLog';
 import { logger } from '../../lib/logger';
-import { checkIpBlock, claimAttempt, evaluateIpBlock, normalizeIp, recordLoginEvent, type AttemptClaim } from '../../lib/loginSecurity';
+import { checkIpBlock, claimAttempt, evaluateIpBlock, normalizeIp, recordLoginEvent, releaseAttempt, type AttemptClaim } from '../../lib/loginSecurity';
 
 export const globalAuthRouter = Router();
 
@@ -80,17 +80,16 @@ globalAuthRouter.post('/login', async (req, res) => {
   const saOk = sa && saClaim?.claimed ? await bcrypt.compare(body.password, sa.passwordHash) : false;
 
   // ---- Validar password contra membership(s) ----
-  let matchedMembership: typeof memberships[number] | null = null;
+  // Cada empresa tiene su propia credencial: como un admin de empresa puede crear
+  // un usuario con cualquier correo, solo da acceso la empresa cuya contraseña coincide.
+  const matchedMemberships: typeof memberships = [];
   for (const [i, m] of memberships.entries()) {
     if (!membershipClaims[i]?.claimed) continue;
-    if (await bcrypt.compare(body.password, m.passwordHash)) {
-      matchedMembership = m;
-      break;
-    }
+    if (await bcrypt.compare(body.password, m.passwordHash)) matchedMemberships.push(m);
   }
 
   // ---- Si ningún match: el intento reservado queda contado ----
-  if (!saOk && !matchedMembership) {
+  if (!saOk && matchedMemberships.length === 0) {
     if (sa) {
       logSuperAccess(sa.id, null, 'SUPER_ADMIN_LOGIN_FAILED', req).catch((e) => logger.error({ err: e }, 'audit failed'));
     }
@@ -100,24 +99,38 @@ globalAuthRouter.post('/login', async (req, res) => {
     return rejectLogin('LOGIN_FAILED', 'BAD_CREDENTIALS');
   }
 
-  // ---- Devolver los intentos reservados: la identidad quedó comprobada ----
+  // ---- Liquidar los intentos reservados ----
+  // Solo se limpia la credencial que coincidió. En las demás únicamente se devuelve
+  // este intento: conocer la contraseña de una empresa no debe borrar los fallos
+  // acumulados en otra, o se podría atacar esa otra cuenta sin llegar al bloqueo.
+  const matchedIds = new Set(matchedMemberships.map((m) => m.id));
   const clearAttempts = { failedAttempts: 0, lockedUntil: null, lastFailedAt: null };
+  const settleSuperAdmin = () => {
+    if (!sa || !saClaim?.claimed) return null;
+    return saOk
+      ? globalPrisma.superAdmin.update({ where: { id: sa.id }, data: clearAttempts })
+      : releaseAttempt('SuperAdmin', sa.id, saClaim.lockedNow);
+  };
   await Promise.all([
-    sa && saClaim?.claimed ? globalPrisma.superAdmin.update({ where: { id: sa.id }, data: clearAttempts }) : null,
-    ...memberships.map((m, i) => (membershipClaims[i]?.claimed
-      ? globalPrisma.tenantMembership.update({ where: { id: m.id }, data: clearAttempts })
-      : null))
+    settleSuperAdmin(),
+    ...memberships.map((m, i) => {
+      const claim = membershipClaims[i];
+      if (!claim?.claimed) return null;
+      return matchedIds.has(m.id)
+        ? globalPrisma.tenantMembership.update({ where: { id: m.id }, data: clearAttempts })
+        : releaseAttempt('TenantMembership', m.id, claim.lockedNow);
+    })
   ]);
 
   // ---- Memberships utilizables (activos en tenants ACTIVOS) ----
-  const usableTenants = memberships.filter((m) => m.isActive && m.tenant.status === 'ACTIVE');
+  const usableTenants = matchedMemberships.filter((m) => m.isActive && m.tenant.status === 'ACTIVE');
 
   // SuperAdmin inactivo: tratamos como si no existiera
   const saUsable = sa && saOk && sa.isActive;
 
   const logSuccess = () => recordLoginEvent({
     type: 'LOGIN_SUCCESS', email, ip, req,
-    tenantIds: matchedMembership ? [matchedMembership.tenantId] : []
+    tenantIds: matchedMemberships.map((m) => m.tenantId)
   });
 
   // ---- Decidir flujo ----
