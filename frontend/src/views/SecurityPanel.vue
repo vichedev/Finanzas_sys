@@ -308,9 +308,9 @@ onMounted(load);
           </thead>
           <tbody>
             <tr v-for="event in events" :key="event.id">
-              <td class="nowrap">{{ formatDate(event.createdAt) }}</td>
+              <td class="date-cell">{{ formatDate(event.createdAt) }}</td>
               <td class="nowrap"><span class="badge" :class="EVENT_TONE[event.type]">{{ EVENT_LABEL[event.type] }}</span></td>
-              <td>{{ event.email || '—' }}</td>
+              <td class="wrap-any">{{ event.email || '—' }}</td>
               <td class="nowrap">{{ event.ip || '—' }}</td>
               <td>{{ eventDetail(event) }}</td>
               <td>{{ eventAction(event) }}</td>
@@ -376,8 +376,10 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e2e8f0; }
 th { color: #64748b; font-weight: 500; }
 .nowrap { white-space: nowrap; }
+.wrap-any { overflow-wrap: anywhere; min-width: 165px; }
+.date-cell { min-width: 95px; }
 .row-action { text-align: right; }
-.row-buttons { min-width: 130px; }
+.row-buttons { width: 130px; min-width: 130px; }
 .row-buttons button { display: block; width: 100%; margin: 2px 0; white-space: nowrap; }
 .modal-target { font-weight: 600; margin: 0 0 8px; overflow-wrap: anywhere; }
 .duration { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; font-size: 13px; color: #334155; }
