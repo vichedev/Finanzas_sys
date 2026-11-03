@@ -155,8 +155,10 @@ Exigir cuentas distintas evita bloquear a quienes comparten IP (CGNAT, oficinas)
 
 Los eventos y bloqueos se ven en **Configuración → Seguridad** y se conservan 90 días:
 
-- **SuperAdmin:** ve todos los eventos, desbloquea cuentas y levanta bloqueos de IP.
-- **Admin de empresa:** ve los eventos de su empresa y desbloquea sus usuarios.
+- **SuperAdmin:** ve todos los eventos; bloquea y desbloquea cuentas e IP.
+- **Admin de empresa:** ve los eventos de su empresa; bloquea y desbloquea sus usuarios.
+
+Un bloqueo manual dura 1 hora, 1 día, 7 días o 30 días. Bloquear una cuenta cierra sus sesiones abiertas; bloquear una IP solo impide iniciar sesión desde ella. Nadie puede bloquear su propia cuenta ni la IP desde la que trabaja.
 
 Cada empresa tiene su propia credencial: un correo presente en varias empresas solo entra a aquellas cuya contraseña coincide.
 

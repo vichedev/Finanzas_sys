@@ -13,6 +13,8 @@ export interface LoginEvent {
   userAgent: string | null;
   metadata: Record<string, unknown> | null;
   createdAt: string;
+  account: { locked: boolean; self: boolean } | null;
+  ipBlocked: boolean;
 }
 
 export interface LockedAccount {
@@ -35,10 +37,13 @@ export interface BlockedIp {
 
 export const securityApi = {
   events: (params: { type?: LoginEventType; search?: string; limit: number; offset: number }) =>
-    http.get<{ total: number; events: LoginEvent[] }>('/security/events', { params }).then((r) => r.data),
+    http.get<{ total: number; currentIp: string | null; events: LoginEvent[] }>('/security/events', { params }).then((r) => r.data),
   blocks: () =>
     http.get<{ accounts: LockedAccount[]; ips: BlockedIp[] }>('/security/blocks').then((r) => r.data),
   unlockAccount: (kind: LockedAccount['kind'], id: string) =>
     http.post('/security/accounts/unlock', { kind, id }),
+  lockAccountByEmail: (email: string, minutes: number) => http.post('/security/accounts/lock', { email, minutes }),
+  unlockAccountByEmail: (email: string) => http.post('/security/accounts/unlock-email', { email }),
+  blockIp: (ip: string, minutes: number) => http.post('/security/ips/block', { ip, minutes }),
   unblockIp: (ip: string) => http.post('/security/ips/unblock', { ip })
 };

@@ -19,6 +19,8 @@ export const IP_WINDOW_MINUTES = 15;
 export const IP_MAX_FAILURES = 20;
 export const IP_MIN_DISTINCT_ACCOUNTS = 5;
 export const RETENTION_DAYS = 90;
+/** Duraciones permitidas para un bloqueo manual: 1 hora, 1 día, 7 días y 30 días. */
+export const MANUAL_BLOCK_MINUTES = [60, 1440, 10080, 43200];
 
 const UTC_NOW = `(now() AT TIME ZONE 'UTC')`;
 const FRESH_COUNT = `CASE WHEN "lastFailedAt" IS NULL OR "lastFailedAt" < ${UTC_NOW} - interval '15 minutes' THEN 1 ELSE "failedAttempts" + 1 END`;
@@ -177,6 +179,37 @@ export async function evaluateIpBlock(ip: string | null, req?: Request): Promise
   } catch (err) {
     logger.error({ err }, 'no se pudo evaluar el bloqueo de IP');
   }
+}
+
+/** Bloqueo manual de una cuenta. Sube tokenVersion para cerrar también sus sesiones abiertas. */
+export async function lockAccount(table: AccountTable, id: string, minutes: number): Promise<Date> {
+  const [row] = await globalPrisma.$queryRawUnsafe<Array<{ until: Date }>>(
+    `UPDATE "${table}" SET
+       "lockedUntil" = ${UTC_NOW} + ($2::int * interval '1 minute'),
+       "failedAttempts" = 0,
+       "tokenVersion" = "tokenVersion" + 1
+     WHERE id = $1
+     RETURNING "lockedUntil" AS until`,
+    id, minutes
+  );
+  return row.until;
+}
+
+/** Bloqueo manual de una IP. failureCount = 0 lo distingue de uno automático; no cuenta como reincidencia. */
+export async function blockIp(ip: string, minutes: number): Promise<Date> {
+  const [row] = await globalPrisma.$queryRawUnsafe<Array<{ until: Date }>>(
+    `INSERT INTO "IpBlock" (ip, "blockedUntil", strikes, "failureCount", "accountCount", "createdAt", "updatedAt")
+     VALUES ($1, ${UTC_NOW} + ($2::int * interval '1 minute'), 0, 0, 0, ${UTC_NOW}, ${UTC_NOW})
+     ON CONFLICT (ip) DO UPDATE SET
+       "blockedUntil" = EXCLUDED."blockedUntil",
+       "failureCount" = 0,
+       "accountCount" = 0,
+       "blockedAttempts" = 0,
+       "updatedAt" = ${UTC_NOW}
+     RETURNING "blockedUntil" AS until`,
+    ip, minutes
+  );
+  return row.until;
 }
 
 /** Levanta el bloqueo y perdona la reincidencia. La fila se conserva para que evaluateIpBlock ignore los fallos anteriores. */

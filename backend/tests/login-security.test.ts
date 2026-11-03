@@ -1,5 +1,6 @@
 // Pruebas de comportamiento del login. Crean una base de datos propia y la borran al terminar.
 // Uso: npm run test:security
+import 'express-async-errors';
 import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
@@ -7,7 +8,8 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
-import express from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
+import { ZodError } from 'zod';
 import { Client } from 'pg';
 
 const TEST_DB = `finanzas_test_${randomBytes(4).toString('hex')}`;
@@ -75,6 +77,11 @@ before(async () => {
   app.use(express.json());
   app.use('/api/auth', globalAuthRouter);
   app.use('/api/security', securityRouter);
+  // Igual que index.ts: sin esto, un error de validación deja la petición colgada.
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (err instanceof ZodError) return res.status(400).json({ message: 'Datos inválidos' });
+    return next(err);
+  });
   server = app.listen(0);
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -328,6 +335,122 @@ test('entrar con la clave de una empresa no limpia ni bloquea la cuenta de la ot
 
   await login('victima@prueba.example', 'mal', ip);
   assert.ok((await prisma.tenantMembership.findUniqueOrThrow({ where: { id: victim.id } })).lockedUntil);
+});
+
+async function superToken() {
+  await prisma.superAdmin.create({ data: { email: 'super@prueba.example', passwordHash: hash, name: 'Super' } });
+  return token('super@prueba.example');
+}
+
+test('el bloqueo manual impide entrar, cierra la sesión abierta y se puede levantar', async () => {
+  await addMember('jefe@prueba.example', tenantA);
+  await addMember('u@prueba.example', tenantA, 'USUARIO_EMPRESA');
+  const jefe = await token('jefe@prueba.example');
+  await addMember('otro-admin@prueba.example', tenantA);
+  const abierta = await token('otro-admin@prueba.example');
+
+  const res = await api('/accounts/lock', jefe, { email: 'otro-admin@prueba.example', minutes: 60 });
+  assert.equal(res.status, 200);
+  assert.equal((await login('otro-admin@prueba.example', PASSWORD, nextIp())).status, 401);
+  assert.equal((await api('/events', abierta)).status, 401);
+
+  const events = (await (await api('/events?type=ACCOUNT_LOCKED', jefe)).json()).events;
+  assert.equal(events[0].metadata.by, 'jefe@prueba.example');
+  assert.equal(events[0].account.locked, true);
+
+  assert.equal((await api('/accounts/unlock-email', jefe, { email: 'otro-admin@prueba.example' })).status, 200);
+  assert.equal((await login('otro-admin@prueba.example', PASSWORD, nextIp())).status, 200);
+});
+
+test('el admin de empresa no alcanza cuentas de otra empresa, ni con el mismo correo', async () => {
+  await addMember('jefe@prueba.example', tenantA);
+  await addMember('ajeno@prueba.example', tenantB);
+  await addMember('doble@prueba.example', tenantA);
+  const ajena = await addMember('doble@prueba.example', tenantB);
+  const jefe = await token('jefe@prueba.example');
+
+  assert.equal((await api('/accounts/lock', jefe, { email: 'ajeno@prueba.example', minutes: 60 })).status, 404);
+  assert.equal((await member('ajeno@prueba.example')).lockedUntil, null);
+
+  assert.equal((await api('/accounts/lock', jefe, { email: 'doble@prueba.example', minutes: 60 })).status, 200);
+  const state = await prisma.tenantMembership.findUniqueOrThrow({ where: { id: ajena.id } });
+  assert.equal(state.lockedUntil, null);
+  assert.equal(state.tokenVersion, ajena.tokenVersion);
+
+  await prisma.tenantMembership.update({ where: { id: ajena.id }, data: { lockedUntil: new Date(Date.now() + 600_000) } });
+  await api('/accounts/unlock-email', jefe, { email: 'doble@prueba.example' });
+  assert.ok((await prisma.tenantMembership.findUniqueOrThrow({ where: { id: ajena.id } })).lockedUntil);
+});
+
+test('nadie se bloquea a sí mismo y un usuario normal no puede bloquear', async () => {
+  await addMember('jefe@prueba.example', tenantA);
+  await addMember('u@prueba.example', tenantA, 'USUARIO_EMPRESA');
+  const jefe = await token('jefe@prueba.example');
+  assert.equal((await api('/accounts/lock', jefe, { email: 'JEFE@prueba.example', minutes: 60 })).status, 400);
+  assert.equal((await api('/accounts/lock', await token('u@prueba.example'), { email: 'jefe@prueba.example', minutes: 60 })).status, 403);
+});
+
+test('una duración no permitida se rechaza', async () => {
+  await addMember('jefe@prueba.example', tenantA);
+  await addMember('u@prueba.example', tenantA);
+  const jefe = await token('jefe@prueba.example');
+  assert.equal((await api('/accounts/lock', jefe, { email: 'u@prueba.example', minutes: 999999999 })).status, 400);
+});
+
+test('una selección de empresa pendiente no completa el acceso si la cuenta se bloqueó', async () => {
+  await addMember('doble@prueba.example', tenantA);
+  await addMember('doble@prueba.example', tenantB);
+  const pending = (await (await login('doble@prueba.example', PASSWORD, nextIp())).json()).token;
+  assert.equal((await api('/accounts/lock', await superToken(), { email: 'doble@prueba.example', minutes: 60 })).status, 200);
+  assert.equal((await selectTenant(pending, tenantA)).status, 403);
+});
+
+test('el superadmin bloquea y desbloquea una IP a mano', async () => {
+  await addMember('u@prueba.example', tenantA);
+  const su = await superToken();
+  const ip = nextIp();
+  assert.equal((await login('u@prueba.example', PASSWORD, ip)).status, 200);
+
+  assert.equal((await api('/ips/block', su, { ip, minutes: 60 })).status, 200);
+  assert.equal((await login('u@prueba.example', PASSWORD, ip)).status, 429);
+  assert.equal((await login('u@prueba.example', PASSWORD, nextIp())).status, 200);
+
+  const events = (await (await api(`/events?search=${ip}`, su)).json()).events;
+  assert.ok(events.every((e: { ipBlocked: boolean }) => e.ipBlocked));
+
+  assert.equal((await api('/ips/unblock', su, { ip })).status, 200);
+  assert.equal((await login('u@prueba.example', PASSWORD, ip)).status, 200);
+});
+
+test('una IPv6 se bloquea con el mismo valor /64 que muestra el panel', async () => {
+  await addMember('u@prueba.example', tenantA);
+  const su = await superToken();
+  assert.equal((await api('/ips/block', su, { ip: '2001:db8:5:6::/64', minutes: 60 })).status, 200);
+  assert.equal((await login('u@prueba.example', PASSWORD, '2001:db8:5:6::abcd')).status, 429);
+});
+
+test('el bloqueo de IP exige superadmin, una IP válida y que no sea la propia', async () => {
+  await addMember('jefe@prueba.example', tenantA);
+  const jefe = await token('jefe@prueba.example');
+  const su = await superToken();
+  assert.equal((await api('/ips/block', jefe, { ip: '203.0.113.9', minutes: 60 })).status, 403);
+  assert.equal((await api('/ips/block', su, { ip: 'no-es-una-ip', minutes: 60 })).status, 400);
+  const own = await fetch(`${base}/api/security/ips/block`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${su}`, 'Content-Type': 'application/json', 'X-Forwarded-For': '203.0.113.7' },
+    body: JSON.stringify({ ip: '203.0.113.7', minutes: 60 })
+  });
+  assert.equal(own.status, 400);
+});
+
+test('el admin de empresa no recibe el estado de las IP', async () => {
+  await addMember('jefe@prueba.example', tenantA);
+  const ip = nextIp();
+  assert.equal((await login('jefe@prueba.example', PASSWORD, ip)).status, 200);
+  await security.blockIp(ip, 60);
+  const events = (await (await api('/events', await token('jefe@prueba.example'))).json()).events;
+  assert.ok(events.length > 0);
+  assert.ok(events.every((e: { ipBlocked: boolean }) => e.ipBlocked === false));
 });
 
 test('la retención borra solo lo antiguo', async () => {

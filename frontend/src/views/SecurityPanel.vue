@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { securityApi, type BlockedIp, type LockedAccount, type LoginEvent, type LoginEventType } from '../api/security';
 import { useAuthStore } from '../stores/auth';
 import { useConfirm } from '../composables/useConfirm';
+import AppModal from '../components/AppModal.vue';
 
 const auth = useAuthStore();
 const { confirm, alert } = useConfirm();
@@ -44,6 +45,17 @@ const search = ref('');
 const offset = ref(0);
 const loading = ref(false);
 const errorMsg = ref('');
+const currentIp = ref<string | null>(null);
+
+const DURATIONS = [
+  { minutes: 60, label: '1 hora' },
+  { minutes: 1440, label: '1 día' },
+  { minutes: 10080, label: '7 días' },
+  { minutes: 43200, label: '30 días' }
+];
+const blockTarget = ref<{ kind: 'account' | 'ip'; value: string } | null>(null);
+const blockMinutes = ref(60);
+const blocking = ref(false);
 
 const pageLabel = computed(() => {
   if (!total.value) return 'Sin eventos';
@@ -58,9 +70,9 @@ const formatDate = (value: string) => dateFormat.format(new Date(value));
 function eventDetail(event: LoginEvent): string {
   if (event.reason) return REASON_LABEL[event.reason] ?? event.reason;
   const meta = event.metadata;
+  if (meta?.by) return `Por ${meta.by}`;
   if (event.type === 'IP_BLOCKED' && meta) return `${meta.failures} fallos en ${meta.accounts} cuentas`;
   if (event.type === 'ACCOUNT_LOCKED') return '5 intentos fallidos en 15 minutos';
-  if (meta?.by) return `Por ${meta.by}`;
   return '';
 }
 
@@ -75,7 +87,9 @@ function eventAction(event: LoginEvent): string {
     case 'LOCKED_ATTEMPT':
       return 'Rechazado sin comprobar la contraseña; suma un fallo a la IP; el bloqueo no se alarga';
     case 'ACCOUNT_LOCKED':
-      return 'Cuenta bloqueada 15 minutos';
+      return event.metadata?.until
+        ? `Cuenta bloqueada hasta ${formatDate(String(event.metadata.until))}; sesiones abiertas cerradas`
+        : 'Cuenta bloqueada 15 minutos';
     case 'ACCOUNT_UNLOCKED':
       return 'Bloqueo levantado y fallos de la cuenta en cero';
     case 'IP_BLOCKED':
@@ -102,6 +116,7 @@ async function load() {
     ]);
     events.value = eventData.events;
     total.value = eventData.total;
+    currentIp.value = eventData.currentIp;
     accounts.value = blockData.accounts;
     ips.value = blockData.ips;
   } catch {
@@ -153,6 +168,61 @@ async function unblockIp(block: BlockedIp) {
   }
 }
 
+const errorText = (err: unknown, fallback: string) =>
+  (err as { response?: { data?: { message?: string } } }).response?.data?.message ?? fallback;
+
+function openBlock(kind: 'account' | 'ip', value: string) {
+  blockMinutes.value = 60;
+  blockTarget.value = { kind, value };
+}
+
+async function submitBlock() {
+  const target = blockTarget.value;
+  if (!target) return;
+  blocking.value = true;
+  try {
+    if (target.kind === 'account') await securityApi.lockAccountByEmail(target.value, blockMinutes.value);
+    else await securityApi.blockIp(target.value, blockMinutes.value);
+    blockTarget.value = null;
+    await load();
+  } catch (err) {
+    blockTarget.value = null;
+    await alert(errorText(err, 'No se pudo aplicar el bloqueo.'));
+  } finally {
+    blocking.value = false;
+  }
+}
+
+async function unlockByEmail(email: string) {
+  const accepted = await confirm({
+    title: 'Desbloquear cuenta',
+    message: `¿Desbloquear a ${email}? Podrá volver a intentar el acceso de inmediato.`,
+    confirmText: 'Desbloquear'
+  });
+  if (!accepted) return;
+  try {
+    await securityApi.unlockAccountByEmail(email);
+    await load();
+  } catch (err) {
+    await alert(errorText(err, 'No se pudo desbloquear la cuenta.'));
+  }
+}
+
+async function unblockIpValue(ip: string) {
+  const accepted = await confirm({
+    title: 'Desbloquear IP',
+    message: `¿Desbloquear ${ip}? Si fue un ataque, podrá volver a intentarlo.`,
+    confirmText: 'Desbloquear'
+  });
+  if (!accepted) return;
+  try {
+    await securityApi.unblockIp(ip);
+    await load();
+  } catch (err) {
+    await alert(errorText(err, 'No se pudo desbloquear la IP.'));
+  }
+}
+
 onMounted(load);
 </script>
 
@@ -200,7 +270,7 @@ onMounted(load);
             <tbody>
               <tr v-for="block in ips" :key="block.ip">
                 <td>{{ block.ip }}</td>
-                <td>{{ block.failureCount }} fallos en {{ block.accountCount }} cuentas</td>
+                <td>{{ block.failureCount ? `${block.failureCount} fallos en ${block.accountCount} cuentas` : 'Bloqueo manual' }}</td>
                 <td>{{ block.blockedAttempts }}</td>
                 <td>{{ formatDate(block.blockedUntil) }}</td>
                 <td class="row-action"><button type="button" class="mini" @click="unblockIp(block)">Desbloquear</button></td>
@@ -233,7 +303,7 @@ onMounted(load);
       <div v-else class="table-scroll">
         <table>
           <thead>
-            <tr><th>Fecha</th><th>Evento</th><th>Cuenta</th><th>IP</th><th>Detalle</th><th>Acción tomada</th></tr>
+            <tr><th>Fecha</th><th>Evento</th><th>Cuenta</th><th>IP</th><th>Detalle</th><th>Acción tomada</th><th>Acciones</th></tr>
           </thead>
           <tbody>
             <tr v-for="event in events" :key="event.id">
@@ -243,6 +313,16 @@ onMounted(load);
               <td class="nowrap">{{ event.ip || '—' }}</td>
               <td>{{ eventDetail(event) }}</td>
               <td>{{ eventAction(event) }}</td>
+              <td class="row-buttons">
+                <template v-if="event.account && !event.account.self">
+                  <button v-if="event.account.locked" type="button" class="mini" @click="unlockByEmail(event.email!)">Desbloquear cuenta</button>
+                  <button v-else type="button" class="mini danger" @click="openBlock('account', event.email!)">Bloquear cuenta</button>
+                </template>
+                <template v-if="auth.isSuper && event.ip && event.ip !== currentIp">
+                  <button v-if="event.ipBlocked" type="button" class="mini" @click="unblockIpValue(event.ip)">Desbloquear IP</button>
+                  <button v-else type="button" class="mini danger" @click="openBlock('ip', event.ip)">Bloquear IP</button>
+                </template>
+              </td>
             </tr>
           </tbody>
         </table>
@@ -256,6 +336,26 @@ onMounted(load);
         </div>
       </div>
     </div>
+
+    <AppModal :open="!!blockTarget" :title="blockTarget?.kind === 'ip' ? 'Bloquear IP' : 'Bloquear cuenta'" @close="blockTarget = null">
+      <template v-if="blockTarget">
+        <p class="modal-target">{{ blockTarget.value }}</p>
+        <p class="info-text">
+          <template v-if="blockTarget.kind === 'account'">No podrá iniciar sesión y se cerrarán sus sesiones abiertas.</template>
+          <template v-else>Se rechazará todo inicio de sesión desde esta IP. Quien ya tenga una sesión abierta seguirá dentro.</template>
+        </p>
+        <label class="duration">
+          Duración
+          <select v-model.number="blockMinutes">
+            <option v-for="d in DURATIONS" :key="d.minutes" :value="d.minutes">{{ d.label }}</option>
+          </select>
+        </label>
+      </template>
+      <template #footer>
+        <button type="button" class="mini" @click="blockTarget = null">Cancelar</button>
+        <button type="button" class="mini danger" :disabled="blocking" @click="submitBlock">{{ blocking ? 'Bloqueando…' : 'Bloquear' }}</button>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -270,6 +370,10 @@ th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e2e8f0; 
 th { color: #64748b; font-weight: 500; }
 .nowrap { white-space: nowrap; }
 .row-action { text-align: right; }
+.row-buttons { min-width: 130px; }
+.row-buttons button { display: block; width: 100%; margin: 2px 0; white-space: nowrap; }
+.modal-target { font-weight: 600; margin: 0 0 8px; overflow-wrap: anywhere; }
+.duration { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; font-size: 13px; color: #334155; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .filters select, .filters input { flex: 1 1 200px; min-width: 0; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
@@ -282,4 +386,6 @@ th { color: #64748b; font-weight: 500; }
 button.mini { font-size: 12px; padding: 4px 10px; background: white; border: 1px solid #e2e8f0; color: #475569; border-radius: 6px; cursor: pointer; }
 button.mini:hover:not(:disabled) { background: #f8fafc; }
 button.mini:disabled { opacity: 0.5; cursor: not-allowed; }
+button.mini.danger { color: #b91c1c; border-color: #fecaca; }
+button.mini.danger:hover:not(:disabled) { background: #fef2f2; }
 </style>

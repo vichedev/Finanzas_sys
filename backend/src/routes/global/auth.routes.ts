@@ -225,7 +225,9 @@ globalAuthRouter.post('/select-tenant', async (req, res) => {
   if (choice === 'super') {
     if (!pending.superAdminId) return res.status(403).json({ message: 'Opción super-admin no disponible' });
     const sa = await globalPrisma.superAdmin.findUnique({ where: { id: pending.superAdminId } });
-    if (!sa || !sa.isActive) return res.status(403).json({ message: 'Super admin no disponible' });
+    if (!sa || !sa.isActive || (sa.lockedUntil && sa.lockedUntil > new Date())) {
+      return res.status(403).json({ message: 'Super admin no disponible' });
+    }
     await globalPrisma.superAdmin.update({ where: { id: sa.id }, data: { lastLoginAt: new Date() } });
     const payload: SuperAdminPayload = {
       kind: 'super', id: sa.id, email: sa.email, role: sa.role, tokenVersion: sa.tokenVersion
@@ -245,7 +247,7 @@ globalAuthRouter.post('/select-tenant', async (req, res) => {
     where: { email_tenantId: { email: pending.email, tenantId: choice } },
     include: { tenant: { select: { id: true, slug: true, legalName: true, status: true, logoUrl: true } } }
   });
-  if (!m || !m.isActive || m.tenant.status !== 'ACTIVE') {
+  if (!m || !m.isActive || m.tenant.status !== 'ACTIVE' || (m.lockedUntil && m.lockedUntil > new Date())) {
     return res.status(403).json({ message: 'Tenant no disponible' });
   }
 
