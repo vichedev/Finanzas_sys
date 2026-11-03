@@ -8,7 +8,7 @@ import AppModal from '../components/AppModal.vue';
 const auth = useAuthStore();
 const { confirm, alert } = useConfirm();
 
-const PAGE_SIZE = 10;
+const PAGE_SIZES = [10, 25, 50, 100];
 
 const EVENT_LABEL: Record<LoginEventType, string> = {
   LOGIN_SUCCESS: 'Acceso correcto',
@@ -43,6 +43,7 @@ const ips = ref<BlockedIp[]>([]);
 const typeFilter = ref<LoginEventType | ''>('');
 const search = ref('');
 const offset = ref(0);
+const pageSize = ref(10);
 const loading = ref(false);
 const errorMsg = ref('');
 const currentIp = ref<string | null>(null);
@@ -59,7 +60,7 @@ const blocking = ref(false);
 
 const pageLabel = computed(() => {
   if (!total.value) return 'Sin eventos';
-  return `${offset.value + 1}–${Math.min(offset.value + PAGE_SIZE, total.value)} de ${total.value}`;
+  return `${offset.value + 1}–${Math.min(offset.value + pageSize.value, total.value)} de ${total.value}`;
 });
 
 const dateFormat = new Intl.DateTimeFormat('es-EC', {
@@ -109,7 +110,7 @@ async function load() {
       securityApi.events({
         type: typeFilter.value || undefined,
         search: search.value.trim() || undefined,
-        limit: PAGE_SIZE,
+        limit: pageSize.value,
         offset: offset.value
       }),
       securityApi.blocks()
@@ -132,11 +133,11 @@ function applyFilters() {
 }
 
 function movePage(delta: number) {
-  offset.value = Math.max(0, offset.value + delta * PAGE_SIZE);
+  offset.value = Math.max(0, offset.value + delta * pageSize.value);
   load();
 }
 
-watch(typeFilter, applyFilters);
+watch([typeFilter, pageSize], applyFilters);
 
 async function unlockAccount(account: LockedAccount) {
   const accepted = await confirm({
@@ -331,8 +332,14 @@ onMounted(load);
       <div class="pager">
         <span>{{ pageLabel }}</span>
         <div>
+          <label class="page-size">
+            Filas por página
+            <select v-model.number="pageSize">
+              <option v-for="size in PAGE_SIZES" :key="size" :value="size">{{ size }}</option>
+            </select>
+          </label>
           <button type="button" class="mini" :disabled="offset === 0 || loading" @click="movePage(-1)">Anterior</button>
-          <button type="button" class="mini" :disabled="offset + PAGE_SIZE >= total || loading" @click="movePage(1)">Siguiente</button>
+          <button type="button" class="mini" :disabled="offset + pageSize >= total || loading" @click="movePage(1)">Siguiente</button>
         </div>
       </div>
     </div>
@@ -382,7 +389,9 @@ th { color: #64748b; font-weight: 500; }
 .badge.bad { background: #fef2f2; color: #b91c1c; }
 .badge.info { background: #eff6ff; color: #1d4ed8; }
 .pager { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 12px; color: #64748b; font-size: 13px; flex-wrap: wrap; }
-.pager div { display: flex; gap: 6px; }
+.pager div { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.page-size { display: flex; align-items: center; gap: 6px; margin-right: 6px; }
+.page-size select { height: 30px; width: auto; padding: 0 24px 0 8px; font-size: 12px; }
 button.mini { font-size: 12px; padding: 4px 10px; background: white; border: 1px solid #e2e8f0; color: #475569; border-radius: 6px; cursor: pointer; }
 button.mini:hover:not(:disabled) { background: #f8fafc; }
 button.mini:disabled { opacity: 0.5; cursor: not-allowed; }
