@@ -107,6 +107,7 @@ model SuperAdmin {
   isActive       Boolean   @default(true)
   tokenVersion   Int       @default(0)
   failedAttempts Int       @default(0)
+  lastFailedAt   DateTime?
   lockedUntil    DateTime?
   lastLoginAt    DateTime?
   createdAt      DateTime  @default(now())
@@ -129,6 +130,7 @@ model TenantMembership {
   isActive      Boolean   @default(true)
   tokenVersion  Int       @default(0)
   failedAttempts Int      @default(0)
+  lastFailedAt  DateTime?
   lockedUntil   DateTime?
   invitedAt     DateTime  @default(now())
   activatedAt   DateTime?
@@ -155,6 +157,47 @@ model SuperAdminAuditLog {
   @@index([superAdminId, createdAt])
   @@index([tenantId, createdAt])
   @@index([action, createdAt])
+}
+
+enum LoginEventType {
+  LOGIN_SUCCESS
+  LOGIN_FAILED
+  LOCKED_ATTEMPT
+  ACCOUNT_LOCKED
+  ACCOUNT_UNLOCKED
+  IP_BLOCKED
+  IP_UNBLOCKED
+}
+
+// Eventos del login. tenantIds indica qué empresas pueden ver cada evento.
+model LoginEvent {
+  id        String         @id @default(cuid())
+  type      LoginEventType
+  email     String?
+  ip        String?
+  reason    String?
+  tenantIds String[]
+  userAgent String?        @db.Text
+  metadata  Json?
+  createdAt DateTime       @default(now())
+
+  @@index([createdAt])
+  @@index([ip, createdAt])
+  @@index([type, createdAt])
+}
+
+// Bloqueo de IP por intentos fallidos sobre varias cuentas.
+model IpBlock {
+  ip              String   @id
+  blockedUntil    DateTime
+  strikes         Int      @default(1)
+  failureCount    Int      @default(0)
+  accountCount    Int      @default(0)
+  blockedAttempts Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([blockedUntil])
 }
 
 model GlobalSetting {

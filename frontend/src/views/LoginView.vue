@@ -32,7 +32,9 @@ async function submit() {
   } catch (e: unknown) {
     const err = e as { response?: { status?: number; data?: { message?: string } } };
     const status = err?.response?.status;
-    if (status === 403) {
+    if (status === 429) {
+      error.value = err?.response?.data?.message || 'Demasiados intentos. Intenta más tarde.';
+    } else if (status === 403) {
       error.value = err?.response?.data?.message || 'Cuenta desactivada.';
     } else if (status === 400 || status === 401) {
       error.value = 'Credenciales inválidas';

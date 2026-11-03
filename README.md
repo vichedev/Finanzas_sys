@@ -144,6 +144,30 @@ Los dumps se guardan en `/var/backups/finanzas/` con retención de 30 días.
 - fail2ban en host (jail sshd).
 - SSH `PasswordAuthentication=no`.
 
+## Bloqueos de acceso
+
+| Qué se bloquea | Cuándo | Duración |
+|---|---|---|
+| Cuenta | 5 intentos fallidos en 15 minutos | 15 minutos |
+| IP | 20 fallos sobre 5 o más cuentas distintas en 15 minutos | 1 h, 6 h y 24 h si reincide |
+
+Exigir cuentas distintas evita bloquear a quienes comparten IP (CGNAT, oficinas) cuando alguien solo se equivoca con su contraseña.
+
+Los eventos y bloqueos se ven en **Configuración → Seguridad** y se conservan 90 días:
+
+- **SuperAdmin:** ve todos los eventos, desbloquea cuentas y levanta bloqueos de IP.
+- **Admin de empresa:** ve los eventos de su empresa y desbloquea sus usuarios.
+
+`TRUST_PROXY` (en `backend/.env`) indica cuántos proxies hay delante del backend. Vale `1` con el nginx del proyecto; súbelo a `2` si pones otro delante (Cloudflare, Caddy). Si no coincide, todos los usuarios pueden contar como una sola IP.
+
+Si la IP del administrador queda bloqueada, espera a que venza o levántalo por SQL:
+
+```bash
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "UPDATE \"IpBlock\" SET \"blockedUntil\" = now() AT TIME ZONE '"'"'UTC'"'"', strikes = 0"'
+```
+
+Pruebas: `cd backend && npm run test:security` (crea y borra su propia base de datos; requiere `.env.dev`).
+
 ## Estructura
 
 ```

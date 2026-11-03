@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Inbox, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, Copy, Check, Archive, Download, Upload, Palette, Sparkles, RefreshCw, MessageCircle } from 'lucide-vue-next';
+import { User, Tags, Landmark, Smartphone, ShieldCheck, Users, Mail, Inbox, Pencil, Trash2, Plus, X, Building2, Pause, Play, Key, ShieldAlert, Copy, Check, Archive, Download, Upload, Palette, Sparkles, RefreshCw, MessageCircle } from 'lucide-vue-next';
 import { useAuthStore } from '../stores/auth';
 import { useBrandingStore } from '../stores/branding';
 import { useEntitiesStore } from '../stores/entities';
@@ -13,6 +13,7 @@ import { whatsappApi, type WhatsappStatus } from '../api/whatsapp';
 import { mailApi, type MailConfig } from '../api/mail';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
+import SecurityPanel from './SecurityPanel.vue';
 import AppModal from '../components/AppModal.vue';
 import { useConfirm } from '../composables/useConfirm';
 
@@ -400,8 +401,8 @@ const profile = ref<Profile | null>(null);
 const profileForm = ref({ name: '', email: '', currency: 'USD', currentPassword: '', newPassword: '' });
 const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = ref(false);
 
-type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'mail' | 'smtp' | 'roles' | 'users' | 'backups' | 'super-admin';
-const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'mail', 'smtp', 'roles', 'users', 'backups', 'super-admin'];
+type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'mail' | 'smtp' | 'roles' | 'users' | 'backups' | 'security' | 'super-admin';
+const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'mail', 'smtp', 'roles', 'users', 'backups', 'security', 'super-admin'];
 const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users', 'whatsapp', 'mail'];
 const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
 
@@ -414,6 +415,7 @@ function readSectionFromQuery(): SectionKey | null {
   if (!VALID_SECTIONS.includes(raw as SectionKey)) return null;
   if (ADMIN_SECTIONS.includes(raw as SectionKey) && !auth.isAdmin) return null;
   if (SUPER_SECTIONS.includes(raw as SectionKey) && !auth.isSuper) return null;
+  if (raw === 'security' && !auth.isSuper && !auth.isAdmin) return null;
   return raw as SectionKey;
 }
 
@@ -1211,7 +1213,8 @@ const SECTIONS = computed<SectionCard[]>(() => {
   // SUPER_ADMIN sin tenant activo: solo administra empresas
   if (auth.isSuper) {
     return [
-      { key: 'super-admin', title: 'Empresas', description: 'Administra las empresas de la plataforma.', icon: Building2, accent: 'indigo' }
+      { key: 'super-admin', title: 'Empresas', description: 'Administra las empresas de la plataforma.', icon: Building2, accent: 'indigo' },
+      { key: 'security', title: 'Seguridad', description: 'Intentos de acceso, cuentas e IP bloqueadas.', icon: ShieldAlert, accent: 'red' }
     ];
   }
   // ADMIN_EMPRESA o USUARIO_EMPRESA (sesión dentro de un tenant)
@@ -1223,6 +1226,7 @@ const SECTIONS = computed<SectionCard[]>(() => {
   ];
   if (auth.isAdmin) {
     base.push({ key: 'roles', title: 'Roles', description: 'Plantillas de permisos.', icon: ShieldCheck, accent: 'indigo' });
+    base.push({ key: 'security', title: 'Seguridad', description: 'Intentos de acceso, cuentas e IP bloqueadas.', icon: ShieldAlert, accent: 'red' });
     base.push({ key: 'users', title: 'Usuarios', description: 'Crear y administrar usuarios.', icon: Users, accent: 'purple' });
     base.push({ key: 'identity', title: 'Identidad', description: 'Logo, título y colores de tu sistema.', icon: Palette, accent: 'purple' });
     base.push({ key: 'smtp', title: 'Servidor de correo', description: 'Configura el SMTP para enviar emails (bienvenida, avisos).', icon: Mail, accent: 'cyan' });
@@ -1937,6 +1941,8 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
     <RolesPanel v-if="activeSection === 'roles' && auth.isAdmin" />
 
     <AdminUsersPanel v-if="activeSection === 'users' && auth.isAdmin" />
+
+    <SecurityPanel v-if="activeSection === 'security' && (auth.isAdmin || auth.isSuper)" />
 
     <div v-if="activeSection === 'financia' && auth.isAdmin" class="panel financia-panel">
       <div class="financia-banner">

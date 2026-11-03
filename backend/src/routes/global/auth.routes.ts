@@ -6,13 +6,12 @@ import { signToken, verifyToken, type PendingPayload, type SuperAdminPayload, ty
 import { requireAuth } from '../../middleware/auth';
 import { logSuperAccess } from '../../lib/auditLog';
 import { logger } from '../../lib/logger';
+import { checkIpBlock, claimAttempt, evaluateIpBlock, normalizeIp, recordLoginEvent, type AttemptClaim } from '../../lib/loginSecurity';
 
 export const globalAuthRouter = Router();
 
 const GENERIC_AUTH_ERROR = 'Credenciales inválidas';
 const DUMMY_HASH = bcrypt.hashSync('this-is-a-dummy-password-for-timing-protection', 12);
-const MAX_FAILED = 5;
-const LOCK_MS = 15 * 60 * 1000;
 
 const loginSchema = z.object({
   // Identificador de acceso: aceptamos emails normales y también usuarios tipo
@@ -32,6 +31,13 @@ const selectSchema = z.object({
 
 // ------------------------- POST /login -------------------------
 globalAuthRouter.post('/login', async (req, res) => {
+  const ip = normalizeIp(req.ip);
+  const ipBlock = await checkIpBlock(ip);
+  if (ipBlock) {
+    res.setHeader('Retry-After', String(ipBlock.retryAfterSeconds));
+    return res.status(429).json({ message: 'Demasiados intentos desde tu conexión. Intenta más tarde.' });
+  }
+
   const body = loginSchema.parse(req.body);
   const email = body.email.toLowerCase().trim();
   const now = new Date();
@@ -44,81 +50,81 @@ globalAuthRouter.post('/login', async (req, res) => {
       include: { tenant: { select: { id: true, slug: true, legalName: true, status: true, logoUrl: true } } }
     })
   ]);
+  const allTenantIds = memberships.map((m) => m.tenantId);
+
+  const rejectLogin = async (type: 'LOGIN_FAILED' | 'LOCKED_ATTEMPT', reason: string) => {
+    await recordLoginEvent({ type, email, ip, reason, tenantIds: allTenantIds, req });
+    await evaluateIpBlock(ip, req);
+    return res.status(401).json({ message: GENERIC_AUTH_ERROR });
+  };
 
   if (!sa && memberships.length === 0) {
     // Email no existe — timing-safe
     await bcrypt.compare(body.password, DUMMY_HASH);
-    return res.status(401).json({ message: GENERIC_AUTH_ERROR });
+    return rejectLogin('LOGIN_FAILED', 'UNKNOWN_ACCOUNT');
   }
 
-  // ---- Validar password contra SuperAdmin (si existe y no está bloqueado) ----
-  let saOk = false;
-  if (sa) {
-    if (sa.lockedUntil && sa.lockedUntil > now) {
-      // Bloqueado — caemos al tenant flow si hay memberships, sino 401
-    } else {
-      saOk = await bcrypt.compare(body.password, sa.passwordHash);
-    }
+  // ---- Reservar un intento en cada cuenta antes de comparar contraseñas ----
+  const [saClaim, ...membershipClaims] = await Promise.all<AttemptClaim | null>([
+    sa ? claimAttempt('SuperAdmin', sa.id) : Promise.resolve(null),
+    ...memberships.map((m) => claimAttempt('TenantMembership', m.id))
+  ]);
+
+  if (!saClaim?.claimed && !membershipClaims.some((c) => c?.claimed)) {
+    // Todas bloqueadas: se compara igual para que el tiempo de respuesta no lo delate.
+    await bcrypt.compare(body.password, DUMMY_HASH);
+    return rejectLogin('LOCKED_ATTEMPT', 'ACCOUNT_LOCKED');
   }
+
+  // ---- Validar password contra SuperAdmin ----
+  const saOk = sa && saClaim?.claimed ? await bcrypt.compare(body.password, sa.passwordHash) : false;
 
   // ---- Validar password contra membership(s) ----
   let matchedMembership: typeof memberships[number] | null = null;
-  for (const m of memberships) {
-    if (m.lockedUntil && m.lockedUntil > now) continue;
+  for (const [i, m] of memberships.entries()) {
+    if (!membershipClaims[i]?.claimed) continue;
     if (await bcrypt.compare(body.password, m.passwordHash)) {
       matchedMembership = m;
       break;
     }
   }
 
-  // ---- Si ningún match → contar fallos y 401 ----
+  // ---- Si ningún match: el intento reservado queda contado ----
   if (!saOk && !matchedMembership) {
-    // Subir contador en SA si existe
     if (sa) {
-      const next = sa.failedAttempts + 1;
-      const data = next >= MAX_FAILED
-        ? { failedAttempts: 0, lockedUntil: new Date(Date.now() + LOCK_MS) }
-        : { failedAttempts: next };
-      await globalPrisma.superAdmin.update({ where: { id: sa.id }, data }).catch(() => {});
       logSuperAccess(sa.id, null, 'SUPER_ADMIN_LOGIN_FAILED', req).catch((e) => logger.error({ err: e }, 'audit failed'));
     }
-    // Subir contador en cada membership no bloqueado
-    await Promise.all(memberships.map((m) => {
-      if (m.lockedUntil && m.lockedUntil > now) return Promise.resolve();
-      const next = m.failedAttempts + 1;
-      const data = next >= MAX_FAILED
-        ? { failedAttempts: 0, lockedUntil: new Date(Date.now() + LOCK_MS) }
-        : { failedAttempts: next };
-      return globalPrisma.tenantMembership.update({ where: { id: m.id }, data }).catch(() => {});
-    }));
-    return res.status(401).json({ message: GENERIC_AUTH_ERROR });
+    if (saClaim?.lockedNow || membershipClaims.some((c) => c?.lockedNow)) {
+      await recordLoginEvent({ type: 'ACCOUNT_LOCKED', email, ip, tenantIds: allTenantIds, req });
+    }
+    return rejectLogin('LOGIN_FAILED', 'BAD_CREDENTIALS');
   }
+
+  // ---- Devolver los intentos reservados: la identidad quedó comprobada ----
+  const clearAttempts = { failedAttempts: 0, lockedUntil: null, lastFailedAt: null };
+  await Promise.all([
+    sa && saClaim?.claimed ? globalPrisma.superAdmin.update({ where: { id: sa.id }, data: clearAttempts }) : null,
+    ...memberships.map((m, i) => (membershipClaims[i]?.claimed
+      ? globalPrisma.tenantMembership.update({ where: { id: m.id }, data: clearAttempts })
+      : null))
+  ]);
 
   // ---- Memberships utilizables (activos en tenants ACTIVOS) ----
   const usableTenants = memberships.filter((m) => m.isActive && m.tenant.status === 'ACTIVE');
 
-  // ---- Reset contadores donde matchó password ----
-  if (sa && saOk) {
-    if (sa.failedAttempts !== 0 || sa.lockedUntil !== null) {
-      await globalPrisma.superAdmin.update({ where: { id: sa.id }, data: { failedAttempts: 0, lockedUntil: null } });
-    }
-  }
-  if (matchedMembership) {
-    if (matchedMembership.failedAttempts !== 0 || matchedMembership.lockedUntil !== null) {
-      await globalPrisma.tenantMembership.update({
-        where: { id: matchedMembership.id },
-        data: { failedAttempts: 0, lockedUntil: null }
-      });
-    }
-  }
-
   // SuperAdmin inactivo: tratamos como si no existiera
   const saUsable = sa && saOk && sa.isActive;
+
+  const logSuccess = () => recordLoginEvent({
+    type: 'LOGIN_SUCCESS', email, ip, req,
+    tenantIds: matchedMembership ? [matchedMembership.tenantId] : []
+  });
 
   // ---- Decidir flujo ----
 
   // CASO A: solo super (sin tenants)
   if (saUsable && usableTenants.length === 0) {
+    await logSuccess();
     await globalPrisma.superAdmin.update({ where: { id: sa!.id }, data: { lastLoginAt: now } });
     const payload: SuperAdminPayload = {
       kind: 'super', id: sa!.id, email: sa!.email, role: sa!.role, tokenVersion: sa!.tokenVersion
@@ -133,8 +139,9 @@ globalAuthRouter.post('/login', async (req, res) => {
   // CASO B: solo tenant(s) — sin super
   if (!saUsable) {
     if (usableTenants.length === 0) {
-      return res.status(401).json({ message: GENERIC_AUTH_ERROR });
+      return rejectLogin('LOGIN_FAILED', 'ACCOUNT_INACTIVE');
     }
+    await logSuccess();
     if (usableTenants.length === 1) {
       const only = usableTenants[0];
       await globalPrisma.tenantMembership.update({ where: { id: only.id }, data: { lastLoginAt: now } });
@@ -164,6 +171,7 @@ globalAuthRouter.post('/login', async (req, res) => {
   }
 
   // CASO C: super + tenant(s) → pending CON super y tenants
+  await logSuccess();
   const payload: PendingPayload = {
     kind: 'pending',
     email,

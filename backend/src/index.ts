@@ -40,13 +40,16 @@ import { mailRouter } from './routes/tenant/mail.routes';
 import { bootWhatsapp } from './whatsapp/boot';
 import { runCoachScan } from './whatsapp/alerts';
 import { requireAuth } from './middleware/auth';
+import { securityRouter } from './routes/global/security.routes';
+import { parseTrustProxy, purgeOldSecurityData } from './lib/loginSecurity';
 import { tenantContext } from './middleware/tenantContext';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
 const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((item) => item.trim()).filter(Boolean);
 
-app.set('trust proxy', 1);
+// Número de proxies delante del backend: de esto depende la IP de los bloqueos.
+app.set('trust proxy', parseTrustProxy(process.env.TRUST_PROXY));
 app.disable('x-powered-by');
 
 app.use(helmet({
@@ -116,6 +119,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', authLimiter, globalAuthRouter);
 app.use('/api/super-admin', superAdminRouter);
+app.use('/api/security', securityRouter);
 
 // Todas las rutas /api/* (excepto auth y super-admin) requieren auth + tenant context
 const tenantScope = [requireAuth, tenantContext];
@@ -172,6 +176,12 @@ const REMINDER_INTERVAL_MS = 12 * 60 * 60 * 1000;
 setTimeout(() => { runReminderScan().catch(() => {}); }, 30_000);
 const reminderTimer = setInterval(() => { runReminderScan().catch(() => {}); }, REMINDER_INTERVAL_MS);
 reminderTimer.unref();
+
+// Retención de eventos de login y bloqueos antiguos: al arrancar y cada día.
+const purgeSecurity = () => purgeOldSecurityData().catch((err) => logger.error({ err }, 'security purge failed'));
+setTimeout(purgeSecurity, 60_000);
+const securityPurgeTimer = setInterval(purgeSecurity, 24 * 60 * 60 * 1000);
+securityPurgeTimer.unref();
 
 // Bot de WhatsApp (Baileys): reconecta el socket del tenant habilitado, si lo hay.
 // Fire-and-forget: si falla, no debe tumbar la API.
