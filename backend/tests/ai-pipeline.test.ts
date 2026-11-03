@@ -16,6 +16,7 @@ import { Client } from 'pg';
 import sharp from 'sharp';
 import { EVAL_CATALOG } from '../evals/catalog';
 import { resolveExpectedDate, scoreCase, validateCases, type EvalCase } from '../evals/score';
+import { mentionsDate } from '../src/whatsapp/replies';
 import { computeAmountStats, type ParsedMovement } from '../src/whatsapp/parser';
 import type { IncomingMessage } from '../src/whatsapp/gateway';
 import { fieldsInDoubt } from '../evals/score';
@@ -164,12 +165,85 @@ after(async () => {
   await sql('postgres', `DROP DATABASE IF EXISTS "${DB_GLOBAL}" WITH (FORCE)`);
 });
 
+// ---- Fecha ----
+test('si el mensaje no dice la fecha la pregunta, después del monto y el detalle', async () => {
+  const u = await newUser();
+  aiSays({ amount: null, categoryId: u.comida.id, description: 'Supermercado' });
+  assert.match(await u.say('gasté en el súper en efectivo'), /monto/i);
+  const asked = await u.say('20');
+  assert.match(asked, /\*fecha\*/);
+  assert.match(asked, /1\. Hoy \(/);
+  assert.match(asked, /2\. Ayer \(/);
+  assert.match(asked, /escribe la fecha/);
+});
+
+test('la fecha se responde con opción, con palabra o escrita, y queda guardada', async () => {
+  const today = todayEcuador();
+  const shift = (days: number) => new Date(Date.parse(`${today}T12:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+  const [yy, mm, dd] = shift(3).split('-');
+  const cases: [string, string][] = [['1', today], ['2', shift(1)], ['hoy', today], ['ayer', shift(1)], ['anteayer', shift(2)], [`${dd}/${mm}/${yy}`, shift(3)]];
+  for (const [answer, expected] of cases) {
+    const u = await newUser();
+    aiSays({ categoryId: u.comida.id });
+    assert.match(await u.say('gasté 20 en el súper en efectivo'), /\*fecha\*/);
+    assert.match(await u.say(answer), /Responde \*SÍ\*/, answer);
+    assert.match(await u.say('sí'), /Registrado/);
+    const [row] = await u.movements();
+    assert.equal(row.movementDate.toISOString().slice(0, 10), expected, answer);
+  }
+});
+
+test('si el mensaje dice la fecha no la pregunta', async () => {
+  for (const text of ['gasté 20 hoy en el súper en efectivo', 'ayer gasté 20 en el súper en efectivo', 'gasté 20 el 2 en el súper en efectivo', 'gasté 20 el lunes en el súper en efectivo', 'gasté 20 el 01/02 en el súper en efectivo']) {
+    const u = await newUser();
+    aiSays({ categoryId: u.comida.id, date: todayEcuador() });
+    assert.doesNotMatch(await u.say(text), /\*fecha\*/, text);
+  }
+});
+
+test('la fecha que inventa la IA sin que el usuario la diga se ignora y se pregunta', async () => {
+  const u = await newUser();
+  aiSays({ categoryId: u.comida.id, date: '2024-01-15' });
+  const asked = await u.say('gasté 20 en el súper en efectivo');
+  assert.match(asked, /\*fecha\*/);
+  assert.doesNotMatch(asked, /2024|15\/01/);
+  await u.say('hoy');
+  await u.say('sí');
+  const [row] = await u.movements();
+  assert.equal(row.movementDate.toISOString().slice(0, 10), todayEcuador());
+});
+
+test('si dice la fecha pero la IA no la entiende, también se pregunta', async () => {
+  const u = await newUser();
+  aiSays({ categoryId: u.comida.id, date: null });
+  assert.match(await u.say('gasté 20 el lunes en el súper en efectivo'), /\*fecha\*/);
+});
+
+test('una respuesta que no es fecha repregunta sin tocar nada, y cancelar anula', async () => {
+  const u = await newUser();
+  aiSays({ categoryId: u.comida.id });
+  await u.say('gasté 20 en el súper en efectivo');
+  assert.match(await u.say('pagué 15 de taxi'), /\*fecha\*/);
+  assert.match(await u.say('31/12/2099'), /futura/);
+  assert.match(await u.say('cancelar'), /Cancelado/);
+  assert.equal((await u.movements()).length, 0);
+});
+
+test('reconoce cuándo un mensaje dice la fecha y cuándo no', () => {
+  for (const yes of ['hoy', 'ayer', 'anoche', 'el 15', 'el lunes', 'el Miércoles', '15/03', '15-03-2026', '15 de marzo', 'en octubre', 'la semana pasada', 'hace 3 días', 'esta mañana', '2026-03-15']) {
+    assert.equal(mentionsDate(`gasté 20 ${yes}`), true, yes);
+  }
+  for (const no of ['gasté 20 en el súper', 'el 15% de descuento', 'el 20 dólares', 'la 4567', 'gasté 3098', 'pago de luz', 'iphone 15', 'Av. 9 de Octubres', 'almuerzo']) {
+    assert.equal(mentionsDate(no), false, no);
+  }
+});
+
 // ---- Registro normal ----
 test('registrar lo normal no añade preguntas: resumen, SÍ y queda creado', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id, categoryCandidates: [u.comida.id] });
 
-  const summary = await u.say('gasté 20 en el súper en efectivo');
+  const summary = await u.say('gasté 20 en el súper en efectivo hoy');
   assert.match(summary, /Alimentación/);
   assert.match(summary, /Responde \*SÍ\* o \*NO\*, o \*CATEGORÍA\* para cambiarla\./);
   assert.doesNotMatch(summary, /\?\n1\./);
@@ -185,13 +259,13 @@ test('la confirmación admite SÍ con y sin tilde, y no la confunde con otra pal
   for (const yes of ['sí', 'SÍ', 'si', 'Sí, dale', 'ok', '👍']) {
     const u = await newUser();
     aiSays({ categoryId: u.comida.id });
-    await u.say('gasté 20 en el súper en efectivo');
+    await u.say('gasté 20 en el súper en efectivo hoy');
     assert.match(await u.say(yes), /Registrado/, yes);
   }
   const u = await newUser();
   aiSays({ categoryId: u.comida.id });
-  await u.say('gasté 20 en el súper en efectivo');
-  assert.match(await u.say('sino mejor otro gasto'), /Aún no registré nada/);
+  await u.say('gasté 20 en el súper en efectivo hoy');
+  assert.match(await u.say('sino mejor otro gasto hoy'), /Aún no registré nada/);
   assert.equal((await u.movements()).length, 0);
 });
 
@@ -199,7 +273,7 @@ test('en la confirmación, solo un SÍ entero registra; lo demás no registra ni
   const phrases = ['sí, pero son 30', 'va a ser 30', 'ok gasté 99 en taxi', 'si no me equivoco fueron 30', 'sí?', 'correcto no', 'dale no', 'gasté 15 en taxi', 'no sé', 'no, espera'];
   const u = await newUser();
   aiSays({ categoryId: u.comida.id });
-  await u.say('gasté 20 en el súper en efectivo');
+  await u.say('gasté 20 en el súper en efectivo hoy');
   const calls = llm.prompts.length;
   for (const phrase of phrases) {
     const reply = await u.say(phrase);
@@ -216,7 +290,7 @@ test('NO y cancelar enteros anulan en la confirmación', async () => {
   for (const no of ['no', 'NO.', 'cancelar', 'cancela', 'no, gracias', '❌']) {
     const u = await newUser();
     aiSays({ categoryId: u.comida.id });
-    await u.say('gasté 20 en el súper en efectivo');
+    await u.say('gasté 20 en el súper en efectivo hoy');
     assert.match(await u.say(no), /Cancelado/, no);
     assert.equal((await u.movements()).length, 0, no);
   }
@@ -263,14 +337,14 @@ test('entities: de noche con el servidor en UTC, "hoy" es el de Ecuador', async 
 test('un texto larguísimo se recorta a 2.000 caracteres al entrar', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id });
-  await u.say(`gasté 20 en efectivo ${'x'.repeat(5000)}`);
+  await u.say(`gasté 20 en efectivo ${'x'.repeat(5000)} hoy`);
   assert.equal(llm.users[0].length, 2000);
 });
 
 test('una clave "error" de la IA no se reenvía al chat ni interrumpe el registro', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id, error: 'texto inventado por la IA' } as Partial<ParsedMovement>);
-  const reply = await u.say('gasté 20 en el súper en efectivo');
+  const reply = await u.say('gasté 20 en el súper en efectivo hoy');
   assert.doesNotMatch(reply, /inventado/);
   assert.match(reply, /¿Lo registro\?/);
 });
@@ -278,7 +352,7 @@ test('una clave "error" de la IA no se reenvía al chat ni interrumpe el registr
 test('vendor y descripción que no son texto no rompen nada', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id, vendor: 123, description: { a: 1 }, notes: 5, familyMember: [] } as unknown as Partial<ParsedMovement>);
-  assert.match(await u.say('gasté 20 en efectivo'), /Escribe el \*detalle\*/);
+  assert.match(await u.say('gasté 20 en efectivo hoy'), /Escribe el \*detalle\*/);
   assert.match(await u.say('Supermercado'), /¿Lo registro\?/);
   await u.say('sí');
   assert.equal((await u.movements())[0].description, 'Supermercado');
@@ -295,7 +369,7 @@ test('el prompt lleva siempre la regla de datos y ya no trae el ejemplo con nomb
 test('NO sigue anulando en la confirmación', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id });
-  await u.say('gasté 20 en el súper en efectivo');
+  await u.say('gasté 20 en el súper en efectivo hoy');
   assert.match(await u.say('no'), /Cancelado/);
   assert.equal((await u.movements()).length, 0);
 });
@@ -303,7 +377,7 @@ test('NO sigue anulando en la confirmación', async () => {
 test('una transferencia no ofrece cambiar la categoría', async () => {
   const u = await newUser();
   aiSays({ type: 'TRANSFER', amount: 50, description: 'Traspaso', paymentMethod: 'BANK_TRANSFER', accountId: u.ahorros.id, toAccountId: u.corriente.id });
-  await u.say('transferí 50 de ahorros andino a corriente andino');
+  await u.say('transferí 50 de ahorros andino a corriente andino hoy');
   const summary = await u.say('1'); // entre mis cuentas
   assert.match(summary, /Responde \*SÍ\* o \*NO\*\./);
   assert.doesNotMatch(summary, /CATEGORÍA/);
@@ -319,7 +393,7 @@ test('una transferencia no ofrece cambiar la categoría', async () => {
 async function mismatch() {
   const u = await newUser();
   aiSays({ amount: 30.98, categoryId: u.comida.id });
-  const asked = await u.say('gasté 3.098 en el súper en efectivo');
+  const asked = await u.say('gasté 3.098 en el súper en efectivo hoy');
   assert.match(asked, /¿El monto es/);
   assert.match(asked, /1\. Sí, .*30,98/);
   assert.match(asked, /2\. No, .*3\.098/);
@@ -413,7 +487,7 @@ test('un pie de foto durante una duda no es una respuesta: guarda la foto y repi
 test('un pie de foto "sí" en la confirmación no registra', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id });
-  await u.say('gasté 20 en el súper en efectivo');
+  await u.say('gasté 20 en el súper en efectivo hoy');
   const reply = await u.send({ text: 'sí', audio: null, image: { buffer: await smallPng(), mimetype: 'image/png' } });
   assert.match(reply, /Foto guardada[\s\S]*Responde \*SÍ\*, \*NO\* o \*CATEGORÍA\*/);
   assert.equal((await u.movements()).length, 0);
@@ -424,7 +498,7 @@ test('por audio: un SÍ confirma, y una instrucción nueva no reemplaza el borra
   const u = await newUser();
   const audio = { buffer: Buffer.from('audio'), mimetype: 'audio/ogg' };
   aiSays({ categoryId: u.comida.id });
-  await u.say('gasté 20 en el súper en efectivo');
+  await u.say('gasté 20 en el súper en efectivo hoy');
   llm.transcript = 'Gasté 15 en taxi.';
   assert.match(await u.send({ text: null, audio, image: null }), /Aún no registré nada/);
   llm.transcript = 'Sí.';
@@ -438,7 +512,7 @@ test('fecha dudosa: acepta la fecha escrita, y "no, era ayer" no cancela', async
     for (const [typed, expected] of table) {
       const u = await newUser();
       aiSays({ categoryId: u.comida.id, date: '2026-04-01' });
-      assert.match(await u.say('gasté 20 en el súper en efectivo'), /es futura/, typed);
+      assert.match(await u.say('gasté 20 en el súper en efectivo hoy'), /es futura/, typed);
       assert.match(await u.say(typed), /¿Lo registro\?/, typed);
       await u.say('sí');
       assert.equal((await u.movements())[0].movementDate.toISOString().slice(0, 10), expected, typed);
@@ -453,7 +527,7 @@ test('fecha dudosa: una fecha futura o de hace más de un año, o un texto, vuel
   try {
     const u = await newUser();
     aiSays({ categoryId: u.comida.id, date: '2026-04-01' });
-    await u.say('gasté 20 en el súper en efectivo');
+    await u.say('gasté 20 en el súper en efectivo hoy');
     for (const typed of ['25/03', 'el 25', '15/03/2024', '19/03/2025']) assert.match(await u.say(typed), /futura o tiene más de un año[\s\S]*es futura/, typed);
     assert.match(await u.say('quién sabe'), /No te entendí/);
     assert.match(await u.say('20/03/2025'), /¿Lo registro\?/); // 365 días exactos todavía valen
@@ -491,7 +565,7 @@ test('monto inusual: con una sola opción no se autorresuelve, y admite número 
       data: Array.from({ length: 12 }, () => ({ userId: u.user.id, type: 'EXPENSE', amount: 10, movementDate: new Date('2026-01-10'), description: 'Historial', paymentMethod: 'CASH' }))
     });
     aiSays({ amount: 5000, categoryId: u.comida.id });
-    const asked = await u.say('gasté 5000 en el súper en efectivo');
+    const asked = await u.say('gasté 5000 en el súper en efectivo hoy');
     assert.match(asked, /monto inusual/, typed);
     assert.match(asked, /1\. Sí/, typed);
     assert.match(await u.say(typed), /¿Lo registro\?/, typed);
@@ -506,7 +580,7 @@ test('fecha futura: se pregunta antes que nada y aplica a la fecha del movimient
   for (const [typed, expected] of [['2', today], ['usar hoy', today], ['no, usar hoy', today], ['1', future], ['sí', future]] as const) {
     const u = await newUser();
     aiSays({ date: future, paymentMethod: null }); // faltan método y categoría: van después
-    const asked = await u.say('gasté 20 en el súper');
+    const asked = await u.say('gasté 20 en el súper hoy');
     assert.match(asked, /es futura/, typed);
     assert.doesNotMatch(asked, /método de pago/, typed);
     assert.match(await u.say(typed), /método de pago/, typed);
@@ -522,7 +596,7 @@ test('un monto dudoso y una fecha dudosa se preguntan por orden', async () => {
   const today = todayEcuador();
   const future = today.replace(/^\d{4}/, (y) => String(Number(y) + 1));
   aiSays({ amount: 30.98, date: future, categoryId: u.comida.id });
-  assert.match(await u.say('gasté 3.098 en el súper en efectivo'), /¿El monto es/);
+  assert.match(await u.say('gasté 3.098 en el súper en efectivo hoy'), /¿El monto es/);
   assert.match(await u.say('2'), /es futura/);
   assert.match(await u.say('2'), /¿Lo registro\?/);
   await u.say('sí');
@@ -534,7 +608,7 @@ test('un monto dudoso y una fecha dudosa se preguntan por orden', async () => {
 test('una cuenta que el usuario no mencionó se quita y pasa a preguntarse', async () => {
   const u = await newUser();
   aiSays({ accountId: u.corriente.id, paymentMethod: 'BANK_TRANSFER', categoryId: u.comida.id });
-  const asked = await u.say('pagué 20 del súper por transferencia');
+  const asked = await u.say('pagué 20 del súper por transferencia hoy');
   assert.match(asked, /¿De qué \*cuenta\*\?/);
   assert.match(asked, /Ahorros Andino/);
   assert.match(asked, /Corriente Andino/);
@@ -546,14 +620,14 @@ test('una cuenta que el usuario no mencionó se quita y pasa a preguntarse', asy
 test('una cuenta mencionada no se pregunta', async () => {
   const u = await newUser();
   aiSays({ accountId: u.corriente.id, paymentMethod: 'BANK_TRANSFER', categoryId: u.comida.id });
-  assert.match(await u.say('pagué 20 del súper por transferencia de corriente andino'), /¿Lo registro\?/);
+  assert.match(await u.say('pagué 20 del súper por transferencia de corriente andino hoy'), /¿Lo registro\?/);
 });
 
 // ---- Corregir y aprender ----
 test('CATEGORÍA reabre la pregunta con candidatas, vuelve a confirmar y aprende', async () => {
   const u = await newUser();
   aiSays({ description: 'Veterinaria Patitas', vendor: 'Veterinaria Patitas', categoryId: u.comida.id, categoryCandidates: [u.comida.id, u.salud.id] });
-  await u.say('gasté 20 en Veterinaria Patitas en efectivo');
+  await u.say('gasté 20 en Veterinaria Patitas en efectivo hoy');
 
   const reopened = await u.say('CATEGORÍA');
   assert.match(reopened, /¿Qué \*categoría\*\?/);
@@ -576,7 +650,7 @@ test('CATEGORÍA reabre la pregunta con candidatas, vuelve a confirmar y aprende
 test('el comercio se aprende aunque el tipo de movimiento no lo guarde', async () => {
   const u = await newUser();
   aiSays({ description: 'Comida', vendor: 'Bodega Luna', categoryId: u.comida.id });
-  await u.say('gasté 20 en Bodega Luna en efectivo');
+  await u.say('gasté 20 en Bodega Luna en efectivo hoy');
   await u.say('categoría');
   await u.say('Salud');
   await u.say('sí');
@@ -587,7 +661,7 @@ test('el comercio se aprende aunque el tipo de movimiento no lo guarde', async (
 test('tras CATEGORÍA, escribir "sí" deja la que estaba, sin crear una categoría ni aprender', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id, categoryCandidates: [u.comida.id] });
-  await u.say('gasté 20 en el súper en efectivo');
+  await u.say('gasté 20 en el súper en efectivo hoy');
   await u.say('categoria');
   assert.match(await u.say('listo'), /¿Lo registro\?/);
   await u.say('sí');
@@ -600,7 +674,7 @@ test('tras CATEGORÍA, escribir "sí" deja la que estaba, sin crear una categor�
 test('CATEGORÍA y volver a elegir la propuesta no enseña nada', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id, categoryCandidates: [u.comida.id, u.salud.id] });
-  await u.say('gasté 20 en el súper en efectivo');
+  await u.say('gasté 20 en el súper en efectivo hoy');
   await u.say('CATEGORÍA');
   await u.say('1');
   await u.say('sí');
@@ -611,7 +685,7 @@ test('CATEGORÍA y volver a elegir la propuesta no enseña nada', async () => {
 test('una categoría creada por texto libre se usa pero no se aprende', async () => {
   const u = await newUser();
   aiSays({ description: 'Peluquería canina', categoryId: u.comida.id, categoryCandidates: [u.comida.id] });
-  await u.say('gasté 20 en peluquería canina en efectivo');
+  await u.say('gasté 20 en peluquería canina en efectivo hoy');
   await u.say('CATEGORÍA');
   assert.match(await u.say('Mascotas'), /Categoría \*Mascotas\* creada/);
   await u.say('sí');
@@ -624,10 +698,10 @@ test('una categoría creada por texto libre se usa pero no se aprende', async ()
 test('la categoría creada con la opción "Crear nueva" es una elección deliberada: se aprende', async () => {
   const u = await newUser();
   aiSays({ description: 'Peluquería canina' });
-  const asked = await u.say('gasté 20 en peluquería canina en efectivo');
+  const asked = await u.say('gasté 20 en peluquería canina en efectivo hoy');
   const option = asked.match(/(\d+)\. ➕ Crear nueva categoría/)![1];
   assert.match(await u.say(option), /nombre\* de la nueva categoría/);
-  assert.match(await u.say('gasté 15 en taxi'), /Ese nombre no me sirve/);
+  assert.match(await u.say('gasté 15 en taxi hoy'), /Ese nombre no me sirve/);
   assert.match(await u.say('no'), /Ese nombre no me sirve/);
   await u.say('Mascotas');
   await u.say('sí');
@@ -638,7 +712,7 @@ test('la categoría creada con la opción "Crear nueva" es una elección deliber
 test('en la pregunta de categoría, una respuesta o una frase no crea categoría: repregunta', async () => {
   const u = await newUser();
   aiSays({ description: 'Varios' });
-  await u.say('gasté 20 en varios en efectivo');
+  await u.say('gasté 20 en varios en efectivo hoy');
   const before = await prisma.category.count({ where: { userId: u.user.id } });
   for (const phrase of ['ninguna', 'listo', 'sí', 'no', 'gasté 15 en taxi', 'gasté 15 en salud', 'gasté en taxi', 'esto tiene muchas palabras de más', 'a@b', 'a'.repeat(41)]) {
     const reply = await u.say(phrase);
@@ -652,7 +726,7 @@ test('en la pregunta de categoría, una respuesta o una frase no crea categoría
 test('al reabrir, "sí, salud" elige Salud; "sí, algo" repregunta sin conservar en silencio', async () => {
   const u = await newUser();
   aiSays({ description: 'Consulta', categoryId: u.comida.id, categoryCandidates: [u.comida.id] });
-  await u.say('gasté 20 en consulta en efectivo');
+  await u.say('gasté 20 en consulta en efectivo hoy');
   await u.say('categoría');
   assert.match(await u.say('sí, otra cosa'), /No te entendí[\s\S]*¿Qué \*categoría\*\?/);
   const summary = await u.say('sí, salud');
@@ -665,7 +739,7 @@ test('al reabrir, "sí, salud" elige Salud; "sí, algo" repregunta sin conservar
 test('el comercio que la IA supuso no se aprende; el que el usuario dijo, sí', async () => {
   const u = await newUser();
   aiSays({ description: 'Compra varia', vendor: 'Comercio Supuesto', categoryId: u.comida.id });
-  await u.say('gasté 20 en compra varia en efectivo');
+  await u.say('gasté 20 en compra varia en efectivo hoy');
   await u.say('categoría');
   await u.say('Salud');
   await u.say('sí');
@@ -678,7 +752,7 @@ test('el comercio que la IA supuso no se aprende; el que el usuario dijo, sí', 
 test('los recuerdos respetan el tipo: lo aprendido en un ingreso no se aplica a un gasto', async () => {
   const u = await newUser();
   aiSays({ type: 'INCOME', description: 'Trabajo extra' });
-  await u.say('me pagaron 20 por trabajo extra en efectivo');
+  await u.say('me pagaron 20 por trabajo extra en efectivo hoy');
   await u.say('Salud');
   await u.say('sí');
   await until(async () => (await u.memories()).length > 0);
@@ -698,14 +772,14 @@ test('los recuerdos respetan el tipo: lo aprendido en un ingreso no se aplica a 
 test('sin propuesta de la IA, elegir una categoría sí se aprende; "Sin categoría" no', async () => {
   const chosen = await newUser();
   aiSays({ description: 'Consulta dental' });
-  await chosen.say('gasté 20 en consulta dental en efectivo');
+  await chosen.say('gasté 20 en consulta dental en efectivo hoy');
   await chosen.say('Salud');
   await chosen.say('sí');
   await until(async () => (await chosen.memories()).some((m: any) => m.categoryId === chosen.salud.id));
 
   const none = await newUser();
   aiSays({ description: 'Consulta dental' });
-  await none.say('gasté 20 en consulta dental en efectivo');
+  await none.say('gasté 20 en consulta dental en efectivo hoy');
   await none.say('sin categoría');
   await none.say('sí');
   assert.equal((await none.movements())[0].categoryId, null);
@@ -716,7 +790,7 @@ test('sin propuesta de la IA, elegir una categoría sí se aprende; "Sin categor
 test('aceptar lo propuesto no aprende', async () => {
   const u = await newUser();
   aiSays({ categoryId: u.comida.id });
-  await u.say('gasté 20 en el súper en efectivo');
+  await u.say('gasté 20 en el súper en efectivo hoy');
   await u.say('sí');
   await settle();
   assert.equal((await u.memories()).length, 0);
@@ -738,7 +812,7 @@ test('un recuerdo exacto manda sobre la IA, va primero en las candidatas y apare
   assert.ok(llm.prompts[0].includes(JSON.stringify([{ texto: 'veterinaria patitas', categoriaId: u.salud.id, tipo: 'gasto' }])));
 
   aiSays({ description: 'Veterinaria Patitas', categoryId: u.comida.id });
-  assert.match(await u.say('gasté 20 en veterinaria patitas en efectivo'), /🏷️ Salud \(recordada\)/);
+  assert.match(await u.say('gasté 20 en veterinaria patitas en efectivo hoy'), /🏷️ Salud \(recordada\)/);
   await u.say('sí');
   assert.equal((await u.movements())[0].categoryId, u.salud.id);
 });
@@ -760,7 +834,7 @@ test('lo dicho manda: si el usuario nombra la categoría, no se aplica el recuer
 
   // Si no la nombra, el recuerdo sí manda.
   aiSays({ description: 'Supermercado', categoryId: u.salud.id });
-  assert.match(await u.say('gasté 20 en el supermercado en efectivo'), /🏷️ Alimentación \(recordada\)/);
+  assert.match(await u.say('gasté 20 en el supermercado en efectivo hoy'), /🏷️ Alimentación \(recordada\)/);
   // Al cambiarla ya no es la recordada.
   await u.say('categoría');
   const changed = await u.say('Salud');
@@ -792,7 +866,7 @@ test('sin la tabla de memoria, se interpreta, se corrige y se registra igual', a
   await sql(DB_TENANT, 'ALTER TABLE "AiCategoryMemory" RENAME TO "AiCategoryMemoryOculta"');
   try {
     aiSays({ description: 'Veterinaria Patitas', categoryId: u.comida.id, categoryCandidates: [u.comida.id, u.salud.id] });
-    assert.match(await u.say('gasté 20 en veterinaria patitas en efectivo'), /¿Lo registro\?/);
+    assert.match(await u.say('gasté 20 en veterinaria patitas en efectivo hoy'), /¿Lo registro\?/);
     await u.say('CATEGORÍA');
     await u.say('2');
     assert.match(await u.say('sí'), /Registrado/);
@@ -835,7 +909,7 @@ test('de noche en Ecuador, con el servidor en UTC, la fecha sigue siendo la de E
   try {
     assert.equal(new Date().getDate(), 11, 'el servidor debe creer que ya es 11');
     aiSays({ categoryId: u.comida.id, date: null });
-    await u.say('gasté 20 en el súper en efectivo');
+    await u.say('gasté 20 en el súper en efectivo hoy');
     assert.match(llm.prompts[0], /Hoy es 2026-03-10\./);
     await u.say('sí');
     assert.equal((await u.movements())[0].movementDate.toISOString().slice(0, 10), '2026-03-10');
@@ -849,10 +923,10 @@ test('de noche, una fecha de hoy según Ecuador no se toma como futura ni la de 
   mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-03-11T02:30:00Z') });
   try {
     aiSays({ categoryId: u.comida.id, date: '2026-03-10' });
-    assert.match(await u.say('gasté 20 en el súper en efectivo'), /¿Lo registro\?/);
+    assert.match(await u.say('gasté 20 en el súper en efectivo hoy'), /¿Lo registro\?/);
     await u.say('no');
     aiSays({ categoryId: u.comida.id, date: '2026-03-11' });
-    assert.match(await u.say('gasté 20 en el súper en efectivo'), /es futura/);
+    assert.match(await u.say('gasté 20 en el súper en efectivo hoy'), /es futura/);
   } finally {
     mock.timers.reset();
   }
@@ -963,8 +1037,8 @@ test('validateCases detecta referencias que no existen y casos mal formados', ()
 });
 
 const evalCases: EvalCase[] = [
-  { id: 'a', text: 'gasté 20 en el súper', tags: ['uno'], expect: { amount: 20, category: 'Alimentación' } },
-  { id: 'b', text: 'gasté 3.098 en la clínica', tags: ['uno', 'dos'], expect: { amount: 3098 } }
+  { id: 'a', text: 'gasté 20 en el súper hoy', tags: ['uno'], expect: { amount: 20, category: 'Alimentación' } },
+  { id: 'b', text: 'gasté 3.098 en la clínica hoy', tags: ['uno', 'dos'], expect: { amount: 3098 } }
 ];
 const evalAnswer = (amount: number) => ({
   understood: true, intent: 'register', type: 'EXPENSE', amount, description: 'x', categoryId: 31, categoryCandidates: [31], date: '2026-03-10'

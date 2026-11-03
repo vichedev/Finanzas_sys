@@ -14,7 +14,7 @@ import { getTranscribeCreds } from './llm';
 import { transcribeAudio } from './transcribe';
 import { parseMovement, type ParsedMovement, type MovType } from './parser';
 import { normalizeMemoryKey, recordCategoryCorrection } from './aiMemory';
-import { BARE_NO, CANCEL_REQUEST, STRICT_NO, STRICT_YES, isValidCategoryName, parseAmountReply, parseDateReply, parseOptionIndex, readNumber } from './replies';
+import { BARE_NO, CANCEL_REQUEST, STRICT_NO, STRICT_YES, isValidCategoryName, mentionsDate, parseAmountReply, parseDateReply, parseOptionIndex, readNumber } from './replies';
 import type { ReviewIssue } from './reviewParsed';
 import { todayEcuador } from '../lib/ecuadorDate';
 import { answerQuestion } from './assistant';
@@ -216,6 +216,13 @@ function checkQ(issue: ReviewIssue): Question {
   return { key: CHECK_KEY + issue.code, text: issue.question, free, options: issue.options.map((o) => ({ label: o.label, patch: checkPatch(o.patch) })) };
 }
 
+function dateMissingIssue(today: string): ReviewIssue {
+  const yesterday = parseDateReply('ayer', today);
+  const options: ReviewIssue['options'] = [{ label: `Hoy (${fmtDate(today)})`, patch: { date: today } }];
+  if (yesterday && 'date' in yesterday) options.push({ label: `Ayer (${fmtDate(yesterday.date)})`, patch: { date: yesterday.date } });
+  return { code: 'DATE_MISSING', question: '📅 ¿Qué *fecha* tiene este movimiento?', options, free: 'date' };
+}
+
 type CheckAnswer = { patch: Patch } | { cancel: true } | { badDate: true } | null;
 
 /**
@@ -270,7 +277,9 @@ function computeNext(d: Draft): Question | null {
   return null;
 }
 function rawNext(d: Draft): Question | null {
-  if (d.pendingChecks.length) return checkQ(d.pendingChecks[0]);
+  // La fecha se pregunta después del monto y el detalle; las demás dudas, antes que nada.
+  const nextCheck = d.pendingChecks[0];
+  if (nextCheck && nextCheck.code !== 'DATE_MISSING') return checkQ(nextCheck);
   const p = d.payload;
   const type = p.type as MovType;
   if (!type) return { key: 'movtype', text: '¿Qué *tipo de movimiento* quieres registrar?', options: [
@@ -282,6 +291,7 @@ function rawNext(d: Draft): Question | null {
   ] };
   if (!(Number(p.amount) > 0)) return { key: 'amount', text: '💵 Escribe el *monto* (solo números, ej: *20* o *24.50*)', free: 'amount' };
   if (!p.description || String(p.description).trim().length < 2) return { key: 'description', text: '📝 Escribe el *detalle* (ej: *Supermercado*, *Gasolina*, *Sueldo*)', free: 'description' };
+  if (nextCheck) return checkQ(nextCheck);
 
   if (type === 'TRANSFER') {
     // Primero: ¿es entre cuentas propias o a otra persona? (cambia cómo se registra)
@@ -343,7 +353,12 @@ async function buildRegister(prisma: any, userId: number, p: ParsedMovement, ori
     return { ask: 'No tienes cuentas registradas. Créalas en la sección *Cuentas* y vuelve a intentar.' };
   }
 
-  const date = p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : todayEcuador();
+  // Sin fecha en el mensaje se pregunta: la que ponga la IA sería una suposición.
+  const today = todayEcuador();
+  const validDate = !!p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date);
+  const saidToday = /(?<![\p{L}\p{N}])hoy(?![\p{L}\p{N}])/iu.test(originalText);
+  const dated = saidToday || (mentionsDate(originalText) && validDate);
+  const date = dated && validDate ? (p.date as string) : today;
   const payload: Record<string, unknown> = {
     type, amount: Number(p.amount) > 0 ? Number(p.amount) : null,
     movementDate: date, description: textOf(p.description),
@@ -392,7 +407,11 @@ async function buildRegister(prisma: any, userId: number, p: ParsedMovement, ori
     if (cat) { payload.categoryId = cat.id; resolved.add('category'); }
   }
 
-  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, categoryCandidates: p.categoryCandidates || [], showAllCats: false, awaitingNewCategory: false, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [], pendingChecks: [...(p.reviewIssues || [])], proposedCategoryId: cat?.id ?? null, categoryChosenByUser: false, vendor: textOf(p.vendor), originalText, memoryCategoryId: p.categoryFromMemory ? p.categoryId : null };
+  // Si no dijo la fecha, las dudas sobre la que puso la IA no aplican: se le pregunta y ya.
+  const reviewed: ReviewIssue[] = [...(p.reviewIssues || [])];
+  const checks = dated ? reviewed : [...reviewed.filter((c) => !c.code.startsWith('DATE_')), dateMissingIssue(today)];
+
+  return { payload, resolved, bankHint: p.bankHint || '', ctx: { accounts, creditCards, wallets, categories }, categoryCandidates: p.categoryCandidates || [], showAllCats: false, awaitingNewCategory: false, current: null, awaiting: 'question', userId, at: Date.now(), pendingImages: [], pendingChecks: checks, proposedCategoryId: cat?.id ?? null, categoryChosenByUser: false, vendor: textOf(p.vendor), originalText, memoryCategoryId: p.categoryFromMemory ? p.categoryId : null };
 }
 
 async function balanceReadback(prisma: any, userId: number, payload: Record<string, unknown>): Promise<string> {

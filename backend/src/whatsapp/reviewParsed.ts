@@ -5,7 +5,7 @@
 // =====================================================
 import type { ParsedMovement } from './parser';
 
-export type ReviewIssueCode = 'AMOUNT_MISMATCH' | 'AMOUNT_UNSUPPORTED' | 'AMOUNT_UNUSUAL' | 'DATE_FUTURE' | 'DATE_TOO_OLD';
+export type ReviewIssueCode = 'AMOUNT_MISMATCH' | 'AMOUNT_UNSUPPORTED' | 'AMOUNT_UNUSUAL' | 'DATE_FUTURE' | 'DATE_TOO_OLD' | 'DATE_MISSING';
 
 export interface ReviewIssue {
   code: ReviewIssueCode;

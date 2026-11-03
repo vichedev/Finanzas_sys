@@ -117,6 +117,24 @@ export function parseDateReply(text: string, today: string): DateReply | null {
   return { date: new Date(target * DAY_MS).toISOString().slice(0, 10) };
 }
 
+const WEEKDAYS = 'lunes|martes|miercoles|jueves|viernes|sabado|domingo';
+const DATE_MENTION = new RegExp([
+  String.raw`\b(?:hoy|ayer|anteayer|antier|anoche|ahorita|ahora|recien|esta\s+(?:manana|tarde|noche|semana)|este\s+mes)\b`,
+  String.raw`\b(?:${WEEKDAYS})\b`,
+  String.raw`\b(?:${MONTHS.join('|')}|setiembre)\b`,
+  String.raw`\b(?:semana|mes|ano)\s+pasad[oa]\b`,
+  String.raw`\bhace\s+(?:\d+|un[oa]?|dos|tres|cuatro|cinco)\s+(?:dias?|semanas?|mes(?:es)?)\b`,
+  String.raw`\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b`,
+  String.raw`\b\d{4}-\d{1,2}-\d{1,2}\b`,
+  // "el 15" es una fecha; "el 15%" o "el 15 dólares" no.
+  String.raw`\b(?:el|dia)\s+(?:0?[1-9]|[12]\d|3[01])\b(?![.,]?\d)(?!\s*(?:%|\$|dolar|usd|por\s+ciento))`
+].join('|'));
+
+/** ¿El usuario dijo cuándo fue? Si no, la fecha se pregunta: la de la IA sería una suposición. */
+export function mentionsDate(text: string): boolean {
+  return DATE_MENTION.test(plain(text));
+}
+
 const NOT_A_CATEGORY = /^(?:ningun[oa]?|nada|otr[oa]|sin|categorias?|ya|si|no|ok|okay|listo|dale|va|correcto)$/;
 const MOVEMENT_PHRASE = /^(?:gast|pagu|pague|compr|retir|transfer|deposit|ingres|cobr|me\s)/;
 
