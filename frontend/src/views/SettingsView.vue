@@ -437,7 +437,7 @@ const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = re
 type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'mail' | 'smtp' | 'roles' | 'users' | 'backups' | 'security' | 'super-admin' | 'updates';
 const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'mail', 'smtp', 'roles', 'users', 'backups', 'security', 'super-admin', 'updates'];
 const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users', 'whatsapp', 'mail'];
-const SUPER_SECTIONS: SectionKey[] = ['super-admin', 'updates'];
+const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
 
 const route = useRoute();
 const router = useRouter();
@@ -449,6 +449,7 @@ function readSectionFromQuery(): SectionKey | null {
   if (ADMIN_SECTIONS.includes(raw as SectionKey) && !auth.isAdmin) return null;
   if (SUPER_SECTIONS.includes(raw as SectionKey) && !auth.isSuper) return null;
   if (raw === 'security' && !auth.isSuper && !auth.isAdmin) return null;
+  if (raw === 'updates' && !auth.isSuper && !auth.isAdmin) return null;
   return raw as SectionKey;
 }
 
@@ -462,7 +463,7 @@ watch(activeSection, (val) => {
   if (val === 'super-admin' && auth.isSuper) {
     loadTenants();   // siempre recarga al entrar (refresca cambios externos)
   }
-  if (val === 'updates' && auth.isSuper) {
+  if (val === 'updates' && (auth.isSuper || auth.isAdmin)) {
     loadUpdate().then(ensureUpdPolling);
   }
 }, { immediate: true });
@@ -1277,6 +1278,7 @@ const SECTIONS = computed<SectionCard[]>(() => {
     base.push({ key: 'financia', title: 'FinancIA', description: 'Asistente de IA (Groq) que analiza tus datos y da recomendaciones.', icon: Sparkles, accent: 'indigo' });
     base.push({ key: 'whatsapp', title: 'Asistente WhatsApp', description: 'Escríbele por WhatsApp (audio o texto) desde tu número y registra movimientos.', icon: MessageCircle, accent: 'green' });
     base.push({ key: 'mail', title: 'Lector de correo', description: 'Lee tus comprobantes/facturas desde un correo y los registra.', icon: Inbox, accent: 'cyan' });
+    base.push({ key: 'updates', title: 'Actualizaciones', description: 'Busca y aplica actualizaciones del sistema sin entrar al servidor.', icon: RefreshCw, accent: 'green' });
   }
   return base;
 });
@@ -1981,7 +1983,7 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
       </table>
     </div>
 
-    <div v-if="activeSection === 'updates' && auth.isSuper" class="panel upd-panel">
+    <div v-if="activeSection === 'updates' && (auth.isSuper || auth.isAdmin)" class="panel upd-panel">
       <div class="financia-banner" style="background:linear-gradient(135deg,#ecfdf5,#eff6ff);border-color:#a7f3d0;">
         <div class="financia-ic" style="background:#16a34a;"><RefreshCw :size="22" /></div>
         <div>

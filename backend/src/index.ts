@@ -11,6 +11,7 @@ import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
 import { globalAuthRouter } from './routes/global/auth.routes';
 import { superAdminRouter } from './routes/global/superAdmin.routes';
+import { systemRouter } from './routes/global/system.routes';
 // Tenant routes (multitenant) — apuntan a req.tenantPrisma
 import { accountsRouter } from './routes/tenant/accounts.routes';
 import { cardsRouter } from './routes/tenant/cards.routes';
@@ -118,6 +119,7 @@ app.get('/api/health', (_req, res) => {
 
 app.use('/api/auth', authLimiter, globalAuthRouter);
 app.use('/api/super-admin', superAdminRouter);
+app.use('/api/system', systemRouter);
 app.use('/api/security', securityRouter);
 
 // Todas las rutas /api/* (excepto auth y super-admin) requieren auth + tenant context

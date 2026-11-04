@@ -16,9 +16,9 @@ export interface UpdateStatus {
 
 export const systemApi = {
   async getUpdate(): Promise<UpdateStatus> {
-    const { data } = await http.get<UpdateStatus>('/super-admin/system/update');
+    const { data } = await http.get<UpdateStatus>('/system/update');
     return data;
   },
-  async check(): Promise<void> { await http.post('/super-admin/system/update/check', {}); },
-  async apply(): Promise<void> { await http.post('/super-admin/system/update/apply', {}); }
+  async check(): Promise<void> { await http.post('/system/update/check', {}); },
+  async apply(): Promise<void> { await http.post('/system/update/apply', {}); }
 };

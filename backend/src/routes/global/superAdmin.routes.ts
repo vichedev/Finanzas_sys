@@ -8,7 +8,6 @@ import { requireSuperAdmin } from '../../middleware/superAdmin';
 import { provisionTenant, suspendTenant, reactivateTenant, deprovisionTenant } from '../../lib/tenantProvisioning';
 import { logSuperAccess } from '../../lib/auditLog';
 import { logger } from '../../lib/logger';
-import { readStatus as readUpdateStatus, requestAction as requestUpdate } from '../../lib/systemUpdate';
 
 function generateStrongPassword(length = 16): string {
   // Alfabeto sin caracteres ambiguos (0/O, 1/l/I)
@@ -22,25 +21,6 @@ function generateStrongPassword(length = 16): string {
 export const superAdminRouter = Router();
 
 superAdminRouter.use(requireAuth, requireSuperAdmin);
-
-// ---- Actualización del sistema (botón "Actualizar" en Ajustes) ----
-// Estado actual + si hay actualizaciones (lo calcula el agente del host).
-superAdminRouter.get('/system/update', (_req, res) => {
-  res.json(readUpdateStatus());
-});
-// Encola "buscar actualizaciones" (git fetch + comparar).
-superAdminRouter.post('/system/update/check', (_req, res) => {
-  const r = requestUpdate('check');
-  if (!r.ok) return res.status(400).json({ message: r.error });
-  res.json({ queued: true });
-});
-// Encola "actualizar ahora" (git pull + rebuild + up + sync).
-superAdminRouter.post('/system/update/apply', (req, res) => {
-  const r = requestUpdate('apply');
-  if (!r.ok) return res.status(400).json({ message: r.error });
-  logger.warn({ by: (req as any).auth?.email || 'super' }, 'system: actualización solicitada desde la UI');
-  res.json({ queued: true });
-});
 
 // Schemas (slug, plan y subdomain ya no se piden — el slug se genera del legalName)
 const provisionSchema = z.object({
