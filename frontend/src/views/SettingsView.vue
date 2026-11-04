@@ -2304,69 +2304,75 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
       </div>
     </div>
 
-    <div v-if="activeSection === 'smtp' && auth.isAdmin" class="smtp-card">
-      <div class="smtp-banner">
-        <h3>Datos del servidor de correo</h3>
-        <span class="smtp-status-pill" :class="smtp.hasPass && smtp.host ? 'ok' : 'warn'">
-          {{ smtp.hasPass && smtp.host ? '✓ Configurado' : '⚠ No configurado' }}
-        </span>
+    <div v-if="activeSection === 'smtp' && auth.isAdmin" class="panel smtp-panel">
+      <div class="financia-banner" style="background:linear-gradient(135deg,#eff6ff,#f5f3ff);border-color:#e0e7ff;">
+        <div class="financia-ic" style="background:#4f46e5;"><Mail :size="22" /></div>
+        <div>
+          <h3>Servidor de correo (SMTP)</h3>
+          <p>Configura el envío de correos del sistema: bienvenida, avisos y recuperación de contraseña.</p>
+        </div>
       </div>
 
-      <form class="smtp-form" @submit.prevent="saveSmtp">
-        <div class="smtp-grid">
-          <div class="smtp-field">
-            <label for="smtp-host">Host/servidor:</label>
-            <input id="smtp-host" v-model="smtpForm.host" required placeholder="webmail.tudominio.com" />
-          </div>
-          <div class="smtp-field">
-            <label for="smtp-port">Puerto:</label>
-            <input id="smtp-port" v-model.number="smtpForm.port" type="number" min="1" max="65535" required />
-          </div>
+      <div class="financia-status" :class="{ ok: smtp.hasPass && smtp.host }" style="margin-bottom:18px;">
+        <span class="dot"></span>
+        {{ smtp.hasPass && smtp.host ? 'Servidor configurado y listo.' : 'Aún no está configurado.' }}
+      </div>
 
-          <div class="smtp-field">
-            <label for="smtp-user">Usuario/Correo:</label>
-            <input id="smtp-user" v-model="smtpForm.user" required placeholder="noreply@dominio.com" />
+      <form class="financia-config" style="gap:14px;" @submit.prevent="saveSmtp">
+        <div class="cfg-grid">
+          <div class="field">
+            <label>Host / servidor</label>
+            <input v-model="smtpForm.host" required placeholder="webmail.tudominio.com" />
           </div>
-          <div class="smtp-field">
-            <label for="smtp-pass">Contraseña:</label>
-            <div class="smtp-pwd-wrap">
-              <span class="smtp-input-icon">🔑</span>
-              <input id="smtp-pass" v-model="smtpForm.pass" :type="showSmtpPass ? 'text' : 'password'" autocomplete="off" :placeholder="smtp.hasPass ? '••••••••' : 'Contraseña'" />
-              <button type="button" class="smtp-eye" @click="showSmtpPass = !showSmtpPass" :title="showSmtpPass ? 'Ocultar' : 'Ver'">{{ showSmtpPass ? '🙈' : '👁️' }}</button>
+          <div class="field">
+            <label>Puerto</label>
+            <input v-model.number="smtpForm.port" type="number" min="1" max="65535" required placeholder="587" />
+          </div>
+          <div class="field">
+            <label>Usuario / correo</label>
+            <input v-model="smtpForm.user" required placeholder="noreply@dominio.com" />
+          </div>
+          <div class="field">
+            <label>Contraseña</label>
+            <div class="field-inline">
+              <input v-model="smtpForm.pass" :type="showSmtpPass ? 'text' : 'password'" autocomplete="off" :placeholder="smtp.hasPass ? '•••••••• (ya configurada)' : 'Contraseña'" />
+              <button type="button" class="ghost" @click="showSmtpPass = !showSmtpPass">{{ showSmtpPass ? 'Ocultar' : 'Ver' }}</button>
             </div>
+            <small class="hint" v-if="smtp.hasPass">Deja vacío para conservar la actual.</small>
           </div>
-
-          <div class="smtp-field">
-            <label for="smtp-sec">Seguridad:</label>
-            <select id="smtp-sec" :value="securityMode" @change="onSecurityChange(($event.target as HTMLSelectElement).value)">
-              <option value="NONE">NONE</option>
-              <option value="STARTTLS">STARTTLS</option>
-              <option value="SSL">SSL/TLS</option>
+          <div class="field">
+            <label>Seguridad</label>
+            <select :value="securityMode" @change="onSecurityChange(($event.target as HTMLSelectElement).value)">
+              <option value="NONE">Sin cifrado (NONE)</option>
+              <option value="STARTTLS">STARTTLS — puerto 587</option>
+              <option value="SSL">SSL/TLS — puerto 465</option>
             </select>
-            <small class="smtp-sec-hint"><span class="dot-ssl">●</span> SSL=465 · <span class="dot-tls">●</span> TLS/STARTTLS=587 · <span class="dot-none">●</span> NONE=sin cifrado</small>
+            <small class="hint">SSL = 465 · STARTTLS = 587 · NONE = sin cifrado.</small>
           </div>
-          <div class="smtp-field">
-            <label for="smtp-from">Remitente "From":</label>
-            <input id="smtp-from" v-model="smtpForm.from" placeholder='Finanzas Mensuales <noreply@dominio.com>' />
+          <div class="field">
+            <label>Remitente "From"</label>
+            <input v-model="smtpForm.from" placeholder="Finanzas Mensuales <noreply@dominio.com>" />
           </div>
-
-          <div class="smtp-field smtp-field-wide">
-            <label for="smtp-url">URL pública del sistema:</label>
-            <input id="smtp-url" v-model="smtpForm.publicUrl" placeholder="http://204.168.129.129 o https://finanzas.tudominio.com" />
-            <small class="smtp-hint">Se usa en los correos de bienvenida para construir el enlace de login.</small>
+          <div class="field cfg-wide">
+            <label>URL pública del sistema</label>
+            <input v-model="smtpForm.publicUrl" placeholder="https://finanzas.tudominio.com" />
+            <small class="hint">Se usa en los correos de bienvenida para construir el enlace de acceso.</small>
+          </div>
+          <div class="field cfg-wide">
+            <label>Correo para prueba (opcional)</label>
+            <input v-model="testTo" type="email" placeholder="tucorreo@dominio.com" />
           </div>
         </div>
 
         <p v-if="smtpMsg" class="hint-msg">{{ smtpMsg }}</p>
         <p v-if="smtpErr" class="error">{{ smtpErr }}</p>
-        <p v-if="testResult?.ok" class="hint-msg">✓ Conexión SMTP exitosa{{ testTo ? ' y email enviado a ' + testTo : '' }}.</p>
-        <p v-else-if="testResult && !testResult.ok" class="error">✗ {{ testResult.error || 'Error desconocido' }}</p>
+        <p v-if="testResult?.ok" class="hint-msg">Conexión SMTP exitosa{{ testTo ? ' y correo enviado a ' + testTo : '' }}.</p>
+        <p v-else-if="testResult && !testResult.ok" class="error">{{ testResult.error || 'Error desconocido' }}</p>
 
-        <div class="smtp-actions-bar">
-          <input v-model="testTo" type="email" placeholder="Email para prueba (opcional)" class="smtp-test-input" />
-          <button type="button" class="smtp-btn-test" :disabled="!smtp.host || !smtp.hasPass" @click="testSmtp">PROBAR CONFIGURACIÓN ➤</button>
-          <button type="submit" class="smtp-btn-save" :disabled="smtpSaving">{{ smtpSaving ? 'GUARDANDO…' : 'GUARDAR 💾' }}</button>
-          <button type="button" class="smtp-btn-clear" :disabled="!smtp.host || !smtp.hasPass" @click="clearSmtp" title="Eliminar configuración">🗑️</button>
+        <div class="financia-actions">
+          <button type="submit" :disabled="smtpSaving"><Check :size="16" /> {{ smtpSaving ? 'Guardando…' : 'Guardar' }}</button>
+          <button type="button" class="ghost" :disabled="!smtp.host || !smtp.hasPass" @click="testSmtp"><Mail :size="16" /> Probar configuración</button>
+          <button type="button" class="ghost danger" :disabled="!smtp.host || !smtp.hasPass" @click="clearSmtp"><Trash2 :size="16" /> Eliminar</button>
         </div>
       </form>
     </div>
@@ -3111,6 +3117,13 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .financia-config h4, .financia-analysis h4 { margin: 0 0 4px; font-size: 15px; }
 .financia-config .field, .financia-analysis .field { display: flex; flex-direction: column; gap: 4px; }
 .ai-warn { color: #b45309; font-size: 12px; background: #fffbeb; border: 1px solid #fde68a; padding: 6px 8px; border-radius: 6px; }
+/* Rejilla de campos (SMTP y similares) */
+.cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+.cfg-grid .field { display: flex; flex-direction: column; gap: 4px; }
+.cfg-grid .cfg-wide { grid-column: 1 / -1; }
+.field-inline { display: flex; gap: 8px; }
+.field-inline input { flex: 1; min-width: 0; }
+@media (max-width: 720px) { .cfg-grid { grid-template-columns: 1fr; } }
 .mail-guide { font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; }
 .mail-guide strong { color: #0f172a; } .mail-guide ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 /* Actualizaciones */
