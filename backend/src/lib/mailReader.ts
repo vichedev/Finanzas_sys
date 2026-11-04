@@ -50,10 +50,12 @@ export async function testConnection(creds: ImapCreds): Promise<{ ok: true; tota
   try {
     client = await makeClient(creds);
     await client.connect();
+    // getMailboxLock SELECCIONA la carpeta; NO usar STATUS sobre la carpeta ya
+    // seleccionada (Gmail lo rechaza con "Command failed"). El total viene del
+    // propio buzón seleccionado (client.mailbox.exists).
     const lock = await client.getMailboxLock(creds.folder || 'INBOX');
     try {
-      const status = await client.status(creds.folder || 'INBOX', { messages: true });
-      const total: number = status.messages || 0;
+      const total: number = client.mailbox?.exists || 0;
       const recent: string[] = [];
       if (total > 0) {
         const from = Math.max(1, total - 4);
@@ -66,16 +68,20 @@ export async function testConnection(creds: ImapCreds): Promise<{ ok: true; tota
       lock.release();
     }
   } catch (e: any) {
-    logger.warn({ e: e?.message }, 'mail: fallo de conexión IMAP');
-    const m = String(e?.message || e);
-    // Mensajes amables para los errores típicos de Gmail.
-    if (/AUTHENTICATIONFAILED|Invalid credentials|LOGIN failed/i.test(m)) {
+    // imapflow esconde el detalle real en responseText/response: lo recuperamos.
+    const detail = [e?.responseText, e?.response, e?.message].filter(Boolean).join(' | ');
+    logger.warn({ detail, authFailed: e?.authenticationFailed, code: e?.serverResponseCode }, 'mail: fallo de conexión IMAP');
+    const m = String(detail || e);
+    if (e?.authenticationFailed || /\[AUTHENTICATIONFAILED\]|AUTHENTICATE|LOGIN/i.test(m)) {
+      return { ok: false, error: 'Usuario o contraseña incorrectos. En Gmail usa una CONTRASEÑA DE APLICACIÓN (no la normal), con verificación en 2 pasos activa e IMAP habilitado.' };
+    }
+    if (/Invalid credentials/i.test(m)) {
       return { ok: false, error: 'Usuario o contraseña incorrectos. En Gmail usa una CONTRASEÑA DE APLICACIÓN (no la normal) y activa IMAP.' };
     }
     if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|EPROTO|wrong version number|Timeout|closed unexpectedly|ECONNRESET|socket/i.test(m)) {
       return { ok: false, error: 'No se pudo conectar al servidor IMAP. Para Gmail usa host imap.gmail.com y puerto 993 (no el SMTP/587).' };
     }
-    return { ok: false, error: m.slice(0, 200) };
+    return { ok: false, error: m.slice(0, 200) || 'No se pudo conectar.' };
   } finally {
     try { if (client) await client.logout(); } catch { /* ignore */ }
   }
