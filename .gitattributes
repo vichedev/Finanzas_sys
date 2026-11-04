@@ -2,3 +2,5 @@
 # funcionar en Linux (un CRLF rompe bash y los entrypoints de Docker).
 *.sh text eol=lf
 docker-entrypoint.sh text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
