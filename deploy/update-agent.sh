@@ -11,7 +11,12 @@
 # =====================================================
 set -uo pipefail
 
+# El cron trae un PATH mínimo: aseguramos que encuentre git y docker.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 REPO="${REPO_DIR:-/opt/finanzas}"
+# git rechaza repos con "dueño dudoso" cuando corre por cron; lo marcamos seguro.
+git config --global --add safe.directory "$REPO" 2>/dev/null || true
 CH="$REPO/.update-channel"
 BRANCH="${UPDATE_BRANCH:-main}"
 mkdir -p "$CH"
