@@ -59,7 +59,12 @@ mailRouter.put('/config', async (req, res) => {
   if (body.email !== undefined) data.email = body.email;
   if (body.folder !== undefined) data.folder = body.folder;
   if (body.autoCreate !== undefined) data.autoCreate = body.autoCreate;
-  if (body.password) data.passwordEnc = encryptString(body.password);
+  // Gmail muestra la contraseña de aplicación con espacios (atmx uvcu botx kmjv);
+  // son 16 caracteres sin espacios. Los quitamos para que no falle el login.
+  if (body.password) {
+    const appPass = body.password.replace(/\s+/g, '');
+    data.passwordEnc = encryptString(appPass);
+  }
 
   const cfg = await req.tenantPrisma!.mailConfig.upsert({
     where: { id: 1 },
