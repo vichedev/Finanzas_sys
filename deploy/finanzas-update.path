@@ -1,0 +1,12 @@
+[Unit]
+Description=Dispara el agente de actualizacion MAAT Finanzas al instante cuando hay una peticion
+
+[Path]
+# inotify: en cuanto el backend crea el archivo de peticion, systemd arranca el
+# servicio de inmediato (sin esperar al timer). Asi "Buscar actualizaciones" y
+# "Actualizar ahora" responden en segundos, no en hasta un minuto.
+PathExists=/opt/finanzas/.update-channel/request
+Unit=finanzas-update.service
+
+[Install]
+WantedBy=paths.target

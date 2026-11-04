@@ -255,7 +255,7 @@ async function loadUpdate() {
 }
 function ensureUpdPolling() {
   const active = !!upd.value && (upd.value.pending || upd.value.state === 'checking' || upd.value.state === 'updating' || upd.value.state === 'queued');
-  if (active && !updTimer) updTimer = setInterval(loadUpdate, 3000);
+  if (active && !updTimer) updTimer = setInterval(loadUpdate, 1500);
   else if (!active && updTimer) { clearInterval(updTimer); updTimer = null; }
 }
 watch(() => upd.value && [upd.value.state, upd.value.pending], ensureUpdPolling);
@@ -1996,7 +1996,7 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
       </div>
 
       <div v-if="upd && !upd.configured" class="wa-warn">
-        ⚠️ El actualizador no está configurado en el servidor. Instala el agente una sola vez (ver instrucciones del repo: <strong>deploy/update-agent.sh</strong> + cron).
+        ⚠️ El actualizador no está configurado en el servidor. Instala el agente una sola vez (ver instrucciones del repo: <strong>deploy/update-agent.sh</strong> + units de systemd <code>.service</code>/<code>.timer</code>/<code>.path</code>).
       </div>
 
       <div class="upd-grid">

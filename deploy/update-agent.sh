@@ -5,8 +5,17 @@
 # "check" o "apply"; este agente la procesa: busca actualizaciones o aplica el
 # git pull + rebuild + up + sync de tenants. Escribe el estado para la UI.
 #
-# Instalación (una sola vez, como root):
+# Instalación con systemd (recomendada; respuesta INSTANTÁNEA vía .path):
 #   mkdir -p /opt/finanzas/.update-channel && chmod 777 /opt/finanzas/.update-channel
+#   cp /opt/finanzas/deploy/finanzas-update.service /etc/systemd/system/
+#   cp /opt/finanzas/deploy/finanzas-update.timer   /etc/systemd/system/
+#   cp /opt/finanzas/deploy/finanzas-update.path    /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now finanzas-update.timer finanzas-update.path
+#   # El .path dispara el agente al instante cuando la UI deja una petición (inotify);
+#   # el .timer solo mantiene el latido y actúa de respaldo.
+#
+# Alternativa con cron (si no hay systemd):
 #   ( crontab -l 2>/dev/null; echo '* * * * * REPO_DIR=/opt/finanzas bash /opt/finanzas/deploy/update-agent.sh >> /var/log/finanzas-update.log 2>&1' ) | crontab -
 # =====================================================
 set -uo pipefail
