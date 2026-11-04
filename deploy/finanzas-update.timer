@@ -1,0 +1,11 @@
+[Unit]
+Description=Ejecuta el agente de actualizacion MAAT Finanzas cada minuto
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=finanzas-update.service
+
+[Install]
+WantedBy=timers.target

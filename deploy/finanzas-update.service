@@ -1,0 +1,8 @@
+[Unit]
+Description=Agente de actualizacion MAAT Finanzas (oneshot)
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+Environment=REPO_DIR=/opt/finanzas
+ExecStart=/bin/bash /opt/finanzas/deploy/update-agent.sh
