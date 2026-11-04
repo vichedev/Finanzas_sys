@@ -1,0 +1,4 @@
+# Los scripts de shell y de entrada DEBEN conservar saltos de línea LF para
+# funcionar en Linux (un CRLF rompe bash y los entrypoints de Docker).
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
