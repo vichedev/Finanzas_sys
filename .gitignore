@@ -62,3 +62,6 @@ coverage/
 # Mediciones de la IA: casos reales del usuario y resultados
 backend/evals/cases.local.json
 backend/evals/results/
+
+# Canal del actualizador (se crea en el host en runtime)
+.update-channel/
