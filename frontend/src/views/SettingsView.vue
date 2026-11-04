@@ -212,10 +212,29 @@ const mailEmail = ref(''); const mailPass = ref('');
 const mailMsg = ref(''); const mailErr = ref(''); const mailSaving = ref(false); const mailTesting = ref(false);
 const mailTest = ref<{ total: number; recent: string[] } | null>(null);
 
+// Corrige el error típico: poner el servidor de ENVÍO (smtp/pop) o un puerto SMTP
+// cuando IMAP necesita imap.gmail.com:993 (SSL).
+function normalizeMailServer() {
+  let h = (mailCfg.value.host || '').trim().toLowerCase();
+  const mail = (mailEmail.value || '').trim().toLowerCase();
+  if (h === 'smtp.gmail.com' || h === 'pop.gmail.com') h = 'imap.gmail.com';
+  else if (h.startsWith('smtp.')) h = 'imap.' + h.slice(5);
+  else if (h.startsWith('pop3.')) h = 'imap.' + h.slice(5);
+  else if (h.startsWith('pop.')) h = 'imap.' + h.slice(4);
+  if (!h && /@gmail\.com$/.test(mail)) h = 'imap.gmail.com';
+  if (!h) h = 'imap.gmail.com';
+  let p = Number(mailCfg.value.port) || 0;
+  if (h === 'imap.gmail.com') p = 993;
+  else if (p === 587 || p === 465 || p === 25 || !p) p = 993;
+  mailCfg.value.host = h;
+  mailCfg.value.port = p;
+}
+
 async function loadMailConfig() {
   try { const c = await mailApi.getConfig(); mailCfg.value = c; mailEmail.value = c.email || ''; } catch { /* ignora */ }
 }
 async function saveMailConfig() {
+  normalizeMailServer();
   mailErr.value = ''; mailMsg.value = ''; mailSaving.value = true;
   try {
     const payload: import('../api/mail').MailConfigPayload = {
@@ -2274,9 +2293,10 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
             <small class="hint">Se guarda cifrada. {{ mailCfg.hasPassword ? 'Deja vacío para conservar la actual.' : 'NO es tu contraseña normal de Gmail.' }}</small>
           </div>
           <div class="field" style="flex-direction:row; gap:10px;">
-            <div style="flex:1"><label>Servidor IMAP</label><input v-model="mailCfg.host" placeholder="imap.gmail.com" /></div>
-            <div style="width:90px"><label>Puerto</label><input v-model.number="mailCfg.port" type="number" /></div>
+            <div style="flex:1"><label>Servidor IMAP</label><input v-model="mailCfg.host" placeholder="imap.gmail.com" @blur="normalizeMailServer" /></div>
+            <div style="width:90px"><label>Puerto</label><input v-model.number="mailCfg.port" type="number" @blur="normalizeMailServer" /></div>
           </div>
+          <small class="hint" style="margin-top:-6px;">Para Gmail: <strong>imap.gmail.com</strong> · puerto <strong>993</strong> (SSL). NO uses el de envío (smtp.gmail.com / 587).</small>
           <div class="field">
             <label class="financia-toggle"><input type="checkbox" v-model="mailCfg.enabled" /><span>Activar lectura automática</span></label>
           </div>

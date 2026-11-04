@@ -9,12 +9,35 @@ const esmImport = new Function('s', 'return import(s)') as (s: string) => Promis
 
 export interface ImapCreds { host: string; port: number; email: string; password: string; folder: string; }
 
+/**
+ * Normaliza host/puerto IMAP para evitar el error más común: poner el servidor
+ * de ENVÍO (smtp.gmail.com / pop.gmail.com, puerto 587/465) cuando lo que se
+ * necesita es el de LECTURA (imap.gmail.com, puerto 993 con SSL).
+ */
+export function normalizeImap(host?: string | null, port?: number | null, email?: string | null): { host: string; port: number } {
+  let h = String(host || '').trim().toLowerCase();
+  const mail = String(email || '').trim().toLowerCase();
+  // smtp.* / pop.* → imap.*  (p. ej. smtp.gmail.com → imap.gmail.com)
+  if (h === 'smtp.gmail.com' || h === 'pop.gmail.com') h = 'imap.gmail.com';
+  else if (h.startsWith('smtp.')) h = 'imap.' + h.slice(5);
+  else if (h.startsWith('pop.')) h = 'imap.' + h.slice(4);
+  else if (h.startsWith('pop3.')) h = 'imap.' + h.slice(5);
+  // Host en blanco pero el correo es Gmail → asumimos el IMAP de Gmail.
+  if (!h && /@gmail\.com$/.test(mail)) h = 'imap.gmail.com';
+  if (!h) h = 'imap.gmail.com';
+  let p = Number(port) || 0;
+  if (h === 'imap.gmail.com') p = 993;                 // Gmail: siempre 993 (SSL)
+  else if (p === 587 || p === 465 || p === 25 || !p) p = 993; // puertos de SMTP → IMAP SSL
+  return { host: h, port: p };
+}
+
 async function makeClient(creds: ImapCreds): Promise<any> {
   const { ImapFlow } = await esmImport('imapflow');
+  const { host, port } = normalizeImap(creds.host, creds.port, creds.email);
   return new ImapFlow({
-    host: creds.host,
-    port: creds.port,
-    secure: creds.port === 993,
+    host,
+    port,
+    secure: port === 993,
     auth: { user: creds.email, pass: creds.password },
     logger: false,
     emitLogs: false
@@ -49,8 +72,8 @@ export async function testConnection(creds: ImapCreds): Promise<{ ok: true; tota
     if (/AUTHENTICATIONFAILED|Invalid credentials|LOGIN failed/i.test(m)) {
       return { ok: false, error: 'Usuario o contraseña incorrectos. En Gmail usa una CONTRASEÑA DE APLICACIÓN (no la normal) y activa IMAP.' };
     }
-    if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo/i.test(m)) {
-      return { ok: false, error: 'No se pudo conectar al servidor IMAP. Revisa el host y el puerto.' };
+    if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|getaddrinfo|EPROTO|wrong version number|Timeout|closed unexpectedly|ECONNRESET|socket/i.test(m)) {
+      return { ok: false, error: 'No se pudo conectar al servidor IMAP. Para Gmail usa host imap.gmail.com y puerto 993 (no el SMTP/587).' };
     }
     return { ok: false, error: m.slice(0, 200) };
   } finally {

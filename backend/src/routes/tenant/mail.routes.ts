@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { encryptString, decryptString } from '../../lib/tenantCrypto';
-import { testConnection } from '../../lib/mailReader';
+import { testConnection, normalizeImap } from '../../lib/mailReader';
 import { auditFromReq } from '../../lib/tenantAudit';
 
 // Lector de correo (IMAP) para ingerir comprobantes. Config + prueba de conexión.
@@ -43,10 +43,19 @@ const cfgSchema = z.object({
 
 mailRouter.put('/config', async (req, res) => {
   const body = cfgSchema.parse(req.body);
+  const existing = await getCfg(req.tenantPrisma!);
   const data: Record<string, unknown> = {};
   if (body.enabled !== undefined) data.enabled = body.enabled;
-  if (body.host !== undefined) data.host = body.host;
-  if (body.port !== undefined) data.port = body.port;
+  // Normaliza host/puerto IMAP: corrige el típico smtp.gmail.com:587 → imap.gmail.com:993.
+  if (body.host !== undefined || body.port !== undefined) {
+    const norm = normalizeImap(
+      body.host ?? existing?.host,
+      body.port ?? existing?.port,
+      body.email ?? existing?.email ?? undefined
+    );
+    data.host = norm.host;
+    data.port = norm.port;
+  }
   if (body.email !== undefined) data.email = body.email;
   if (body.folder !== undefined) data.folder = body.folder;
   if (body.autoCreate !== undefined) data.autoCreate = body.autoCreate;
@@ -71,7 +80,8 @@ mailRouter.post('/test', async (req, res) => {
   try { password = decryptString(cfg.passwordEnc); }
   catch { return res.status(500).json({ message: 'No se pudo leer la contraseña guardada.' }); }
 
-  const r = await testConnection({ host: cfg.host, port: cfg.port, email: cfg.email, password, folder: cfg.folder });
+  const norm = normalizeImap(cfg.host, cfg.port, cfg.email);
+  const r = await testConnection({ host: norm.host, port: norm.port, email: cfg.email, password, folder: cfg.folder });
   if (!r.ok) return res.status(400).json({ message: r.error });
   res.json(r);
 });
