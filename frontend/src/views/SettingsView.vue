@@ -11,6 +11,7 @@ import { backupApi, MAX_RESTORE_BYTES } from '../api/backup';
 import { aiApi } from '../api/ai';
 import { whatsappApi, type WhatsappStatus } from '../api/whatsapp';
 import { mailApi, type MailConfig } from '../api/mail';
+import { systemApi, type UpdateStatus } from '../api/system';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
 import SecurityPanel from './SecurityPanel.vue';
@@ -244,6 +245,38 @@ async function testMailConnection() {
   } finally { mailTesting.value = false; }
 }
 
+// ---- Actualizaciones del sistema (super-admin) ----
+const upd = ref<UpdateStatus | null>(null);
+const updErr = ref(''); const updBusy = ref(false);
+let updTimer: ReturnType<typeof setInterval> | null = null;
+
+async function loadUpdate() {
+  try { upd.value = await systemApi.getUpdate(); } catch { /* ignora */ }
+}
+function ensureUpdPolling() {
+  const active = !!upd.value && (upd.value.pending || upd.value.state === 'checking' || upd.value.state === 'updating' || upd.value.state === 'queued');
+  if (active && !updTimer) updTimer = setInterval(loadUpdate, 3000);
+  else if (!active && updTimer) { clearInterval(updTimer); updTimer = null; }
+}
+watch(() => upd.value && [upd.value.state, upd.value.pending], ensureUpdPolling);
+async function checkUpdates() {
+  updErr.value = ''; updBusy.value = true;
+  try { await systemApi.check(); await loadUpdate(); ensureUpdPolling(); }
+  catch (e: unknown) { const err = e as { response?: { data?: { message?: string } } }; updErr.value = err?.response?.data?.message || 'No se pudo buscar actualizaciones.'; }
+  finally { updBusy.value = false; }
+}
+async function applyUpdate() {
+  if (!(await confirm({ message: 'Se actualizará el sistema (puede tardar unos minutos y reiniciar los servicios). ¿Continuar?', confirmText: 'Actualizar ahora' }))) return;
+  updErr.value = ''; updBusy.value = true;
+  try { await systemApi.apply(); await loadUpdate(); ensureUpdPolling(); }
+  catch (e: unknown) { const err = e as { response?: { data?: { message?: string } } }; updErr.value = err?.response?.data?.message || 'No se pudo iniciar la actualización.'; }
+  finally { updBusy.value = false; }
+}
+const UPD_STATE_LABEL: Record<string, string> = {
+  idle: 'Al día / listo', checking: 'Buscando…', updating: 'Actualizando…', done: 'Actualizado ✓',
+  error: 'Error en la actualización', queued: 'En cola…', unknown: 'Sin verificar'
+};
+
 // Markdown mínimo y seguro (escapa HTML, luego aplica negritas, títulos y viñetas).
 const aiResultHtml = computed(() => {
   const raw = aiResult.value;
@@ -401,10 +434,10 @@ const profile = ref<Profile | null>(null);
 const profileForm = ref({ name: '', email: '', currency: 'USD', currentPassword: '', newPassword: '' });
 const profileMsg = ref(''); const profileErr = ref(''); const profileSaving = ref(false);
 
-type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'mail' | 'smtp' | 'roles' | 'users' | 'backups' | 'security' | 'super-admin';
-const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'mail', 'smtp', 'roles', 'users', 'backups', 'security', 'super-admin'];
+type SectionKey = 'profile' | 'categories' | 'banks' | 'wallets' | 'identity' | 'financia' | 'whatsapp' | 'mail' | 'smtp' | 'roles' | 'users' | 'backups' | 'security' | 'super-admin' | 'updates';
+const VALID_SECTIONS: SectionKey[] = ['profile', 'categories', 'banks', 'wallets', 'identity', 'financia', 'whatsapp', 'mail', 'smtp', 'roles', 'users', 'backups', 'security', 'super-admin', 'updates'];
 const ADMIN_SECTIONS: SectionKey[] = ['smtp', 'roles', 'users', 'whatsapp', 'mail'];
-const SUPER_SECTIONS: SectionKey[] = ['super-admin'];
+const SUPER_SECTIONS: SectionKey[] = ['super-admin', 'updates'];
 
 const route = useRoute();
 const router = useRouter();
@@ -428,6 +461,9 @@ watch(() => route.query.section, () => {
 watch(activeSection, (val) => {
   if (val === 'super-admin' && auth.isSuper) {
     loadTenants();   // siempre recarga al entrar (refresca cambios externos)
+  }
+  if (val === 'updates' && auth.isSuper) {
+    loadUpdate().then(ensureUpdPolling);
   }
 }, { immediate: true });
 
@@ -1220,7 +1256,8 @@ const SECTIONS = computed<SectionCard[]>(() => {
   if (auth.isSuper) {
     return [
       { key: 'super-admin', title: 'Empresas', description: 'Administra las empresas de la plataforma.', icon: Building2, accent: 'indigo' },
-      { key: 'security', title: 'Seguridad', description: 'Intentos de acceso, cuentas e IP bloqueadas.', icon: ShieldAlert, accent: 'red' }
+      { key: 'security', title: 'Seguridad', description: 'Intentos de acceso, cuentas e IP bloqueadas.', icon: ShieldAlert, accent: 'red' },
+      { key: 'updates', title: 'Actualizaciones', description: 'Busca y aplica actualizaciones del sistema sin entrar al servidor.', icon: RefreshCw, accent: 'green' }
     ];
   }
   // ADMIN_EMPRESA o USUARIO_EMPRESA (sesión dentro de un tenant)
@@ -1300,7 +1337,7 @@ onMounted(async () => {
   ensureWaPolling();
 });
 
-onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
+onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) clearInterval(updTimer); });
 </script>
 
 <template>
@@ -1942,6 +1979,54 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); });
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <div v-if="activeSection === 'updates' && auth.isSuper" class="panel upd-panel">
+      <div class="financia-banner" style="background:linear-gradient(135deg,#ecfdf5,#eff6ff);border-color:#a7f3d0;">
+        <div class="financia-ic" style="background:#16a34a;"><RefreshCw :size="22" /></div>
+        <div>
+          <h3>Actualizaciones del sistema</h3>
+          <p>Busca y aplica actualizaciones del servidor sin entrar por SSH. El servidor baja los cambios, reconstruye y reinicia los servicios.</p>
+        </div>
+      </div>
+
+      <div v-if="upd && !upd.configured" class="wa-warn">
+        ⚠️ El actualizador no está configurado en el servidor. Instala el agente una sola vez (ver instrucciones del repo: <strong>deploy/update-agent.sh</strong> + cron).
+      </div>
+
+      <div class="upd-grid">
+        <div class="upd-row">
+          <span class="upd-dot" :class="upd?.state"></span>
+          <div>
+            <strong>{{ UPD_STATE_LABEL[upd?.state || 'unknown'] || upd?.state }}</strong>
+            <small v-if="upd?.version">Versión actual: <code>{{ upd.version }}</code></small>
+            <small v-if="upd && upd.configured && !upd.agentAlive" style="color:#b45309;">El agente del host no ha reportado (revisa el cron).</small>
+          </div>
+        </div>
+
+        <div v-if="upd && upd.behind > 0 && upd.state !== 'updating'" class="upd-avail">
+          🚀 Hay <strong>{{ upd.behind }}</strong> actualización(es) disponible(s):
+          <ul><li v-for="(c, i) in upd.commits" :key="i">{{ c }}</li></ul>
+        </div>
+        <div v-else-if="upd && upd.state === 'idle' && upd.checkedAt && upd.behind === 0" class="hint-msg">✓ Estás al día.</div>
+
+        <div class="upd-actions">
+          <button type="button" class="ghost" @click="checkUpdates" :disabled="updBusy || upd?.state === 'updating'">
+            <component :is="(updBusy || upd?.state==='checking') ? RefreshCw : RefreshCw" :size="16" :class="{ spin: updBusy || upd?.state==='checking' }" /> Buscar actualizaciones
+          </button>
+          <button type="button" @click="applyUpdate" :disabled="updBusy || !upd || upd.behind === 0 || upd.state === 'updating'">
+            <Download :size="16" /> {{ upd?.state === 'updating' ? 'Actualizando…' : 'Actualizar ahora' }}
+          </button>
+        </div>
+        <p v-if="updErr" class="error">{{ updErr }}</p>
+        <p v-if="upd?.state === 'updating'" class="hint-msg">⏳ Actualizando… no cierres. Los servicios se reiniciarán; puede que la página se recargue.</p>
+        <p v-if="upd?.state === 'done'" class="hint-msg">✅ Sistema actualizado a <code>{{ upd.version }}</code>.</p>
+
+        <div v-if="upd?.log" class="upd-log">
+          <strong>Registro:</strong>
+          <pre>{{ upd.log }}</pre>
+        </div>
+      </div>
     </div>
 
     <RolesPanel v-if="activeSection === 'roles' && auth.isAdmin" />
@@ -3026,6 +3111,17 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .ai-warn { color: #b45309; font-size: 12px; background: #fffbeb; border: 1px solid #fde68a; padding: 6px 8px; border-radius: 6px; }
 .mail-guide { font-size: 13px; color: #475569; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; margin-bottom: 18px; }
 .mail-guide strong { color: #0f172a; } .mail-guide ol { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+/* Actualizaciones */
+.upd-grid { display: flex; flex-direction: column; gap: 14px; }
+.upd-row { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f8fafc; }
+.upd-row strong { display: block; font-size: 14px; color: #0f172a; } .upd-row small { display: block; font-size: 12px; color: #64748b; margin-top: 2px; }
+.upd-dot { width: 10px; height: 10px; border-radius: 50%; background: #94a3b8; flex-shrink: 0; }
+.upd-dot.idle, .upd-dot.done { background: #16a34a; } .upd-dot.updating, .upd-dot.checking, .upd-dot.queued { background: #2563eb; } .upd-dot.error { background: #dc2626; }
+.upd-avail { font-size: 13px; color: #065f46; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 10px; padding: 10px 14px; }
+.upd-avail ul { margin: 6px 0 0; padding-left: 18px; } .upd-avail li { margin: 2px 0; }
+.upd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.upd-actions .spin { animation: financia-spin 1s linear infinite; }
+.upd-log pre { background: #0f172a; color: #cbd5e1; font-size: 12px; padding: 12px; border-radius: 8px; overflow-x: auto; max-height: 240px; white-space: pre-wrap; }
 .financia-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .financia-toggle input { width: 16px; height: 16px; }
 .financia-actions { display: flex; gap: 8px; }

@@ -54,6 +54,8 @@ services:
       NODE_ENV: production
       # Sesión de Baileys (WhatsApp): se persiste en el volumen wa_session.
       WA_SESSION_DIR: /app/.wa-session
+      # Canal de señales para el actualizador del host (botón "Actualizar" en Ajustes).
+      UPDATE_CHANNEL_DIR: /app/.update-channel
     ports:
       - "127.0.0.1:4000:4000"
     depends_on:
@@ -75,6 +77,8 @@ services:
     # así el QR se escanea una sola vez. El resto del FS es de solo lectura.
     volumes:
       - wa_session:/app/.wa-session
+      # Canal de actualización: el backend deja aquí la señal y el agente del host la procesa.
+      - ./.update-channel:/app/.update-channel
     security_opt:
       - no-new-privileges:true
     cap_drop:
