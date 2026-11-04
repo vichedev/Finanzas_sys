@@ -266,7 +266,10 @@ async function checkUpdates() {
   finally { updBusy.value = false; }
 }
 async function applyUpdate() {
-  if (!(await confirm({ message: 'Se actualizará el sistema (puede tardar unos minutos y reiniciar los servicios). ¿Continuar?', confirmText: 'Actualizar ahora' }))) return;
+  const msg = upd.value && upd.value.behind > 0
+    ? 'Se actualizará el sistema a la última versión (puede tardar unos minutos y reiniciar los servicios). ¿Continuar?'
+    : 'Se reconstruirán y reiniciarán los servicios con el código actual (puede tardar unos minutos). ¿Continuar?';
+  if (!(await confirm({ message: msg, confirmText: upd.value && upd.value.behind > 0 ? 'Actualizar ahora' : 'Reconstruir' }))) return;
   updErr.value = ''; updBusy.value = true;
   try { await systemApi.apply(); await loadUpdate(); ensureUpdPolling(); }
   catch (e: unknown) { const err = e as { response?: { data?: { message?: string } } }; updErr.value = err?.response?.data?.message || 'No se pudo iniciar la actualización.'; }
@@ -2016,8 +2019,8 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
           <button type="button" class="ghost" @click="checkUpdates" :disabled="updBusy || upd?.state === 'updating'">
             <component :is="(updBusy || upd?.state==='checking') ? RefreshCw : RefreshCw" :size="16" :class="{ spin: updBusy || upd?.state==='checking' }" /> Buscar actualizaciones
           </button>
-          <button type="button" @click="applyUpdate" :disabled="updBusy || !upd || upd.behind === 0 || upd.state === 'updating'">
-            <Download :size="16" /> {{ upd?.state === 'updating' ? 'Actualizando…' : 'Actualizar ahora' }}
+          <button type="button" @click="applyUpdate" :disabled="updBusy || !upd || !upd.configured || upd.state === 'updating'">
+            <Download :size="16" /> {{ upd?.state === 'updating' ? 'Actualizando…' : (upd && upd.behind > 0 ? 'Actualizar ahora' : 'Reconstruir / reiniciar') }}
           </button>
         </div>
         <p v-if="updErr" class="error">{{ updErr }}</p>

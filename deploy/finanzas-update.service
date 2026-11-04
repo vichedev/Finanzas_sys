@@ -4,5 +4,8 @@ After=docker.service network-online.target
 
 [Service]
 Type=oneshot
+# Un build (backend+frontend) puede tardar varios minutos: sin timeout para que
+# systemd no mate el proceso a mitad de la reconstrucción.
+TimeoutStartSec=0
 Environment=REPO_DIR=/opt/finanzas
 ExecStart=/bin/bash /opt/finanzas/deploy/update-agent.sh
