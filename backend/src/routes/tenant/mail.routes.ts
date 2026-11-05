@@ -4,6 +4,8 @@ import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { encryptString, decryptString } from '../../lib/tenantCrypto';
 import { testConnection, normalizeImap } from '../../lib/mailReader';
+import { ingestTenantMail } from '../../lib/mailIngest';
+import { createMovement } from './movements.routes';
 import { auditFromReq } from '../../lib/tenantAudit';
 
 // Lector de correo (IMAP) para ingerir comprobantes. Config + prueba de conexión.
@@ -89,4 +91,63 @@ mailRouter.post('/test', async (req, res) => {
   const r = await testConnection({ host: norm.host, port: norm.port, email: cfg.email, password, folder: cfg.folder });
   if (!r.ok) return res.status(400).json({ message: r.error });
   res.json(r);
+});
+
+// Historial de comprobantes (bandeja + lo ya registrado), lo más reciente primero.
+mailRouter.get('/receipts', async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 40, 1), 100);
+  const rows = await req.tenantPrisma!.mailReceipt.findMany({
+    where: { userId: req.tenantUserId! },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: {
+      id: true, subject: true, fromAddr: true, vendor: true, amount: true, docDate: true,
+      kind: true, status: true, movementId: true, receivedAt: true, createdAt: true, raw: true
+    }
+  });
+  const out = rows.map((r: any) => ({
+    id: r.id, subject: r.subject, from: r.fromAddr, vendor: r.vendor,
+    amount: r.amount != null ? Number(r.amount) : null,
+    docDate: r.docDate, kind: r.kind, status: r.status, movementId: r.movementId,
+    receivedAt: r.receivedAt, createdAt: r.createdAt,
+    reason: (r.raw && typeof r.raw === 'object' ? (r.raw as any).reason : null) || null
+  }));
+  res.json(out);
+});
+
+// Dispara una revisión del buzón AHORA (manual). Devuelve el resumen.
+mailRouter.post('/check', async (req, res) => {
+  const cfg = await getCfg(req.tenantPrisma!);
+  if (!cfg?.enabled) return res.status(400).json({ message: 'Activa la lectura automática y guarda antes de revisar.' });
+  if (!cfg?.email || !cfg?.passwordEnc) return res.status(400).json({ message: 'Configura el correo y la contraseña de aplicación.' });
+  const r = await ingestTenantMail(req.tenantPrisma!);
+  if (r.error) return res.status(400).json({ message: r.error });
+  res.json(r);
+});
+
+// Aprueba un comprobante PENDIENTE → crea el movimiento desde lo interpretado.
+mailRouter.post('/receipts/:id/approve', async (req, res) => {
+  const id = Number(req.params.id);
+  const rec = await req.tenantPrisma!.mailReceipt.findFirst({ where: { id, userId: req.tenantUserId! } });
+  if (!rec) return res.status(404).json({ message: 'Comprobante no encontrado.' });
+  if (rec.movementId) return res.status(409).json({ message: 'Este comprobante ya fue registrado.' });
+  const draft = (rec.raw && typeof rec.raw === 'object' ? (rec.raw as any).draft : null);
+  if (!draft) return res.status(400).json({ message: 'No hay datos suficientes para registrar este comprobante.' });
+  try {
+    const mv = await createMovement(req.tenantPrisma!, req.tenantUserId!, draft);
+    await req.tenantPrisma!.mailReceipt.update({ where: { id }, data: { status: 'APPROVED', movementId: mv.id } });
+    void auditFromReq(req, 'CREATE', 'movement', mv.id, 'Movimiento creado desde comprobante de correo');
+    res.json({ ok: true, movementId: mv.id });
+  } catch (e: any) {
+    res.status(400).json({ message: e?.message || 'No se pudo registrar el movimiento.' });
+  }
+});
+
+// Descarta un comprobante de la bandeja.
+mailRouter.post('/receipts/:id/discard', async (req, res) => {
+  const id = Number(req.params.id);
+  const rec = await req.tenantPrisma!.mailReceipt.findFirst({ where: { id, userId: req.tenantUserId! } });
+  if (!rec) return res.status(404).json({ message: 'Comprobante no encontrado.' });
+  await req.tenantPrisma!.mailReceipt.update({ where: { id }, data: { status: 'DISCARDED' } });
+  res.json({ ok: true });
 });

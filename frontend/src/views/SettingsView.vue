@@ -10,7 +10,7 @@ import { http } from '../api/http';
 import { backupApi, MAX_RESTORE_BYTES } from '../api/backup';
 import { aiApi } from '../api/ai';
 import { whatsappApi, type WhatsappStatus } from '../api/whatsapp';
-import { mailApi, type MailConfig } from '../api/mail';
+import { mailApi, type MailConfig, type MailReceipt } from '../api/mail';
 import { systemApi, type UpdateStatus } from '../api/system';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
@@ -264,6 +264,51 @@ async function testMailConnection() {
   } finally { mailTesting.value = false; }
 }
 
+// ---- Historial / bandeja de comprobantes ----
+const mailReceipts = ref<MailReceipt[]>([]);
+const mailChecking = ref(false);
+const mailRowBusy = ref<number | null>(null);
+let mailPollTimer: ReturnType<typeof setInterval> | null = null;
+
+async function loadReceipts() {
+  try { mailReceipts.value = await mailApi.receipts(40); } catch { /* ignora */ }
+}
+async function checkMailNow() {
+  mailChecking.value = true; mailErr.value = ''; mailMsg.value = '';
+  try {
+    const s = await mailApi.check();
+    mailMsg.value = `Revisado: ${s.added} agregado(s) · ${s.pending} en bandeja · ${s.discarded} ignorado(s)${s.failed ? ` · ${s.failed} con error` : ''}.`;
+    await loadReceipts();
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { message?: string } } };
+    mailErr.value = err?.response?.data?.message || 'No se pudo revisar el correo.';
+  } finally { mailChecking.value = false; }
+}
+async function approveReceipt(r: MailReceipt) {
+  mailRowBusy.value = r.id; mailErr.value = '';
+  try { await mailApi.approve(r.id); await loadReceipts(); }
+  catch (e: unknown) { const err = e as { response?: { data?: { message?: string } } }; mailErr.value = err?.response?.data?.message || 'No se pudo registrar.'; }
+  finally { mailRowBusy.value = null; }
+}
+async function discardReceipt(r: MailReceipt) {
+  mailRowBusy.value = r.id;
+  try { await mailApi.discard(r.id); await loadReceipts(); }
+  catch { /* ignora */ }
+  finally { mailRowBusy.value = null; }
+}
+const RECEIPT_META: Record<string, { label: string; cls: string }> = {
+  APPROVED: { label: '✓ Agregado', cls: 'ok' },
+  PENDING: { label: '⏳ En bandeja', cls: 'pend' },
+  DISCARDED: { label: '— Ignorado', cls: 'disc' },
+  FAILED: { label: '⚠ Error', cls: 'err' }
+};
+function fmtMoneyMail(n: number | null): string { return n == null ? '' : `$${n.toFixed(2)}`; }
+function fmtWhen(s: string | null): string {
+  if (!s) return '';
+  const d = new Date(s);
+  return d.toLocaleString('es-EC', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
 // ---- Actualizaciones del sistema (super-admin) ----
 const upd = ref<UpdateStatus | null>(null);
 const updErr = ref(''); const updBusy = ref(false);
@@ -487,6 +532,13 @@ watch(activeSection, (val) => {
   }
   if (val === 'updates' && (auth.isSuper || auth.isAdmin)) {
     loadUpdate().then(ensureUpdPolling);
+  }
+  // Historial del lector de correo: carga + refresco en vivo mientras estás en la sección.
+  if (val === 'mail' && auth.isAdmin) {
+    loadReceipts();
+    if (!mailPollTimer) mailPollTimer = setInterval(loadReceipts, 4000);
+  } else if (mailPollTimer) {
+    clearInterval(mailPollTimer); mailPollTimer = null;
   }
 }, { immediate: true });
 
@@ -1361,7 +1413,7 @@ onMounted(async () => {
   ensureWaPolling();
 });
 
-onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) clearInterval(updTimer); });
+onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) clearInterval(updTimer); if (mailPollTimer) clearInterval(mailPollTimer); });
 </script>
 
 <template>
@@ -2305,23 +2357,38 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
             <button type="button" class="ghost" @click="testMailConnection" :disabled="mailTesting || !mailCfg.hasPassword">
               <component :is="mailTesting ? RefreshCw : Inbox" :size="16" :class="{ spin: mailTesting }" /> {{ mailTesting ? 'Probando…' : 'Probar conexión' }}
             </button>
+            <button type="button" class="ghost" @click="checkMailNow" :disabled="mailChecking || !mailCfg.enabled || !mailCfg.hasPassword">
+              <component :is="RefreshCw" :size="16" :class="{ spin: mailChecking }" /> {{ mailChecking ? 'Revisando…' : 'Revisar ahora' }}
+            </button>
           </div>
           <p v-if="mailMsg" class="hint-msg">{{ mailMsg }}</p>
           <p v-if="mailErr" class="error">{{ mailErr }}</p>
         </div>
 
         <div class="financia-analysis">
-          <h4>Prueba</h4>
-          <div v-if="mailTest" class="financia-result">
-            <div class="financia-result-head"><Inbox :size="14" /> {{ mailTest.total }} correos</div>
-            <p style="font-size:13px;color:#64748b;margin:0 0 6px;">Asuntos recientes:</p>
-            <ul style="margin:0;padding-left:18px;">
-              <li v-for="(s, i) in mailTest.recent" :key="i" style="font-size:13px;color:#374151;">{{ s }}</li>
-            </ul>
+          <h4 style="display:flex;align-items:center;gap:8px;">Historial en vivo <span v-if="mailCfg.enabled" title="Lectura activa" style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;animation:financia-spin 0s;"></span></h4>
+          <div v-if="mailReceipts.length" class="mail-feed">
+            <div v-for="r in mailReceipts" :key="r.id" class="mail-item" :class="RECEIPT_META[r.status]?.cls">
+              <div class="mail-item-top">
+                <span class="mail-badge" :class="RECEIPT_META[r.status]?.cls">{{ RECEIPT_META[r.status]?.label || r.status }}</span>
+                <span class="mail-when">{{ fmtWhen(r.receivedAt || r.createdAt) }}</span>
+              </div>
+              <div class="mail-subject">{{ r.vendor || r.subject || '(sin asunto)' }}</div>
+              <div class="mail-meta">
+                <span v-if="r.amount != null" class="mail-amt">{{ fmtMoneyMail(r.amount) }}</span>
+                <span v-if="r.kind === 'XML'" class="mail-tag">Factura SRI</span>
+                <a v-if="r.movementId" href="#" @click.prevent="router.push('/movements')" class="mail-link">Ver movimiento →</a>
+                <span v-if="r.reason && r.status !== 'APPROVED'" class="mail-reason">{{ r.reason }}</span>
+              </div>
+              <div v-if="r.status === 'PENDING'" class="mail-actions">
+                <button type="button" class="mini-ok" :disabled="mailRowBusy === r.id" @click="approveReceipt(r)">Registrar</button>
+                <button type="button" class="mini-no" :disabled="mailRowBusy === r.id" @click="discardReceipt(r)">Descartar</button>
+              </div>
+            </div>
           </div>
           <div v-else class="financia-empty">
             <Inbox :size="28" />
-            <p>Pulsa "Probar conexión" para verificar el acceso y ver los correos recientes. La lectura y la <strong>bandeja de comprobantes</strong> para aprobar cada factura llegan en la siguiente fase.</p>
+            <p>Aún no hay comprobantes. Con la lectura activa, cada correo que llegue aparecerá aquí y se registrará solo si identifico la tarjeta/cuenta. Reenvía una factura o pulsa <strong>"Revisar ahora"</strong>.</p>
           </div>
         </div>
       </div>
@@ -3160,6 +3227,34 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .upd-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .upd-actions .spin { animation: financia-spin 1s linear infinite; }
 .upd-log pre { background: #0f172a; color: #cbd5e1; font-size: 12px; padding: 12px; border-radius: 8px; overflow-x: auto; max-height: 240px; white-space: pre-wrap; }
+
+/* Feed del lector de correo */
+.mail-feed { display: flex; flex-direction: column; gap: 10px; max-height: 460px; overflow-y: auto; padding-right: 4px; }
+.mail-item { border: 1px solid #e2e8f0; border-left: 4px solid #cbd5e1; border-radius: 10px; padding: 10px 12px; background: #fff; }
+.mail-item.ok { border-left-color: #16a34a; background: #f0fdf4; }
+.mail-item.pend { border-left-color: #2563eb; background: #eff6ff; }
+.mail-item.err { border-left-color: #dc2626; background: #fef2f2; }
+.mail-item.disc { border-left-color: #cbd5e1; background: #f8fafc; opacity: 0.8; }
+.mail-item-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.mail-badge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+.mail-badge.ok { color: #166534; background: #dcfce7; }
+.mail-badge.pend { color: #1e40af; background: #dbeafe; }
+.mail-badge.err { color: #991b1b; background: #fee2e2; }
+.mail-badge.disc { color: #64748b; background: #e2e8f0; }
+.mail-when { font-size: 11px; color: #94a3b8; }
+.mail-subject { font-size: 13px; font-weight: 600; color: #0f172a; margin-bottom: 3px; }
+.mail-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: #64748b; }
+.mail-amt { font-weight: 700; color: #0f172a; }
+.mail-tag { font-size: 11px; background: #ede9fe; color: #6d28d9; padding: 1px 7px; border-radius: 6px; }
+.mail-reason { font-style: italic; color: #94a3b8; }
+.mail-link { color: #2563eb; font-weight: 600; text-decoration: none; }
+.mail-actions { display: flex; gap: 8px; margin-top: 8px; }
+.mail-actions .mini-ok, .mail-actions .mini-no { font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; cursor: pointer; border: 1.5px solid; transition: all 0.15s; }
+.mail-actions .mini-ok { color: #166534; border-color: #86efac; background: #fff; }
+.mail-actions .mini-ok:hover:not(:disabled) { background: #16a34a; color: #fff; border-color: #16a34a; }
+.mail-actions .mini-no { color: #b91c1c; border-color: #fecaca; background: #fff; }
+.mail-actions .mini-no:hover:not(:disabled) { background: #fef2f2; }
+.mail-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .financia-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .financia-toggle input { width: 16px; height: 16px; }
 .financia-actions { display: flex; gap: 8px; }

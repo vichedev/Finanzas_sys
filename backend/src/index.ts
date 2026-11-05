@@ -42,6 +42,7 @@ import { whatsappRouter } from './routes/tenant/whatsapp.routes';
 import { mailRouter } from './routes/tenant/mail.routes';
 import { bootWhatsapp } from './whatsapp/boot';
 import { runCoachScan } from './whatsapp/alerts';
+import { runMailScan } from './lib/mailIngest';
 import { requireAuth } from './middleware/auth';
 import { securityRouter } from './routes/global/security.routes';
 import { parseTrustProxy, purgeOldSecurityData } from './lib/loginSecurity';
@@ -195,3 +196,11 @@ setTimeout(() => { bootWhatsapp().catch((err) => logger.error({ err }, 'whatsapp
 setTimeout(() => { runCoachScan().catch(() => {}); }, 3 * 60_000);
 const coachTimer = setInterval(() => { runCoachScan().catch(() => {}); }, 60 * 60_000);
 coachTimer.unref();
+
+// Lector de correo: ingiere comprobantes de los tenants con lectura activa.
+// Primer barrido al minuto de arrancar, luego cada 2 minutos. Idempotente (dedupe
+// por messageId + lastSeenUid), así que reinicios no reprocesan ni duplican.
+const MAIL_INTERVAL_MS = 2 * 60 * 1000;
+setTimeout(() => { runMailScan().catch(() => {}); }, 60_000);
+const mailTimer = setInterval(() => { runMailScan().catch(() => {}); }, MAIL_INTERVAL_MS);
+mailTimer.unref();

@@ -86,3 +86,83 @@ export async function testConnection(creds: ImapCreds): Promise<{ ok: true; tota
     try { if (client) await client.logout(); } catch { /* ignore */ }
   }
 }
+
+export interface FetchedMail {
+  uid: number;
+  messageId: string;
+  from: string | null;
+  subject: string | null;
+  date: Date | null;
+  text: string;
+  attachments: { filename: string | null; mime: string | null; content: Buffer }[];
+}
+
+function stripHtml(html: string): string {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<\/(p|div|tr|li|h\d|table)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Lee los correos NUEVOS (uid > sinceUid). Con baselineOnly solo devuelve el uid
+ * máximo actual (para fijar un punto de partida sin procesar el histórico).
+ */
+export async function fetchNewMessages(
+  creds: ImapCreds,
+  sinceUid: number,
+  opts: { limit?: number; baselineOnly?: boolean } = {}
+): Promise<{ ok: true; messages: FetchedMail[]; maxUid: number } | { ok: false; error: string }> {
+  const limit = opts.limit ?? 30;
+  let client: any = null;
+  try {
+    client = await makeClient(creds);
+    await client.connect();
+    const lock = await client.getMailboxLock(creds.folder || 'INBOX');
+    try {
+      const uidNext: number = client.mailbox?.uidNext || 1;
+      if (opts.baselineOnly) return { ok: true, messages: [], maxUid: Math.max(0, uidNext - 1) };
+
+      const { simpleParser } = await esmImport('mailparser');
+      const messages: FetchedMail[] = [];
+      let maxUid = sinceUid;
+      const start = sinceUid > 0 ? sinceUid + 1 : 1;
+      for await (const msg of client.fetch(`${start}:*`, { uid: true, envelope: true, source: true }, { uid: true })) {
+        const uid: number = msg.uid;
+        if (uid <= sinceUid) continue;
+        if (uid > maxUid) maxUid = uid;
+        let parsed: any = {};
+        try { parsed = await simpleParser(msg.source); } catch { /* correo ilegible */ }
+        const text = (parsed.text && parsed.text.trim()) || stripHtml(parsed.html || parsed.textAsHtml || '');
+        const attachments = (parsed.attachments || [])
+          .filter((a: any) => a?.content)
+          .map((a: any) => ({ filename: a.filename || null, mime: a.contentType || null, content: a.content as Buffer }));
+        messages.push({
+          uid,
+          messageId: parsed.messageId || `uid-${uid}`,
+          from: parsed.from?.text || null,
+          subject: parsed.subject || null,
+          date: parsed.date || msg.envelope?.date || null,
+          text: String(text || '').slice(0, 9000),
+          attachments
+        });
+      }
+      messages.sort((a, b) => a.uid - b.uid);
+      return { ok: true, messages: messages.slice(0, limit), maxUid };
+    } finally {
+      lock.release();
+    }
+  } catch (e: any) {
+    const detail = [e?.responseText, e?.response, e?.message].filter(Boolean).join(' | ');
+    logger.warn({ detail }, 'mail: fallo al leer correos nuevos');
+    return { ok: false, error: String(detail || e).slice(0, 200) };
+  } finally {
+    try { if (client) await client.logout(); } catch { /* ignore */ }
+  }
+}
