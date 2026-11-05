@@ -48,20 +48,20 @@ export async function buildReceiptImage(d: ReceiptImageData): Promise<Buffer | n
     const rowSvg = rows.map((r, i) => {
       const y = bodyTop + 16 + i * rowH;
       return `
-        <text x="${padX}" y="${y + 20}" font-size="15" fill="#64748b" font-family="Arial, sans-serif">${esc(clip(r.label, 28))}</text>
-        <text x="${W - padX}" y="${y + 20}" font-size="16" fill="#0f172a" font-weight="600" text-anchor="end" font-family="Arial, sans-serif">${esc(clip(r.value, 40))}</text>
+        <text x="${padX}" y="${y + 20}" font-size="15" fill="#64748b" font-family="DejaVu Sans, Arial, sans-serif">${esc(clip(r.label, 28))}</text>
+        <text x="${W - padX}" y="${y + 20}" font-size="16" fill="#0f172a" font-weight="600" text-anchor="end" font-family="DejaVu Sans, Arial, sans-serif">${esc(clip(r.value, 40))}</text>
         <line x1="${padX}" y1="${y + 36}" x2="${W - padX}" y2="${y + 36}" stroke="#eef2f7" stroke-width="1"/>`;
     }).join('');
 
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
       <rect width="${W}" height="${H}" fill="#ffffff"/>
       <rect x="0" y="0" width="${W}" height="${headerH}" fill="${accent}"/>
-      <text x="${padX}" y="42" font-size="22" fill="#ffffff" font-weight="700" font-family="Arial, sans-serif">${esc(clip(d.bank || 'Comprobante', 34))}</text>
-      <text x="${padX}" y="70" font-size="14" fill="#d1fae5" font-family="Arial, sans-serif">${esc(clip(d.title || 'Notificación de transacción', 48))}</text>
-      <text x="${W - padX}" y="56" font-size="13" fill="#99f6e4" text-anchor="end" font-family="Arial, sans-serif">${esc(d.typeLabel)}</text>
-      <text x="${padX}" y="${headerH + 58}" font-size="40" fill="#0f172a" font-weight="800" font-family="Arial, sans-serif">$${d.amount.toFixed(2)}</text>
+      <text x="${padX}" y="42" font-size="22" fill="#ffffff" font-weight="700" font-family="DejaVu Sans, Arial, sans-serif">${esc(clip(d.bank || 'Comprobante', 34))}</text>
+      <text x="${padX}" y="70" font-size="14" fill="#d1fae5" font-family="DejaVu Sans, Arial, sans-serif">${esc(clip(d.title || 'Notificación de transacción', 48))}</text>
+      <text x="${W - padX}" y="56" font-size="13" fill="#99f6e4" text-anchor="end" font-family="DejaVu Sans, Arial, sans-serif">${esc(d.typeLabel)}</text>
+      <text x="${padX}" y="${headerH + 58}" font-size="40" fill="#0f172a" font-weight="800" font-family="DejaVu Sans, Arial, sans-serif">$${d.amount.toFixed(2)}</text>
       ${rowSvg}
-      <text x="${padX}" y="${H - 26}" font-size="12" fill="#94a3b8" font-family="Arial, sans-serif">${esc(d.footer || 'Comprobante generado automáticamente desde el correo · FinancIA')}</text>
+      <text x="${padX}" y="${H - 26}" font-size="12" fill="#94a3b8" font-family="DejaVu Sans, Arial, sans-serif">${esc(d.footer || 'Comprobante generado automáticamente desde el correo · FinancIA')}</text>
     </svg>`;
 
     return await sharp(Buffer.from(svg)).png({ quality: 80, compressionLevel: 9 }).toBuffer();

@@ -14,6 +14,9 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Fuentes para rasterizar los comprobantes (SVG->PNG con sharp). Sin esto, el
+# texto del comprobante sale como cuadros vacíos ("tofu").
+RUN apk add --no-cache fontconfig font-dejavu && fc-cache -f
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/dist ./dist
