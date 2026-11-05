@@ -23,6 +23,18 @@ export interface MailConfigPayload {
 
 export interface MailTestResult { ok: true; total: number; recent: string[] }
 
+export interface MailReceiptDetail {
+  medio: string | null;
+  ultimos4: string | null;
+  banco: string | null;
+  categoria: string | null;
+  tipo: string | null;
+  paymentMethod: string | null;
+  accountId: number | null;
+  cardId: number | null;
+  categoryId: number | null;
+}
+
 export interface MailReceipt {
   id: number;
   subject: string | null;
@@ -36,9 +48,19 @@ export interface MailReceipt {
   receivedAt: string | null;
   createdAt: string;
   reason: string | null;
+  resolved: boolean;
+  detail: MailReceiptDetail;
 }
 
 export interface MailCheckSummary { checked: number; added: number; pending: number; discarded: number; failed: number }
+
+export interface MailOptions {
+  accounts: { id: number; name: string; bankName: string | null }[];
+  creditCards: { id: number; name: string; bankName: string | null; last4: string | null }[];
+  categories: { id: number; name: string }[];
+}
+
+export interface ApprovePayload { accountId?: number | null; cardId?: number | null; categoryId?: number | null; paymentMethod?: string }
 
 export const mailApi = {
   async getConfig(): Promise<MailConfig> {
@@ -61,8 +83,12 @@ export const mailApi = {
     const { data } = await http.post<MailCheckSummary>('/mail/check', {});
     return data;
   },
-  async approve(id: number): Promise<{ ok: true; movementId: number }> {
-    const { data } = await http.post<{ ok: true; movementId: number }>(`/mail/receipts/${id}/approve`, {});
+  async options(): Promise<MailOptions> {
+    const { data } = await http.get<MailOptions>('/mail/options');
+    return data;
+  },
+  async approve(id: number, payload: ApprovePayload = {}): Promise<{ ok: true; movementId: number }> {
+    const { data } = await http.post<{ ok: true; movementId: number }>(`/mail/receipts/${id}/approve`, payload);
     return data;
   },
   async discard(id: number): Promise<{ ok: true }> {

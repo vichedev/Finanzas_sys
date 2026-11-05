@@ -200,7 +200,7 @@ coachTimer.unref();
 // Lector de correo: ingiere comprobantes de los tenants con lectura activa.
 // Primer barrido al minuto de arrancar, luego cada 2 minutos. Idempotente (dedupe
 // por messageId + lastSeenUid), así que reinicios no reprocesan ni duplican.
-const MAIL_INTERVAL_MS = 2 * 60 * 1000;
-setTimeout(() => { runMailScan().catch(() => {}); }, 60_000);
+const MAIL_INTERVAL_MS = 60 * 1000;
+setTimeout(() => { runMailScan().catch(() => {}); }, 45_000);
 const mailTimer = setInterval(() => { runMailScan().catch(() => {}); }, MAIL_INTERVAL_MS);
 mailTimer.unref();

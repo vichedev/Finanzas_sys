@@ -105,14 +105,38 @@ mailRouter.get('/receipts', async (req, res) => {
       kind: true, status: true, movementId: true, receivedAt: true, createdAt: true, raw: true
     }
   });
-  const out = rows.map((r: any) => ({
-    id: r.id, subject: r.subject, from: r.fromAddr, vendor: r.vendor,
-    amount: r.amount != null ? Number(r.amount) : null,
-    docDate: r.docDate, kind: r.kind, status: r.status, movementId: r.movementId,
-    receivedAt: r.receivedAt, createdAt: r.createdAt,
-    reason: (r.raw && typeof r.raw === 'object' ? (r.raw as any).reason : null) || null
-  }));
+  const out = rows.map((r: any) => {
+    const raw = (r.raw && typeof r.raw === 'object') ? r.raw as any : {};
+    const ex = raw.ex || {};
+    const draft = raw.draft || {};
+    return {
+      id: r.id, subject: r.subject, from: r.fromAddr, vendor: r.vendor,
+      amount: r.amount != null ? Number(r.amount) : null,
+      docDate: r.docDate, kind: r.kind, status: r.status, movementId: r.movementId,
+      receivedAt: r.receivedAt, createdAt: r.createdAt,
+      reason: raw.reason || null,
+      resolved: !!raw.resolved,
+      // Detalle de lo interpretado (para "Ver detalle" y pre-llenar el selector).
+      detail: {
+        medio: ex.medio || null, ultimos4: ex.ultimos4 || null, banco: ex.banco || null,
+        categoria: ex.categoria || null, tipo: ex.tipo || null,
+        paymentMethod: draft.paymentMethod || null, accountId: draft.accountId ?? null,
+        cardId: draft.cardId ?? null, categoryId: draft.categoryId ?? null
+      }
+    };
+  });
   res.json(out);
+});
+
+// Opciones para el selector manual de la bandeja (cuentas, tarjetas de crédito, categorías).
+mailRouter.get('/options', async (req, res) => {
+  const userId = req.tenantUserId!;
+  const [accounts, cards, categories] = await Promise.all([
+    req.tenantPrisma!.account.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true }, orderBy: { name: 'asc' } }),
+    req.tenantPrisma!.card.findMany({ where: { userId, isActive: true, type: 'CREDIT' }, select: { id: true, name: true, bankName: true, last4: true }, orderBy: { name: 'asc' } }),
+    req.tenantPrisma!.category.findMany({ where: { userId }, select: { id: true, name: true }, orderBy: { name: 'asc' } })
+  ]);
+  res.json({ accounts, creditCards: cards, categories });
 });
 
 // Dispara una revisión del buzón AHORA (manual). Devuelve el resumen.
@@ -125,14 +149,30 @@ mailRouter.post('/check', async (req, res) => {
   res.json(r);
 });
 
-// Aprueba un comprobante PENDIENTE → crea el movimiento desde lo interpretado.
+// Aprueba un comprobante PENDIENTE → crea el movimiento, opcionalmente con el
+// instrumento (tarjeta/cuenta) y categoría elegidos por el usuario en la bandeja.
+const approveSchema = z.object({
+  accountId: z.coerce.number().int().positive().optional().nullable(),
+  cardId: z.coerce.number().int().positive().optional().nullable(),
+  categoryId: z.coerce.number().int().positive().optional().nullable(),
+  paymentMethod: z.enum(['CASH', 'BANK_TRANSFER', 'DEPOSIT', 'DEBIT_CARD', 'CREDIT_CARD', 'WALLET', 'OTHER']).optional()
+}).strict();
+
 mailRouter.post('/receipts/:id/approve', async (req, res) => {
   const id = Number(req.params.id);
+  const body = approveSchema.parse(req.body || {});
   const rec = await req.tenantPrisma!.mailReceipt.findFirst({ where: { id, userId: req.tenantUserId! } });
   if (!rec) return res.status(404).json({ message: 'Comprobante no encontrado.' });
   if (rec.movementId) return res.status(409).json({ message: 'Este comprobante ya fue registrado.' });
-  const draft = (rec.raw && typeof rec.raw === 'object' ? (rec.raw as any).draft : null);
+  const draft = (rec.raw && typeof rec.raw === 'object' ? { ...(rec.raw as any).draft } : null);
   if (!draft) return res.status(400).json({ message: 'No hay datos suficientes para registrar este comprobante.' });
+
+  // El usuario puede corregir el instrumento antes de registrar (dato correcto).
+  if (body.cardId) { draft.cardId = body.cardId; draft.accountId = null; draft.paymentMethod = 'CREDIT_CARD'; }
+  else if (body.accountId) { draft.accountId = body.accountId; draft.cardId = null; draft.paymentMethod = body.paymentMethod || 'DEBIT_CARD'; }
+  else if (body.paymentMethod) { draft.paymentMethod = body.paymentMethod; if (body.paymentMethod === 'CASH') { draft.accountId = null; draft.cardId = null; } }
+  if (body.categoryId !== undefined) draft.categoryId = body.categoryId;
+
   try {
     const mv = await createMovement(req.tenantPrisma!, req.tenantUserId!, draft);
     await req.tenantPrisma!.mailReceipt.update({ where: { id }, data: { status: 'APPROVED', movementId: mv.id } });

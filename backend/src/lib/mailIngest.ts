@@ -26,9 +26,14 @@ interface Extracted {
   comercio: string | null;
   ultimos4: string | null;
   medio: 'CREDIT_CARD' | 'DEBIT_CARD' | 'ACCOUNT' | 'UNKNOWN';
+  banco: string | null;        // banco/cooperativa mencionado (ej. "JEP", "Pichincha")
+  cuentaId: number | null;     // id de cuenta que la IA identificó del catálogo
+  tarjetaId: number | null;    // id de tarjeta de crédito que la IA identificó
   ruc: string | null;
   categoria: string | null;
 }
+
+interface Catalog { accounts: any[]; cards: any[]; categories: any[] }
 
 const last4 = (s: unknown) => { const d = String(s ?? '').replace(/\D/g, ''); return d.length >= 4 ? d.slice(-4) : null; };
 const num = (v: unknown): number | null => {
@@ -60,35 +65,49 @@ function parseSriXml(xml: string): Partial<Extracted> | null {
     return {
       esComprobante: true, tipo: 'EXPENSE', monto: total, fecha,
       comercio: String(trib.razonSocial || info.razonSocialComprador || 'Proveedor').slice(0, 120),
-      ruc: trib.ruc ? String(trib.ruc) : null, medio: 'UNKNOWN', ultimos4: null, categoria: null
+      ruc: trib.ruc ? String(trib.ruc) : null, medio: 'UNKNOWN', ultimos4: null,
+      banco: null, cuentaId: null, tarjetaId: null, categoria: null
     };
   } catch { return null; }
 }
 
 // ---- Interpretación por IA (notificaciones de consumo, recibos en texto) ----
-async function extractWithAI(prisma: any, userId: number, categories: string[], mail: FetchedMail): Promise<Extracted | null> {
+async function extractWithAI(prisma: any, userId: number, cat: Catalog, mail: FetchedMail): Promise<Extracted | null> {
   const creds = await getBrainCreds(prisma);
   if (!creds) return null;
+  const kind = (a: any) => a.accountKind === 'SAVINGS' ? 'ahorros' : a.accountKind === 'CHECKING' ? 'corriente' : '';
+  const cuentasTxt = cat.accounts.map((a) => `#${a.id} "${a.name}" (${a.bankName || 's/banco'}${kind(a) ? ', ' + kind(a) : ''}${last4(a.accountNumber) ? ', term ' + last4(a.accountNumber) : ''})`).join('; ') || '(ninguna)';
+  const creditos = cat.cards.filter((c) => c.type === 'CREDIT');
+  const tarjetasTxt = creditos.map((c) => `#${c.id} "${c.name}" (${c.bankName || 's/banco'}${last4(c.last4) ? ', term ' + last4(c.last4) : ''})`).join('; ') || '(ninguna)';
+  const debitosTxt = cat.cards.filter((c) => c.type === 'DEBIT').map((c) => `${c.bankName || c.name}${last4(c.last4) ? ' term ' + last4(c.last4) : ''}`).join('; ') || '(ninguna)';
+
   const system = [
-    'Eres un extractor de comprobantes financieros a partir de correos (notificaciones de consumo de tarjetas, recibos, facturas).',
-    'Devuelve SOLO un JSON con este formato exacto:',
-    '{"esComprobante":bool,"tipo":"EXPENSE"|"INCOME","monto":number|null,"fecha":"YYYY-MM-DD"|null,"comercio":string|null,"ultimos4":string|null,"medio":"CREDIT_CARD"|"DEBIT_CARD"|"ACCOUNT"|"UNKNOWN","ruc":string|null,"categoria":string|null}',
+    'Eres un extractor de comprobantes financieros desde correos (notificaciones de consumo de tarjetas, recibos, facturas del SRI).',
+    'Devuelve SOLO un JSON EXACTO: {"esComprobante":bool,"tipo":"EXPENSE"|"INCOME","monto":number|null,"fecha":"YYYY-MM-DD"|null,"comercio":string|null,"ultimos4":string|null,"medio":"CREDIT_CARD"|"DEBIT_CARD"|"ACCOUNT"|"UNKNOWN","banco":string|null,"cuentaId":number|null,"tarjetaId":number|null,"ruc":string|null,"categoria":string|null}',
+    '',
+    'CATÁLOGO DEL USUARIO (usa estos ids reales):',
+    `- CUENTAS (para débito/transferencia): ${cuentasTxt}`,
+    `- TARJETAS DE CRÉDITO: ${tarjetasTxt}`,
+    `- Tarjetas de débito registradas: ${debitosTxt}`,
+    '',
     'Reglas:',
-    '- esComprobante=true SOLO si el correo informa de una compra/consumo/pago/factura con un MONTO concreto. Boletines, promociones, códigos de verificación, avisos de seguridad => esComprobante=false.',
+    '- esComprobante=true SOLO si informa de una compra/consumo/pago/factura con MONTO concreto. Boletines, promos, códigos de verificación o avisos de seguridad => false.',
     '- tipo: EXPENSE para consumos/compras/pagos; INCOME solo si es un abono/depósito RECIBIDO.',
-    '- monto: el valor total (número, punto decimal). fecha: la del consumo (YYYY-MM-DD).',
-    '- ultimos4: los últimos 4 dígitos de la tarjeta/cuenta si aparecen (ej. "TARJETA TERMINADA EN 478" => "478").',
-    '- medio: CREDIT_CARD si es tarjeta de crédito, DEBIT_CARD si débito, ACCOUNT si cuenta/transferencia, UNKNOWN si no se sabe.',
-    '- comercio: el establecimiento/proveedor.',
-    `- categoria: elige UNA de esta lista del usuario si alguna encaja, o null: ${categories.join(', ') || '(sin categorías)'}.`,
-    'No inventes datos. Si falta, usa null.'
+    '- monto: valor total (número, punto decimal). fecha del consumo (YYYY-MM-DD). comercio: el establecimiento.',
+    '- ultimos4: los 4 últimos dígitos de la tarjeta/cuenta si aparecen (ej. "TARJETA TERMINADA EN 478" => "478").',
+    '- banco: el banco o cooperativa mencionado (ej. "Cooperativa JEP" => "JEP"; "Diners" => "Diners"; "Pichincha").',
+    '- medio: CREDIT_CARD si fue tarjeta de crédito; DEBIT_CARD si "tarjeta de débito"; ACCOUNT si cuenta/transferencia; UNKNOWN si no se sabe.',
+    '- IDENTIFICA EL INSTRUMENTO con el catálogo: si es CRÉDITO, pon tarjetaId con el id que calce por últimos 4 o por banco/nombre. Si es DÉBITO o cuenta, pon cuentaId con el id de la CUENTA que calce por banco (ej. "Tarjeta de Débito JEP" => la cuenta cuyo banco es la Cooperativa JEP) o por últimos 4. Si ninguno calza con seguridad, deja cuentaId y tarjetaId en null.',
+    `- categoria: elige UNA de esta lista si encaja con el comercio, o null: ${cat.categories.map((c) => c.name).join(', ') || '(sin categorías)'}.`,
+    'No inventes ids que no estén en el catálogo. Si dudas, deja null.'
   ].join('\n');
   const user = `ASUNTO: ${mail.subject || ''}\nDE: ${mail.from || ''}\n\n${mail.text}`.slice(0, 9000);
   let raw = '';
-  try { raw = await chatComplete(creds, { system, user, jsonMode: true, maxTokens: 700 }); }
+  try { raw = await chatComplete(creds, { system, user, jsonMode: true, maxTokens: 800 }); }
   catch (e: any) { logger.warn({ e: e?.message }, 'mail: IA falló al extraer comprobante'); return null; }
   try {
     const j = JSON.parse(raw.replace(/```json|```/g, '').trim());
+    const toId = (v: any) => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : null; };
     return {
       esComprobante: !!j.esComprobante,
       tipo: j.tipo === 'INCOME' ? 'INCOME' : 'EXPENSE',
@@ -97,32 +116,61 @@ async function extractWithAI(prisma: any, userId: number, categories: string[], 
       comercio: j.comercio ? String(j.comercio).slice(0, 120) : null,
       ultimos4: last4(j.ultimos4),
       medio: ['CREDIT_CARD', 'DEBIT_CARD', 'ACCOUNT'].includes(j.medio) ? j.medio : 'UNKNOWN',
+      banco: j.banco ? String(j.banco).slice(0, 60) : null,
+      cuentaId: toId(j.cuentaId),
+      tarjetaId: toId(j.tarjetaId),
       ruc: j.ruc ? String(j.ruc).replace(/\D/g, '').slice(0, 13) : null,
       categoria: j.categoria ? String(j.categoria) : null
     };
   } catch { return null; }
 }
 
-// ---- Resolución de instrumento (tarjeta/cuenta) por últimos 4 y medio ----
+// ---- Resolución de instrumento (tarjeta/cuenta) ----
+const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function bankMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = norm(a), y = norm(b);
+  if (!x || !y) return false;
+  return x.includes(y) || y.includes(x);
+}
+function acctMethod(medio: Extracted['medio']): string { return medio === 'ACCOUNT' ? 'BANK_TRANSFER' : 'DEBIT_CARD'; }
+
 function resolveInstrument(ex: Extracted, accounts: any[], cards: any[]): { paymentMethod: string; accountId: number | null; cardId: number | null; resolved: boolean } {
   const l4 = ex.ultimos4;
   const credit = cards.filter((c) => c.type === 'CREDIT');
   const debit = cards.filter((c) => c.type === 'DEBIT');
-  // 1) por últimos 4
+
+  // 1) ids que identificó la IA desde el catálogo (lo más fiable)
+  if (ex.tarjetaId) { const cc = credit.find((c) => c.id === ex.tarjetaId); if (cc) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: cc.id, resolved: true }; }
+  if (ex.cuentaId) { const acc = accounts.find((a) => a.id === ex.cuentaId); if (acc) return { paymentMethod: acctMethod(ex.medio), accountId: acc.id, cardId: null, resolved: true }; }
+
+  // 2) por últimos 4
   if (l4) {
     const cc = credit.find((c) => last4(c.last4) === l4);
     if (cc) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: cc.id, resolved: true };
     const acc = accounts.find((a) => last4(a.accountNumber) === l4);
-    if (acc) return { paymentMethod: 'DEBIT_CARD', accountId: acc.id, cardId: null, resolved: true };
+    if (acc) return { paymentMethod: acctMethod(ex.medio), accountId: acc.id, cardId: null, resolved: true };
     const dc = debit.find((c) => last4(c.last4) === l4);
-    if (dc) { // tarjeta de débito: usa una cuenta del mismo banco/titular
-      const a2 = accounts.find((a) => a.bankId && a.bankId === dc.bankId) || accounts.find((a) => (a.bankName || '') === (dc.bankName || ''));
+    if (dc) {
+      const a2 = accounts.find((a) => a.bankId && a.bankId === dc.bankId) || accounts.find((a) => bankMatch(a.bankName, dc.bankName));
       if (a2) return { paymentMethod: 'DEBIT_CARD', accountId: a2.id, cardId: null, resolved: true };
     }
   }
-  // 2) por medio, si hay uno solo evidente
+
+  // 3) por banco/cooperativa mencionado
+  if (ex.banco) {
+    if (ex.medio === 'CREDIT_CARD') {
+      const cc = credit.find((c) => bankMatch(c.bankName, ex.banco) || bankMatch(c.name, ex.banco));
+      if (cc) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: cc.id, resolved: true };
+    } else {
+      const acc = accounts.find((a) => bankMatch(a.bankName, ex.banco) || bankMatch(a.name, ex.banco));
+      if (acc) return { paymentMethod: acctMethod(ex.medio), accountId: acc.id, cardId: null, resolved: true };
+    }
+  }
+
+  // 4) un solo candidato evidente por medio
   if (ex.medio === 'CREDIT_CARD' && credit.length === 1) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: credit[0].id, resolved: true };
-  if (ex.medio === 'ACCOUNT' && accounts.length === 1) return { paymentMethod: 'BANK_TRANSFER', accountId: accounts[0].id, cardId: null, resolved: true };
+  if ((ex.medio === 'ACCOUNT' || ex.medio === 'DEBIT_CARD') && accounts.length === 1) return { paymentMethod: acctMethod(ex.medio), accountId: accounts[0].id, cardId: null, resolved: true };
+
   return { paymentMethod: 'CASH', accountId: null, cardId: null, resolved: false };
 }
 
@@ -204,7 +252,6 @@ export async function ingestTenantMail(prisma: any): Promise<IngestSummary> {
     prisma.card.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, bankId: true, last4: true, type: true } }),
     prisma.category.findMany({ where: { userId }, select: { id: true, name: true } })
   ]);
-  const catNames = categories.map((c: any) => c.name);
 
   const out = { ...zero };
   for (const mail of res.messages) {
@@ -221,8 +268,8 @@ export async function ingestTenantMail(prisma: any): Promise<IngestSummary> {
         const sri = parseSriXml(xmlAtt.content.toString('utf8'));
         if (sri) { ex = sri as Extracted; kind = 'XML'; }
       }
-      // 2) Si no, interpretación por IA del texto.
-      if (!ex) ex = await extractWithAI(prisma, userId, catNames, mail);
+      // 2) Si no, interpretación por IA del texto (con el catálogo del usuario).
+      if (!ex) ex = await extractWithAI(prisma, userId, { accounts, cards, categories }, mail);
 
       const r = await ingestOne(prisma, userId, cfg.autoCreate || cfg.enabled, ex, mail, accounts, cards, categories, kind);
       out[r]++;

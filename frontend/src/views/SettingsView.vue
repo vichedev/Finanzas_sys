@@ -10,7 +10,7 @@ import { http } from '../api/http';
 import { backupApi, MAX_RESTORE_BYTES } from '../api/backup';
 import { aiApi } from '../api/ai';
 import { whatsappApi, type WhatsappStatus } from '../api/whatsapp';
-import { mailApi, type MailConfig, type MailReceipt } from '../api/mail';
+import { mailApi, type MailConfig, type MailReceipt, type MailOptions } from '../api/mail';
 import { systemApi, type UpdateStatus } from '../api/system';
 import AdminUsersPanel from './AdminUsersPanel.vue';
 import RolesPanel from './RolesPanel.vue';
@@ -268,10 +268,24 @@ async function testMailConnection() {
 const mailReceipts = ref<MailReceipt[]>([]);
 const mailChecking = ref(false);
 const mailRowBusy = ref<number | null>(null);
+const mailOptions = ref<MailOptions>({ accounts: [], creditCards: [], categories: [] });
+const mailOpenRow = ref<number | null>(null);          // fila con selector/detalle abierto
+const mailPick = ref<{ instrument: string; categoryId: number | null }>({ instrument: '', categoryId: null });
 let mailPollTimer: ReturnType<typeof setInterval> | null = null;
 
 async function loadReceipts() {
   try { mailReceipts.value = await mailApi.receipts(40); } catch { /* ignora */ }
+}
+async function loadMailOptions() {
+  try { mailOptions.value = await mailApi.options(); } catch { /* ignora */ }
+}
+// Abre/cierra el panel de registro manual de una fila (pre-llena con lo interpretado).
+function toggleRow(r: MailReceipt) {
+  if (mailOpenRow.value === r.id) { mailOpenRow.value = null; return; }
+  mailOpenRow.value = r.id;
+  const d = r.detail || ({} as MailReceipt['detail']);
+  const instrument = d.cardId ? `card:${d.cardId}` : d.accountId ? `acc:${d.accountId}` : (d.paymentMethod === 'CASH' ? 'cash' : '');
+  mailPick.value = { instrument, categoryId: d.categoryId ?? null };
 }
 async function checkMailNow() {
   mailChecking.value = true; mailErr.value = ''; mailMsg.value = '';
@@ -285,8 +299,15 @@ async function checkMailNow() {
   } finally { mailChecking.value = false; }
 }
 async function approveReceipt(r: MailReceipt) {
+  // Traduce la selección del usuario al instrumento correcto.
+  const pick = mailPick.value;
+  const payload: import('../api/mail').ApprovePayload = { categoryId: pick.categoryId };
+  if (pick.instrument.startsWith('card:')) payload.cardId = Number(pick.instrument.slice(5));
+  else if (pick.instrument.startsWith('acc:')) payload.accountId = Number(pick.instrument.slice(4));
+  else if (pick.instrument === 'cash') payload.paymentMethod = 'CASH';
+  else if (!r.resolved) { mailErr.value = 'Elige la tarjeta o cuenta con la que se pagó.'; return; }
   mailRowBusy.value = r.id; mailErr.value = '';
-  try { await mailApi.approve(r.id); await loadReceipts(); }
+  try { await mailApi.approve(r.id, payload); mailOpenRow.value = null; await loadReceipts(); }
   catch (e: unknown) { const err = e as { response?: { data?: { message?: string } } }; mailErr.value = err?.response?.data?.message || 'No se pudo registrar.'; }
   finally { mailRowBusy.value = null; }
 }
@@ -535,7 +556,7 @@ watch(activeSection, (val) => {
   }
   // Historial del lector de correo: carga + refresco en vivo mientras estás en la sección.
   if (val === 'mail' && auth.isAdmin) {
-    loadReceipts();
+    loadReceipts(); loadMailOptions();
     if (!mailPollTimer) mailPollTimer = setInterval(loadReceipts, 4000);
   } else if (mailPollTimer) {
     clearInterval(mailPollTimer); mailPollTimer = null;
@@ -2379,9 +2400,42 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
                 <span v-if="r.kind === 'XML'" class="mail-tag">Factura SRI</span>
                 <a v-if="r.movementId" href="#" @click.prevent="router.push('/movements')" class="mail-link">Ver movimiento →</a>
                 <span v-if="r.reason && r.status !== 'APPROVED'" class="mail-reason">{{ r.reason }}</span>
+                <button type="button" class="mail-detbtn" @click="toggleRow(r)">{{ mailOpenRow === r.id ? 'Ocultar' : 'Ver detalle' }}</button>
               </div>
-              <div v-if="r.status === 'PENDING'" class="mail-actions">
-                <button type="button" class="mini-ok" :disabled="mailRowBusy === r.id" @click="approveReceipt(r)">Registrar</button>
+
+              <!-- Detalle de lo interpretado + registro manual -->
+              <div v-if="mailOpenRow === r.id" class="mail-detail">
+                <div class="mail-detail-grid">
+                  <span>Medio</span><strong>{{ r.detail.medio || '—' }}</strong>
+                  <span>Banco</span><strong>{{ r.detail.banco || '—' }}</strong>
+                  <span>Últimos 4</span><strong>{{ r.detail.ultimos4 || '—' }}</strong>
+                  <span>Categoría IA</span><strong>{{ r.detail.categoria || '—' }}</strong>
+                  <span v-if="r.docDate">Fecha</span><strong v-if="r.docDate">{{ fmtWhen(r.docDate) }}</strong>
+                </div>
+                <div v-if="r.status === 'PENDING' || r.status === 'FAILED'" class="mail-picker">
+                  <label>Pagado con</label>
+                  <select v-model="mailPick.instrument">
+                    <option value="">— Elegir tarjeta / cuenta —</option>
+                    <optgroup label="Tarjetas de crédito">
+                      <option v-for="c in mailOptions.creditCards" :key="'c'+c.id" :value="'card:'+c.id">{{ c.name }}<template v-if="c.last4"> ···{{ c.last4 }}</template></option>
+                    </optgroup>
+                    <optgroup label="Cuentas (débito / transferencia)">
+                      <option v-for="a in mailOptions.accounts" :key="'a'+a.id" :value="'acc:'+a.id">{{ a.name }}<template v-if="a.bankName"> · {{ a.bankName }}</template></option>
+                    </optgroup>
+                    <option value="cash">Efectivo</option>
+                  </select>
+                  <label>Categoría</label>
+                  <select v-model="mailPick.categoryId">
+                    <option :value="null">— Sin categoría —</option>
+                    <option v-for="cat in mailOptions.categories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
+                  </select>
+                </div>
+              </div>
+
+              <div v-if="(r.status === 'PENDING' || (r.status === 'FAILED' && r.amount != null)) && !r.movementId" class="mail-actions">
+                <button type="button" class="mini-ok" :disabled="mailRowBusy === r.id" @click="mailOpenRow === r.id ? approveReceipt(r) : toggleRow(r)">
+                  {{ mailOpenRow === r.id ? 'Confirmar y registrar' : (r.status === 'FAILED' ? 'Reintentar' : 'Registrar') }}
+                </button>
                 <button type="button" class="mini-no" :disabled="mailRowBusy === r.id" @click="discardReceipt(r)">Descartar</button>
               </div>
             </div>
@@ -3255,6 +3309,13 @@ button[type=submit]:disabled, .ghost:disabled { opacity: 0.5; cursor: not-allowe
 .mail-actions .mini-no { color: #b91c1c; border-color: #fecaca; background: #fff; }
 .mail-actions .mini-no:hover:not(:disabled) { background: #fef2f2; }
 .mail-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.mail-detbtn { margin-left: auto; font-size: 11px; color: #2563eb; background: none; border: none; cursor: pointer; padding: 0; font-weight: 600; }
+.mail-detail { margin-top: 8px; padding: 10px; border-radius: 8px; background: rgba(15,23,42,0.03); }
+.mail-detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 12px; }
+.mail-detail-grid span { color: #94a3b8; } .mail-detail-grid strong { color: #334155; font-weight: 600; }
+.mail-picker { display: grid; grid-template-columns: auto 1fr; gap: 8px 10px; align-items: center; margin-top: 10px; }
+.mail-picker label { font-size: 12px; color: #64748b; font-weight: 600; }
+.mail-picker select { height: 34px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 0 8px; font-size: 13px; background: #fff; }
 .financia-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
 .financia-toggle input { width: 16px; height: 16px; }
 .financia-actions { display: flex; gap: 8px; }
