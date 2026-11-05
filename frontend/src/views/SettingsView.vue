@@ -2398,7 +2398,8 @@ onUnmounted(() => { if (waPollTimer) clearInterval(waPollTimer); if (updTimer) c
               <div class="mail-meta">
                 <span v-if="r.amount != null" class="mail-amt">{{ fmtMoneyMail(r.amount) }}</span>
                 <span v-if="r.kind === 'XML'" class="mail-tag">Factura SRI</span>
-                <a v-if="r.movementId" href="#" @click.prevent="router.push('/movements')" class="mail-link">Ver movimiento →</a>
+                <a v-if="r.movementId" href="#" @click.prevent="router.push({ path: '/movements', query: { open: r.movementId } })" class="mail-link">Ver movimiento →</a>
+                <a v-if="r.invoiceId" href="#" @click.prevent="router.push({ path: '/invoices', query: { open: r.invoiceId } })" class="mail-link">Ver factura →</a>
                 <span v-if="r.reason && r.status !== 'APPROVED'" class="mail-reason">{{ r.reason }}</span>
                 <button type="button" class="mail-detbtn" @click="toggleRow(r)">{{ mailOpenRow === r.id ? 'Ocultar' : 'Ver detalle' }}</button>
               </div>

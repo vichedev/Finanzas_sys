@@ -957,7 +957,20 @@ async function removeRow(item: Movement) {
   } catch { toast.error('No se pudo eliminar el movimiento.'); }
 }
 
-onMounted(load);
+// Deep-link: /movements?open=<id> abre directamente el detalle de ese movimiento
+// (p. ej. al pulsar "Ver movimiento" desde el lector de correo).
+async function openFromQuery() {
+  const raw = route.query.open;
+  const id = Number(Array.isArray(raw) ? raw[0] : raw);
+  if (!id) return;
+  try {
+    const { data } = await http.get<Movement>(`/movements/${id}`);
+    await openDetail(data);
+  } catch { toast.error('No se pudo abrir el movimiento.'); }
+}
+
+onMounted(async () => { await load(); await openFromQuery(); });
+watch(() => route.query.open, () => { openFromQuery(); });
 </script>
 
 <template>

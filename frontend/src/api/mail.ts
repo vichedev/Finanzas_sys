@@ -45,6 +45,7 @@ export interface MailReceipt {
   kind: string;
   status: 'PENDING' | 'APPROVED' | 'DISCARDED' | 'FAILED';
   movementId: number | null;
+  invoiceId: number | null;
   receivedAt: string | null;
   createdAt: string;
   reason: string | null;

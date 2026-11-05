@@ -14,6 +14,72 @@ import { fetchNewMessages, type FetchedMail, type ImapCreds } from './mailReader
 import { getBrainCreds, chatComplete } from '../whatsapp/llm';
 import { createMovement } from '../routes/tenant/movements.routes';
 import { buildReceiptImage } from './mailReceiptImage';
+import { parseSriXml } from './sriXml';
+
+function decodeXml(bytes: Buffer): string {
+  const head = bytes.subarray(0, 200).toString('latin1');
+  const enc = /encoding=["']([^"']+)["']/i.exec(head)?.[1]?.toLowerCase();
+  if (enc && /8859|latin|1252/i.test(enc)) return bytes.toString('latin1');
+  return bytes.toString('utf8');
+}
+const taxKey = (v: unknown) => String(v ?? '').replace(/\D/g, '');
+
+/**
+ * Factura electrónica SRI (XML adjunto) → crea la Factura en la zona Facturas e
+ * IVA (con IVA desglosado) y adjunta el XML y el PDF. Devuelve el resultado, o
+ * null si el XML no es una factura válida (para caer a la interpretación por IA).
+ */
+async function ingestInvoiceFromXml(prisma: any, userId: number, mail: FetchedMail, xmlAtt: any, allAtts: any[], entities: any[]): Promise<'added' | 'failed' | 'discarded' | null> {
+  let inv: any;
+  try { inv = parseSriXml(decodeXml(xmlAtt.content)); } catch { return null; }
+  if (!inv?.accessKey) return null;
+  const base = { userId, messageId: mail.messageId, fromAddr: mail.from, subject: mail.subject, receivedAt: mail.date || new Date(), kind: 'XML' };
+  const issueDate = new Date(`${inv.issueDate}T12:00:00.000Z`);
+
+  const dup = await prisma.invoice.findFirst({ where: { userId, accessKey: inv.accessKey }, select: { id: true } });
+  if (dup) {
+    await prisma.mailReceipt.create({ data: { ...base, vendor: inv.issuerName, taxId: inv.issuerTaxId, amount: inv.total, docDate: issueDate, status: 'DISCARDED', invoiceId: dup.id, raw: { reason: 'Esta factura ya estaba registrada', invoice: { number: inv.number } } } });
+    return 'discarded';
+  }
+
+  // Compra (recibida) o venta (emitida), según a quién pertenece el RUC.
+  const issuerMine = entities.filter((e) => taxKey(e.taxId) && taxKey(e.taxId) === taxKey(inv.issuerTaxId));
+  const buyerMine = entities.filter((e) => taxKey(e.taxId) && taxKey(e.taxId) === taxKey(inv.buyerTaxId));
+  const kind = (issuerMine.length && !buyerMine.length) ? 'SALE' : 'PURCHASE';
+  const entityId = (kind === 'SALE' ? issuerMine : buyerMine)[0]?.id ?? null;
+  const counterparty = kind === 'PURCHASE' ? inv.issuerName : inv.buyerName;
+  const counterpartyTaxId = kind === 'PURCHASE' ? inv.issuerTaxId : inv.buyerTaxId;
+  const pdfAtt = allAtts.find((a) => /pdf/i.test(a.mime || '') || /\.pdf$/i.test(a.filename || ''));
+
+  try {
+    const invoiceId = await prisma.$transaction(async (tx: any) => {
+      const row = await tx.invoice.create({
+        data: {
+          userId, kind, status: 'ISSUED', number: inv.number,
+          counterparty: (counterparty || counterpartyTaxId).slice(0, 160), counterpartyTaxId,
+          issueDate, netAmount: inv.netAmount, vatRate: inv.vatRate, vatAmount: inv.vatAmount, total: inv.total,
+          source: 'SRI_XML', accessKey: inv.accessKey, discount: inv.discount, otherCharges: inv.otherCharges,
+          vatLines: inv.vatLines.map((l: any) => ({ rate: l.rate, rateCode: l.rateCode, base: l.base, vat: l.vat })),
+          issuerTaxId: inv.issuerTaxId, buyerTaxId: inv.buyerTaxId, entityId
+        },
+        select: { id: true }
+      });
+      await tx.attachment.create({ data: { userId, entityType: 'INVOICE', entityId: row.id, filename: (xmlAtt.filename || `factura-${inv.number}.xml`).slice(0, 200), mimeType: 'application/xml', size: xmlAtt.content.length, data: new Uint8Array(xmlAtt.content) } });
+      if (pdfAtt) await tx.attachment.create({ data: { userId, entityType: 'INVOICE', entityId: row.id, filename: (pdfAtt.filename || `factura-${inv.number}.pdf`).slice(0, 200), mimeType: 'application/pdf', size: pdfAtt.content.length, data: new Uint8Array(pdfAtt.content) } });
+      return row.id;
+    }, { maxWait: 10000, timeout: 20000 });
+    await prisma.mailReceipt.create({ data: { ...base, vendor: counterparty, taxId: counterpartyTaxId, amount: inv.total, docDate: issueDate, status: 'APPROVED', invoiceId, raw: { invoice: { number: inv.number, kind } } } });
+    return 'added';
+  } catch (e: any) {
+    if (e?.code === 'P2002') {
+      await prisma.mailReceipt.create({ data: { ...base, vendor: inv.issuerName, amount: inv.total, status: 'DISCARDED', raw: { reason: 'Esta factura ya estaba registrada' } } });
+      return 'discarded';
+    }
+    logger.warn({ e: e?.message }, 'mail: fallo creando factura desde XML');
+    await prisma.mailReceipt.create({ data: { ...base, vendor: inv.issuerName, amount: inv.total, status: 'FAILED', raw: { reason: e?.message || 'No se pudo registrar la factura' } } });
+    return 'failed';
+  }
+}
 
 const METHOD_LABEL: Record<string, string> = {
   CASH: 'Efectivo', BANK_TRANSFER: 'Transferencia', DEPOSIT: 'Depósito',
@@ -92,36 +158,6 @@ const num = (v: unknown): number | null => {
   const n = Number(String(v).replace(/[^\d.,-]/g, '').replace(/\.(?=\d{3}\b)/g, '').replace(',', '.'));
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
 };
-
-// ---- Factura electrónica SRI (XML) → datos exactos ----
-function parseSriXml(xml: string): Partial<Extracted> | null {
-  try {
-    const { XMLParser } = require('fast-xml-parser');
-    const parser = new XMLParser({ ignoreAttributes: false, parseTagValue: true });
-    let doc = parser.parse(xml);
-    // El SRI envuelve la factura dentro de <autorizacion><comprobante> (CDATA).
-    const inner = doc?.autorizacion?.comprobante || doc?.AutorizacionComprobante?.comprobante;
-    if (typeof inner === 'string' && inner.includes('<')) doc = parser.parse(inner);
-    const f = doc?.factura;
-    if (!f) return null;
-    const info = f.infoFactura || {};
-    const trib = f.infoTributaria || {};
-    const total = num(info.importeTotal);
-    if (!total) return null;
-    const fecha = (() => {
-      const d = String(info.fechaEmision || '').trim(); // dd/mm/yyyy
-      const m = d.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-      return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
-    })();
-    return {
-      esComprobante: true, tipo: 'EXPENSE', monto: total, fecha,
-      comercio: String(trib.razonSocial || info.razonSocialComprador || 'Proveedor').slice(0, 120),
-      ruc: trib.ruc ? String(trib.ruc) : null, medio: 'UNKNOWN', ultimos4: null,
-      banco: null, cuentaId: null, tarjetaId: null, categoria: null,
-      esTransferencia: false, concepto: null, destino: null, documento: null, titulo: 'Factura electrónica'
-    };
-  } catch { return null; }
-}
 
 // ---- Interpretación por IA (notificaciones de consumo, recibos en texto) ----
 async function extractWithAI(prisma: any, userId: number, cat: Catalog, mail: FetchedMail): Promise<Extracted | null> {
@@ -314,10 +350,11 @@ export async function ingestTenantMail(prisma: any): Promise<IngestSummary> {
   const res = await fetchNewMessages(creds, cfg.lastSeenUid, { limit: 30 });
   if (!res.ok) { await prisma.mailConfig.update({ where: { id: 1 }, data: { lastCheckAt: new Date() } }).catch(() => {}); return { ...zero, error: res.error }; }
 
-  const [accounts, cards, categories] = await Promise.all([
+  const [accounts, cards, categories, entities] = await Promise.all([
     prisma.account.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, bankId: true, accountKind: true, accountNumber: true } }),
     prisma.card.findMany({ where: { userId, isActive: true }, select: { id: true, name: true, bankName: true, bankId: true, last4: true, type: true } }),
-    prisma.category.findMany({ where: { userId }, select: { id: true, name: true } })
+    prisma.category.findMany({ where: { userId }, select: { id: true, name: true } }),
+    prisma.entity.findMany({ where: { userId }, select: { id: true, taxId: true } })
   ]);
 
   const out = { ...zero };
@@ -327,18 +364,16 @@ export async function ingestTenantMail(prisma: any): Promise<IngestSummary> {
       const existing = await prisma.mailReceipt.findUnique({ where: { userId_messageId: { userId, messageId: mail.messageId } } });
       if (existing) continue;
 
-      // 1) ¿Factura SRI adjunta en XML? → datos exactos.
-      let ex: Extracted | null = null;
-      let kind = 'TEXT';
+      // 1) ¿Factura SRI adjunta en XML? → va a la zona Facturas e IVA.
       const xmlAtt = mail.attachments.find((a) => /xml/i.test(a.mime || '') || /\.xml$/i.test(a.filename || ''));
       if (xmlAtt) {
-        const sri = parseSriXml(xmlAtt.content.toString('utf8'));
-        if (sri) { ex = sri as Extracted; kind = 'XML'; }
+        const r = await ingestInvoiceFromXml(prisma, userId, mail, xmlAtt, mail.attachments, entities);
+        if (r) { out[r]++; continue; }  // factura manejada (o duplicada/fallida)
       }
-      // 2) Si no, interpretación por IA del texto (con el catálogo del usuario).
-      if (!ex) ex = await extractWithAI(prisma, userId, { accounts, cards, categories }, mail);
 
-      const r = await ingestOne(prisma, userId, cfg.autoCreate || cfg.enabled, ex, mail, accounts, cards, categories, kind);
+      // 2) Si no, interpretación por IA del texto (con el catálogo del usuario) → movimiento.
+      const ex = await extractWithAI(prisma, userId, { accounts, cards, categories }, mail);
+      const r = await ingestOne(prisma, userId, cfg.autoCreate || cfg.enabled, ex, mail, accounts, cards, categories, 'TEXT');
       out[r]++;
     } catch (e: any) {
       logger.warn({ e: e?.message, uid: mail.uid }, 'mail: fallo procesando un correo');

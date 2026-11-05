@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch, nextTick } from 'vue';
+import { useRoute } from 'vue-router';
 import { Bar } from 'vue-chartjs';
 import {
   Chart as ChartJS,
@@ -334,7 +335,24 @@ function onRemove(item: Invoice) {
   return remove(item, `Eliminar la ${label}? Esta acción no se puede deshacer.`);
 }
 
-onMounted(() => Promise.all([load(), loadEntities(), entities.ensureAccounts()]));
+// Deep-link: /invoices?open=<id> abre esa factura (desde el lector de correo).
+const route = useRoute();
+async function openInvoiceFromQuery() {
+  const raw = route.query.open;
+  const id = Number(Array.isArray(raw) ? raw[0] : raw);
+  if (!id) return;
+  const row = rows.value.find((r) => r.id === id);
+  if (!row) return;
+  startEdit(row);
+  await nextTick();
+  document.getElementById('inv-number')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+onMounted(async () => {
+  await Promise.all([load(), loadEntities(), entities.ensureAccounts()]);
+  await openInvoiceFromQuery();
+});
+watch(() => route.query.open, () => { openInvoiceFromQuery(); });
 </script>
 
 <template>

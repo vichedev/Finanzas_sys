@@ -259,6 +259,17 @@ movementsRouter.get('/', async (req, res) => {
   res.json(rows);
 });
 
+// Un solo movimiento por id (para abrirlo directamente, p. ej. desde el correo).
+// Ruta numérica para no chocar con /monthly-summary.
+movementsRouter.get('/:id(\\d+)', async (req, res) => {
+  const row = await req.tenantPrisma!.movement.findFirst({
+    where: { id: Number((req.params as Record<string, string>).id), userId: req.tenantUserId! },
+    include: { category: true, account: true, toAccount: true, card: true, wallet: true, debt: true, fromBank: true, toBank: true }
+  });
+  if (!row) return res.status(404).json({ message: 'Movimiento no encontrado.' });
+  res.json(row);
+});
+
 /**
  * Crea un movimiento aplicando validaciones y saldos, en una transacción.
  * Reutilizable fuera de HTTP (p. ej. el bot de WhatsApp): valida el payload con

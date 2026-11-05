@@ -102,7 +102,7 @@ mailRouter.get('/receipts', async (req, res) => {
     take: limit,
     select: {
       id: true, subject: true, fromAddr: true, vendor: true, amount: true, docDate: true,
-      kind: true, status: true, movementId: true, receivedAt: true, createdAt: true, raw: true
+      kind: true, status: true, movementId: true, invoiceId: true, receivedAt: true, createdAt: true, raw: true
     }
   });
   const out = rows.map((r: any) => {
@@ -112,7 +112,7 @@ mailRouter.get('/receipts', async (req, res) => {
     return {
       id: r.id, subject: r.subject, from: r.fromAddr, vendor: r.vendor,
       amount: r.amount != null ? Number(r.amount) : null,
-      docDate: r.docDate, kind: r.kind, status: r.status, movementId: r.movementId,
+      docDate: r.docDate, kind: r.kind, status: r.status, movementId: r.movementId, invoiceId: r.invoiceId,
       receivedAt: r.receivedAt, createdAt: r.createdAt,
       reason: raw.reason || null,
       resolved: !!raw.resolved,
