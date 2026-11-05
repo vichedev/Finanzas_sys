@@ -965,6 +965,12 @@ async function openFromQuery() {
   if (!id) return;
   try {
     const { data } = await http.get<Movement>(`/movements/${id}`);
+    // Posiciona la vista en el período y la pestaña del movimiento, y luego lo abre.
+    const d = new Date((data as { movementDate?: string }).movementDate || Date.now());
+    if (!Number.isNaN(d.getTime())) { year.value = d.getUTCFullYear(); month.value = d.getUTCMonth() + 1; }
+    typeFilter.value = (data.type as MovementType) || 'EXPENSE';
+    activeTab.value = (data.type === 'EXPENSE' && data.expenseKind) ? data.expenseKind : 'ALL';
+    await load();
     await openDetail(data);
   } catch { toast.error('No se pudo abrir el movimiento.'); }
 }

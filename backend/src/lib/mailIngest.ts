@@ -30,10 +30,17 @@ const taxKey = (v: unknown) => String(v ?? '').replace(/\D/g, '');
  * null si el XML no es una factura válida (para caer a la interpretación por IA).
  */
 async function ingestInvoiceFromXml(prisma: any, userId: number, mail: FetchedMail, xmlAtt: any, allAtts: any[], entities: any[]): Promise<'added' | 'failed' | 'discarded' | null> {
-  let inv: any;
-  try { inv = parseSriXml(decodeXml(xmlAtt.content)); } catch { return null; }
-  if (!inv?.accessKey) return null;
   const base = { userId, messageId: mail.messageId, fromAddr: mail.from, subject: mail.subject, receivedAt: mail.date || new Date(), kind: 'XML' };
+  const result = parseSriXml(decodeXml(xmlAtt.content));
+  if (!result.ok) {
+    // XML que no es un comprobante del SRI o es ilegible → que lo intente la IA por texto.
+    if (result.code === 'NOT_SRI' || result.code === 'INVALID_XML') return null;
+    // Es un comprobante del SRI pero no se puede registrar (no autorizado, nota de crédito,
+    // ambiente de pruebas, faltan datos…): deja constancia con el motivo real.
+    await prisma.mailReceipt.create({ data: { ...base, status: 'FAILED', raw: { reason: `Factura no registrada: ${result.message}` } } });
+    return 'failed';
+  }
+  const inv = result.invoice;
   const issueDate = new Date(`${inv.issueDate}T12:00:00.000Z`);
 
   const dup = await prisma.invoice.findFirst({ where: { userId, accessKey: inv.accessKey }, select: { id: true } });
