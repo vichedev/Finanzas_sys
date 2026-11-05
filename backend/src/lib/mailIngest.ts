@@ -13,6 +13,52 @@ import { decryptString } from './tenantCrypto';
 import { fetchNewMessages, type FetchedMail, type ImapCreds } from './mailReader';
 import { getBrainCreds, chatComplete } from '../whatsapp/llm';
 import { createMovement } from '../routes/tenant/movements.routes';
+import { buildReceiptImage } from './mailReceiptImage';
+
+const METHOD_LABEL: Record<string, string> = {
+  CASH: 'Efectivo', BANK_TRANSFER: 'Transferencia', DEPOSIT: 'Depósito',
+  DEBIT_CARD: 'Tarjeta de débito', CREDIT_CARD: 'Tarjeta de crédito', WALLET: 'Billetera', OTHER: 'Otro'
+};
+
+/**
+ * Genera una IMAGEN de comprobante con los datos y la adjunta al movimiento.
+ * Defensivo: si algo falla, el movimiento ya quedó creado (no se revierte).
+ */
+export async function attachComprobanteImage(prisma: any, userId: number, movementId: number, ex: any, draft: any): Promise<void> {
+  if (!ex || typeof ex.monto !== 'number') return;
+  try {
+    let bankName: string | null = ex.banco || null;
+    const instRows: { label: string; value: string }[] = [];
+    if (draft?.cardId) {
+      const c = await prisma.card.findUnique({ where: { id: draft.cardId }, select: { name: true, bankName: true, last4: true } });
+      if (c) { bankName = bankName || c.bankName; instRows.push({ label: 'Tarjeta', value: `${c.name}${c.last4 ? ' ···' + c.last4 : ''}` }); }
+    } else if (draft?.accountId) {
+      const a = await prisma.account.findUnique({ where: { id: draft.accountId }, select: { name: true, bankName: true } });
+      if (a) { bankName = bankName || a.bankName; instRows.push({ label: 'Cuenta', value: a.name }); }
+    }
+    const rows: { label: string; value: string }[] = [
+      { label: 'Concepto', value: ex.concepto || ex.comercio || '' },
+      ...instRows,
+      { label: 'Cuenta origen', value: ex.ultimos4 ? '···' + ex.ultimos4 : '' },
+      { label: 'Destino', value: ex.destino || '' },
+      { label: 'Método', value: METHOD_LABEL[draft?.paymentMethod] || '' },
+      { label: 'Fecha', value: ex.fecha || '' },
+      { label: 'Documento', value: ex.documento || '' },
+      { label: 'RUC', value: ex.ruc || '' }
+    ];
+    const img = await buildReceiptImage({
+      bank: bankName, title: ex.titulo,
+      typeLabel: ex.esTransferencia ? 'Transferencia' : (ex.tipo === 'INCOME' ? 'Ingreso' : 'Gasto'),
+      amount: ex.monto, rows
+    });
+    if (!img) return;
+    await prisma.attachment.create({ data: {
+      userId, entityType: 'MOVEMENT', entityId: movementId,
+      filename: `comprobante-correo-${Date.now()}.png`, mimeType: 'image/png',
+      size: img.length, data: new Uint8Array(img)
+    } });
+  } catch (e: any) { logger.warn({ e: e?.message }, 'mail: no se pudo adjuntar el comprobante'); }
+}
 
 const esmImport = new Function('s', 'return import(s)') as (s: string) => Promise<any>;
 
@@ -29,6 +75,11 @@ interface Extracted {
   banco: string | null;        // banco/cooperativa mencionado (ej. "JEP", "Pichincha")
   cuentaId: number | null;     // id de cuenta que la IA identificó del catálogo
   tarjetaId: number | null;    // id de tarjeta de crédito que la IA identificó
+  esTransferencia: boolean;    // ¿es una transferencia enviada?
+  concepto: string | null;     // motivo/concepto de la transacción
+  destino: string | null;      // nombre o cuenta destino (en transferencias)
+  documento: string | null;    // número de documento/comprobante
+  titulo: string | null;       // título del correo (ej. "Transferencia exitosa")
   ruc: string | null;
   categoria: string | null;
 }
@@ -66,7 +117,8 @@ function parseSriXml(xml: string): Partial<Extracted> | null {
       esComprobante: true, tipo: 'EXPENSE', monto: total, fecha,
       comercio: String(trib.razonSocial || info.razonSocialComprador || 'Proveedor').slice(0, 120),
       ruc: trib.ruc ? String(trib.ruc) : null, medio: 'UNKNOWN', ultimos4: null,
-      banco: null, cuentaId: null, tarjetaId: null, categoria: null
+      banco: null, cuentaId: null, tarjetaId: null, categoria: null,
+      esTransferencia: false, concepto: null, destino: null, documento: null, titulo: 'Factura electrónica'
     };
   } catch { return null; }
 }
@@ -83,7 +135,7 @@ async function extractWithAI(prisma: any, userId: number, cat: Catalog, mail: Fe
 
   const system = [
     'Eres un extractor de comprobantes financieros desde correos (notificaciones de consumo de tarjetas, recibos, facturas del SRI).',
-    'Devuelve SOLO un JSON EXACTO: {"esComprobante":bool,"tipo":"EXPENSE"|"INCOME","monto":number|null,"fecha":"YYYY-MM-DD"|null,"comercio":string|null,"ultimos4":string|null,"medio":"CREDIT_CARD"|"DEBIT_CARD"|"ACCOUNT"|"UNKNOWN","banco":string|null,"cuentaId":number|null,"tarjetaId":number|null,"ruc":string|null,"categoria":string|null}',
+    'Devuelve SOLO un JSON EXACTO: {"esComprobante":bool,"tipo":"EXPENSE"|"INCOME","monto":number|null,"fecha":"YYYY-MM-DD"|null,"comercio":string|null,"ultimos4":string|null,"medio":"CREDIT_CARD"|"DEBIT_CARD"|"ACCOUNT"|"UNKNOWN","banco":string|null,"cuentaId":number|null,"tarjetaId":number|null,"esTransferencia":bool,"concepto":string|null,"destino":string|null,"documento":string|null,"titulo":string|null,"ruc":string|null,"categoria":string|null}',
     '',
     'CATÁLOGO DEL USUARIO (usa estos ids reales):',
     `- CUENTAS (para débito/transferencia): ${cuentasTxt}`,
@@ -97,8 +149,10 @@ async function extractWithAI(prisma: any, userId: number, cat: Catalog, mail: Fe
     '- ultimos4: los 4 últimos dígitos de la tarjeta/cuenta si aparecen (ej. "TARJETA TERMINADA EN 478" => "478").',
     '- banco: el banco o cooperativa mencionado (ej. "Cooperativa JEP" => "JEP"; "Diners" => "Diners"; "Pichincha").',
     '- medio: CREDIT_CARD si fue tarjeta de crédito; DEBIT_CARD si "tarjeta de débito"; ACCOUNT si cuenta/transferencia; UNKNOWN si no se sabe.',
-    '- IDENTIFICA EL INSTRUMENTO con el catálogo: si es CRÉDITO, pon tarjetaId con el id que calce por últimos 4 o por banco/nombre. Si es DÉBITO o cuenta, pon cuentaId con el id de la CUENTA que calce por banco (ej. "Tarjeta de Débito JEP" => la cuenta cuyo banco es la Cooperativa JEP) o por últimos 4. Si ninguno calza con seguridad, deja cuentaId y tarjetaId en null.',
-    `- categoria: elige UNA de esta lista si encaja con el comercio, o null: ${cat.categories.map((c) => c.name).join(', ') || '(sin categorías)'}.`,
+    '- IDENTIFICA EL INSTRUMENTO con el catálogo: si es CRÉDITO, pon tarjetaId con el id que calce por últimos 4 o por banco/nombre. Si es DÉBITO o cuenta, pon cuentaId con el id de la CUENTA que calce por banco (ej. "Tarjeta de Débito JEP" => la cuenta cuyo banco es la Cooperativa JEP; "cuenta de origen ****4464" del Banco Pichincha => la cuenta Pichincha) o por últimos 4. Si ninguno calza con seguridad, deja cuentaId y tarjetaId en null.',
+    '- esTransferencia=true si el correo dice que se realizó/envió una TRANSFERENCIA. En ese caso ultimos4 = los últimos 4 de la CUENTA DE ORIGEN, destino = el nombre o número de la cuenta DESTINO, y medio="ACCOUNT".',
+    '- concepto: el motivo/concepto de la transacción si aparece (ej. "Devolución de préstamo"). documento: el número de documento/comprobante si aparece. titulo: el encabezado del correo (ej. "Transferencia exitosa", "Notificación de Consumos").',
+    `- categoria: elige UNA de esta lista si encaja con el comercio/concepto, o null: ${cat.categories.map((c) => c.name).join(', ') || '(sin categorías)'}.`,
     'No inventes ids que no estén en el catálogo. Si dudas, deja null.'
   ].join('\n');
   const user = `ASUNTO: ${mail.subject || ''}\nDE: ${mail.from || ''}\n\n${mail.text}`.slice(0, 9000);
@@ -119,6 +173,11 @@ async function extractWithAI(prisma: any, userId: number, cat: Catalog, mail: Fe
       banco: j.banco ? String(j.banco).slice(0, 60) : null,
       cuentaId: toId(j.cuentaId),
       tarjetaId: toId(j.tarjetaId),
+      esTransferencia: !!j.esTransferencia,
+      concepto: j.concepto ? String(j.concepto).slice(0, 160) : null,
+      destino: j.destino ? String(j.destino).slice(0, 120) : null,
+      documento: j.documento ? String(j.documento).slice(0, 60) : null,
+      titulo: j.titulo ? String(j.titulo).slice(0, 80) : null,
       ruc: j.ruc ? String(j.ruc).replace(/\D/g, '').slice(0, 13) : null,
       categoria: j.categoria ? String(j.categoria) : null
     };
@@ -134,25 +193,29 @@ function bankMatch(a: string | null | undefined, b: string | null | undefined): 
 }
 function acctMethod(medio: Extracted['medio']): string { return medio === 'ACCOUNT' ? 'BANK_TRANSFER' : 'DEBIT_CARD'; }
 
-function resolveInstrument(ex: Extracted, accounts: any[], cards: any[]): { paymentMethod: string; accountId: number | null; cardId: number | null; resolved: boolean } {
+interface Instrument { paymentMethod: string; accountId: number | null; cardId: number | null; bankId: number | null; resolved: boolean }
+function viaCard(c: any): Instrument { return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: c.id, bankId: c.bankId ?? null, resolved: true }; }
+function viaAcc(a: any, medio: Extracted['medio']): Instrument { return { paymentMethod: acctMethod(medio), accountId: a.id, cardId: null, bankId: a.bankId ?? null, resolved: true }; }
+
+function resolveInstrument(ex: Extracted, accounts: any[], cards: any[]): Instrument {
   const l4 = ex.ultimos4;
   const credit = cards.filter((c) => c.type === 'CREDIT');
   const debit = cards.filter((c) => c.type === 'DEBIT');
 
   // 1) ids que identificó la IA desde el catálogo (lo más fiable)
-  if (ex.tarjetaId) { const cc = credit.find((c) => c.id === ex.tarjetaId); if (cc) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: cc.id, resolved: true }; }
-  if (ex.cuentaId) { const acc = accounts.find((a) => a.id === ex.cuentaId); if (acc) return { paymentMethod: acctMethod(ex.medio), accountId: acc.id, cardId: null, resolved: true }; }
+  if (ex.tarjetaId) { const cc = credit.find((c) => c.id === ex.tarjetaId); if (cc) return viaCard(cc); }
+  if (ex.cuentaId) { const acc = accounts.find((a) => a.id === ex.cuentaId); if (acc) return viaAcc(acc, ex.medio); }
 
   // 2) por últimos 4
   if (l4) {
     const cc = credit.find((c) => last4(c.last4) === l4);
-    if (cc) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: cc.id, resolved: true };
+    if (cc) return viaCard(cc);
     const acc = accounts.find((a) => last4(a.accountNumber) === l4);
-    if (acc) return { paymentMethod: acctMethod(ex.medio), accountId: acc.id, cardId: null, resolved: true };
+    if (acc) return viaAcc(acc, ex.medio);
     const dc = debit.find((c) => last4(c.last4) === l4);
     if (dc) {
       const a2 = accounts.find((a) => a.bankId && a.bankId === dc.bankId) || accounts.find((a) => bankMatch(a.bankName, dc.bankName));
-      if (a2) return { paymentMethod: 'DEBIT_CARD', accountId: a2.id, cardId: null, resolved: true };
+      if (a2) return { paymentMethod: 'DEBIT_CARD', accountId: a2.id, cardId: null, bankId: a2.bankId ?? dc.bankId ?? null, resolved: true };
     }
   }
 
@@ -160,18 +223,18 @@ function resolveInstrument(ex: Extracted, accounts: any[], cards: any[]): { paym
   if (ex.banco) {
     if (ex.medio === 'CREDIT_CARD') {
       const cc = credit.find((c) => bankMatch(c.bankName, ex.banco) || bankMatch(c.name, ex.banco));
-      if (cc) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: cc.id, resolved: true };
+      if (cc) return viaCard(cc);
     } else {
       const acc = accounts.find((a) => bankMatch(a.bankName, ex.banco) || bankMatch(a.name, ex.banco));
-      if (acc) return { paymentMethod: acctMethod(ex.medio), accountId: acc.id, cardId: null, resolved: true };
+      if (acc) return viaAcc(acc, ex.medio);
     }
   }
 
   // 4) un solo candidato evidente por medio
-  if (ex.medio === 'CREDIT_CARD' && credit.length === 1) return { paymentMethod: 'CREDIT_CARD', accountId: null, cardId: credit[0].id, resolved: true };
-  if ((ex.medio === 'ACCOUNT' || ex.medio === 'DEBIT_CARD') && accounts.length === 1) return { paymentMethod: acctMethod(ex.medio), accountId: accounts[0].id, cardId: null, resolved: true };
+  if (ex.medio === 'CREDIT_CARD' && credit.length === 1) return viaCard(credit[0]);
+  if ((ex.medio === 'ACCOUNT' || ex.medio === 'DEBIT_CARD') && accounts.length === 1) return viaAcc(accounts[0], ex.medio);
 
-  return { paymentMethod: 'CASH', accountId: null, cardId: null, resolved: false };
+  return { paymentMethod: 'CASH', accountId: null, cardId: null, bankId: null, resolved: false };
 }
 
 function matchCategory(name: string | null, categories: any[]): number | null {
@@ -200,12 +263,15 @@ async function ingestOne(prisma: any, userId: number, autoCreate: boolean, ex: E
   const inst = resolveInstrument(ex, accounts, cards);
   const categoryId = matchCategory(ex.categoria, categories);
   const docDate = ex.fecha ? new Date(`${ex.fecha}T12:00:00`) : (mail.date || new Date());
-  const draft = {
-    type: ex.tipo, amount: ex.monto, movementDate: docDate,
-    description: (ex.comercio || mail.subject || 'Comprobante').slice(0, 200),
+  const description = (ex.concepto || ex.comercio || ex.destino || ex.titulo || mail.subject || 'Comprobante').slice(0, 200);
+  const notesParts = [ex.titulo, ex.destino ? `Destino: ${ex.destino}` : '', ex.documento ? `Doc: ${ex.documento}` : '', 'Registrado desde el correo'].filter(Boolean);
+  const draft: any = {
+    type: ex.tipo, amount: ex.monto, movementDate: docDate, description,
     paymentMethod: inst.paymentMethod, accountId: inst.accountId, cardId: inst.cardId,
-    categoryId, vendor: ex.comercio, notes: 'Registrado desde el correo'
+    categoryId, vendor: ex.comercio, notes: notesParts.join(' · ').slice(0, 1000)
   };
+  // Banco en el movimiento (columna "Bancos"): según el instrumento resuelto.
+  if (inst.bankId) { if (ex.tipo === 'INCOME') draft.toBankId = inst.bankId; else draft.fromBankId = inst.bankId; }
   const rawData = { ex, draft, resolved: inst.resolved, categoryId };
 
   // Auto-registra solo si identificamos el instrumento (tarjeta/cuenta). Si no,
@@ -213,6 +279,7 @@ async function ingestOne(prisma: any, userId: number, autoCreate: boolean, ex: E
   if (autoCreate && inst.resolved) {
     try {
       const mv = await createMovement(prisma, userId, draft);
+      await attachComprobanteImage(prisma, userId, mv.id, ex, draft);
       await prisma.mailReceipt.create({ data: { ...base, vendor: ex.comercio, taxId: ex.ruc, amount: ex.monto, docDate, status: 'APPROVED', movementId: mv.id, raw: rawData } });
       return 'added';
     } catch (e: any) {

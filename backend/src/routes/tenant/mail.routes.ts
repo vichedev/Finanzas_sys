@@ -4,7 +4,7 @@ import { requireAuth } from '../../middleware/auth';
 import { requirePermission } from '../../middleware/permissions';
 import { encryptString, decryptString } from '../../lib/tenantCrypto';
 import { testConnection, normalizeImap } from '../../lib/mailReader';
-import { ingestTenantMail } from '../../lib/mailIngest';
+import { ingestTenantMail, attachComprobanteImage } from '../../lib/mailIngest';
 import { createMovement } from './movements.routes';
 import { auditFromReq } from '../../lib/tenantAudit';
 
@@ -173,8 +173,16 @@ mailRouter.post('/receipts/:id/approve', async (req, res) => {
   else if (body.paymentMethod) { draft.paymentMethod = body.paymentMethod; if (body.paymentMethod === 'CASH') { draft.accountId = null; draft.cardId = null; } }
   if (body.categoryId !== undefined) draft.categoryId = body.categoryId;
 
+  // Si el usuario eligió cuenta/tarjeta, fija también el banco de la columna.
+  try {
+    if (draft.cardId) { const c = await req.tenantPrisma!.card.findUnique({ where: { id: draft.cardId }, select: { bankId: true } }); if (c?.bankId) draft.fromBankId = c.bankId; }
+    else if (draft.accountId) { const a = await req.tenantPrisma!.account.findUnique({ where: { id: draft.accountId }, select: { bankId: true } }); if (a?.bankId) { if (draft.type === 'INCOME') draft.toBankId = a.bankId; else draft.fromBankId = a.bankId; } }
+  } catch { /* banco es opcional */ }
+
   try {
     const mv = await createMovement(req.tenantPrisma!, req.tenantUserId!, draft);
+    const ex = (rec.raw && typeof rec.raw === 'object') ? (rec.raw as any).ex : null;
+    await attachComprobanteImage(req.tenantPrisma!, req.tenantUserId!, mv.id, ex, draft);
     await req.tenantPrisma!.mailReceipt.update({ where: { id }, data: { status: 'APPROVED', movementId: mv.id } });
     void auditFromReq(req, 'CREATE', 'movement', mv.id, 'Movimiento creado desde comprobante de correo');
     res.json({ ok: true, movementId: mv.id });
