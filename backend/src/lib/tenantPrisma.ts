@@ -15,7 +15,11 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const TTL_MS = 30 * 60 * 1000;   // 30 min idle
 const MAX_CACHE = 50;
-const CONNECTION_LIMIT = 5;
+// El dashboard lanza ~13 consultas en paralelo; con 5 conexiones se encolaban y,
+// junto a los barridos de fondo, llegaban a agotar el pool (timeout "no carga").
+// Configurable por si el Postgres del servidor tiene un max_connections ajustado.
+const CONNECTION_LIMIT = Number(process.env.TENANT_DB_CONNECTION_LIMIT || 12);
+const POOL_TIMEOUT_S = Number(process.env.TENANT_DB_POOL_TIMEOUT || 20);
 
 export async function getTenantPrisma(tenantId: string): Promise<TenantPrismaClient> {
   const cached = cache.get(tenantId);
@@ -41,7 +45,7 @@ export async function getTenantPrisma(tenantId: string): Promise<TenantPrismaCli
   }
 
   const { user, password } = decryptConnection(conn);
-  const url = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${conn.dbHost}:${conn.dbPort}/${conn.dbName}?schema=public&connection_limit=${CONNECTION_LIMIT}`;
+  const url = `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${conn.dbHost}:${conn.dbPort}/${conn.dbName}?schema=public&connection_limit=${CONNECTION_LIMIT}&pool_timeout=${POOL_TIMEOUT_S}`;
 
   const client = new TenantPrismaClient({
     datasources: { db: { url } },

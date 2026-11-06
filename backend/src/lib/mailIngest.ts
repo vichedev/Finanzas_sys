@@ -391,8 +391,14 @@ export async function ingestTenantMail(prisma: any): Promise<IngestSummary> {
   return out;
 }
 
+// Evita que dos barridos se solapen: si el anterior aún corre (IMAP lento, muchos
+// correos), el siguiente tick se salta. Así no se acumulan conexiones ni carga.
+let mailScanRunning = false;
+
 /** Recorre todos los tenants activos con lector de correo habilitado. */
 export async function runMailScan(): Promise<void> {
+  if (mailScanRunning) { logger.info('mail: barrido anterior aún en curso, se omite este tick'); return; }
+  mailScanRunning = true;
   try {
     const conns = await globalPrisma.tenantConnection.findMany({ include: { tenant: { select: { status: true, slug: true } } } });
     for (const conn of conns) {
@@ -407,5 +413,7 @@ export async function runMailScan(): Promise<void> {
     }
   } catch (err) {
     logger.error({ err }, 'mail: barrido de ingesta falló');
+  } finally {
+    mailScanRunning = false;
   }
 }
