@@ -767,13 +767,17 @@ function fmtAccount(a?: Account | null): string {
 const fileSize = (n: number) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1048576).toFixed(1)} MB`;
 
 async function load() {
+  const params: Record<string, string | number> = { year: year.value, month: month.value };
+  const fetchAll = () => Promise.all([
+    http.get<Movement[]>('/movements', { params }),
+    http.get<Account[]>('/accounts'), http.get<Card[]>('/cards'), http.get<Category[]>('/categories'),
+    http.get<Bank[]>('/banks'), http.get<Wallet[]>('/wallets')
+  ]);
   try {
-    const params: Record<string, string | number> = { year: year.value, month: month.value };
-    const [m, a, c, cat, b, w] = await Promise.all([
-      http.get<Movement[]>('/movements', { params }),
-      http.get<Account[]>('/accounts'), http.get<Card[]>('/cards'), http.get<Category[]>('/categories'),
-      http.get<Bank[]>('/banks'), http.get<Wallet[]>('/wallets')
-    ]);
+    let res;
+    try { res = await fetchAll(); }
+    catch { await new Promise((r) => setTimeout(r, 500)); res = await fetchAll(); } // reintento ante fallo transitorio
+    const [m, a, c, cat, b, w] = res;
     rows.value = m.data; accounts.value = a.data; cards.value = c.data; categories.value = cat.data;
     banks.value = b.data; wallets.value = w.data;
   } catch { toast.error('No se pudieron cargar los movimientos.'); }

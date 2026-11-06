@@ -21,13 +21,31 @@ const MAX_CACHE = 50;
 const CONNECTION_LIMIT = Number(process.env.TENANT_DB_CONNECTION_LIMIT || 12);
 const POOL_TIMEOUT_S = Number(process.env.TENANT_DB_POOL_TIMEOUT || 20);
 
+// Creaciones en curso: al recargar la página llegan muchas peticiones del mismo
+// tenant casi a la vez; sin esto cada una crearía su PROPIO cliente (y su propio
+// pool), provocando una tormenta de conexiones que agota Postgres e intermitente-
+// mente hace fallar las cargas. Compartimos una sola promesa de creación.
+const creating = new Map<string, Promise<TenantPrismaClient>>();
+
 export async function getTenantPrisma(tenantId: string): Promise<TenantPrismaClient> {
   const cached = cache.get(tenantId);
   if (cached) {
     cached.lastUsed = Date.now();
     return cached.client;
   }
+  const inFlight = creating.get(tenantId);
+  if (inFlight) return inFlight;
 
+  const promise = createTenantClient(tenantId);
+  creating.set(tenantId, promise);
+  try {
+    return await promise;
+  } finally {
+    creating.delete(tenantId);
+  }
+}
+
+async function createTenantClient(tenantId: string): Promise<TenantPrismaClient> {
   const conn = await globalPrisma.tenantConnection.findUnique({
     where: { tenantId },
     include: { tenant: { select: { status: true, slug: true } } }
