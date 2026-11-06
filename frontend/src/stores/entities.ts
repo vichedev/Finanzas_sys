@@ -20,6 +20,20 @@ interface EntitiesState {
   loaded: Record<CatalogKey, boolean>;
 }
 
+// Promesas en curso por catálogo. Si dos vistas montan a la vez y ambas piden el
+// mismo catálogo antes de que termine la primera, `loaded` sigue en false para las
+// dos y se disparaban DOS peticiones iguales. Compartiendo la promesa en vuelo,
+// la segunda espera a la primera: una sola petición por catálogo.
+const inFlight: Partial<Record<CatalogKey, Promise<unknown>>> = {};
+
+function share<T>(key: CatalogKey, run: () => Promise<T>): Promise<T> {
+  const pending = inFlight[key];
+  if (pending) return pending as Promise<T>;
+  const p = run().finally(() => { delete inFlight[key]; });
+  inFlight[key] = p;
+  return p;
+}
+
 export const useEntitiesStore = defineStore('entities', {
   state: (): EntitiesState => ({
     banks: [],
@@ -35,26 +49,34 @@ export const useEntitiesStore = defineStore('entities', {
   actions: {
     async ensureBanks(force = false) {
       if (this.loaded.banks && !force) return this.banks;
-      this.banks = await banksApi.list();
-      this.loaded.banks = true;
+      await share('banks', async () => {
+        this.banks = await banksApi.list();
+        this.loaded.banks = true;
+      });
       return this.banks;
     },
     async ensureAccounts(force = false) {
       if (this.loaded.accounts && !force) return this.accounts;
-      this.accounts = await accountsApi.list();
-      this.loaded.accounts = true;
+      await share('accounts', async () => {
+        this.accounts = await accountsApi.list();
+        this.loaded.accounts = true;
+      });
       return this.accounts;
     },
     async ensureCategories(force = false) {
       if (this.loaded.categories && !force) return this.categories;
-      this.categories = await categoriesApi.list();
-      this.loaded.categories = true;
+      await share('categories', async () => {
+        this.categories = await categoriesApi.list();
+        this.loaded.categories = true;
+      });
       return this.categories;
     },
     async ensureWallets(force = false) {
       if (this.loaded.wallets && !force) return this.wallets;
-      this.wallets = await walletsApi.list();
-      this.loaded.wallets = true;
+      await share('wallets', async () => {
+        this.wallets = await walletsApi.list();
+        this.loaded.wallets = true;
+      });
       return this.wallets;
     },
     /** Marca un catálogo como obsoleto para que la próxima lectura lo recargue. */
