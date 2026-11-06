@@ -276,6 +276,25 @@ function computeNext(d: Draft): Question | null {
   }
   return null;
 }
+// Palabras de "relleno" de un comando: si el detalle solo tiene esto (o el nombre
+// de una cuenta/banco/tarjeta), NO es un concepto real y hay que preguntarlo.
+const DESC_FILLERS = new Set(['ingreso', 'ingresos', 'gasto', 'gastos', 'compra', 'compras', 'transferencia', 'transferencias', 'transfer', 'retiro', 'retiros', 'movimiento', 'movimientos', 'registra', 'registrar', 'registro', 'registrame', 'anota', 'apunta', 'agrega', 'un', 'una', 'unos', 'unas', 'el', 'la', 'los', 'las', 'de', 'del', 'para', 'por', 'a', 'al', 'con', 'en', 'mi', 'mis', 'su', 'cuenta', 'cuentas', 'tarjeta', 'tarjetas', 'banco', 'bancos', 'billetera', 'dinero', 'plata', 'pago', 'pagar', 'valor', 'monto', 'recibi', 'recibo', 'cobre', 'cobro']);
+
+/** ¿El detalle es un concepto real o solo el eco del comando/cuenta? */
+function isWeakDescription(desc: unknown, d: Draft): boolean {
+  const raw = String(desc ?? '').trim();
+  if (raw.length < 2) return true;
+  let t = ` ${norm(raw)} `;
+  const names: string[] = [];
+  for (const a of d.ctx.accounts || []) { if (a.name) names.push(norm(a.name)); if (a.bankName) names.push(norm(a.bankName)); }
+  for (const c of d.ctx.creditCards || []) if (c.name) names.push(norm(c.name));
+  for (const w of d.ctx.wallets || []) if (w.name) names.push(norm(w.name));
+  names.sort((a, b) => b.length - a.length);
+  for (const n of names) if (n && n.length >= 2) t = t.split(n).join(' ');
+  const rest = t.split(/\s+/).filter((w) => w && !DESC_FILLERS.has(w));
+  return rest.join('').length < 2;
+}
+
 function rawNext(d: Draft): Question | null {
   // La fecha se pregunta después del monto y el detalle; las demás dudas, antes que nada.
   const nextCheck = d.pendingChecks[0];
@@ -290,7 +309,7 @@ function rawNext(d: Draft): Question | null {
     { label: '🏧 Retiro', patch: { type: 'WITHDRAWAL' } }
   ] };
   if (!(Number(p.amount) > 0)) return { key: 'amount', text: '💵 Escribe el *monto* (solo números, ej: *20* o *24.50*)', free: 'amount' };
-  if (!p.description || String(p.description).trim().length < 2) return { key: 'description', text: '📝 Escribe el *detalle* (ej: *Supermercado*, *Gasolina*, *Sueldo*)', free: 'description' };
+  if (!d.resolved.has('description') && isWeakDescription(p.description, d)) return { key: 'description', text: '📝 Escribe el *detalle* (ej: *Supermercado*, *Gasolina*, *Sueldo*)', free: 'description' };
   if (nextCheck) return checkQ(nextCheck);
 
   if (type === 'TRANSFER') {
@@ -551,6 +570,7 @@ export async function handleIncoming(msg: IncomingMessage): Promise<void> {
         const desc = text.trim().slice(0, 200);
         if (desc.length < 2) { await msg.reply('🤔 El detalle es muy corto, dime algo más.'); return; }
         draft.payload.description = desc;
+        draft.resolved.add('description'); // el usuario ya lo dio: no se vuelve a preguntar
       } else {
         let createdByText = false;
         // Al reabrir la categoría, un "sí" exacto deja la que estaba.

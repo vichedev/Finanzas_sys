@@ -138,7 +138,7 @@ Reglas (solo si intent="register"):
 - TRANSFER: accountId=cuenta origen, toAccountId=cuenta destino (ambas de "cuentas", distintas).
 - WITHDRAWAL: accountId=cuenta de la que sale el efectivo.
 - date: fecha del movimiento en formato YYYY-MM-DD; resuelve "hoy", "ayer", "el 5", "el lunes". Si no se menciona, usa hoy.
-- description: breve y clara en español (ej. "Gasolina", "Sueldo", "Supermercado").
+- description: el CONCEPTO/detalle real del movimiento, breve y claro (ej. "Gasolina", "Sueldo", "Supermercado", "Soporte técnico"). Si el usuario NO dio un concepto real y solo dijo el tipo, el monto o la cuenta (ej. "registra un ingreso de 230 a la cuenta de MAAT"), devuelve description:"" (cadena vacía) para que el sistema lo pregunte. NO inventes el detalle a partir del comando, del tipo de movimiento ni del nombre de la cuenta/banco.
 - categoryId: ASIGNA con confianza la categoría del catálogo cuando el detalle se relacione claramente con ella (relaciona el concepto de forma inteligente: "víveres/súper/comida/mercado"->Alimentación; "gasolina/taxi/bus/uber"->Transporte; "medicina/doctor/farmacia"->Salud; "arriendo/luz/agua/internet"->Servicios/Hogar; etc.). Usa null SOLO si de verdad no hay ninguna categoría relacionada en el catálogo. Elige por el id real del catálogo.
 - categoryCandidates: 2 a 4 ids de categorías probables según el detalle, ordenadas de más a menos probable (por si el usuario quiere cambiar la asignada). Si ninguna aplica, [].
 - isCredit: true SOLO si es una compra "fiada"/"a crédito" que no se paga ahora.
