@@ -253,7 +253,9 @@ movementsRouter.get('/', async (req, res) => {
   const rows = await req.tenantPrisma!.movement.findMany({
     where,
     include: { category: true, account: true, toAccount: true, card: true, wallet: true, debt: true, fromBank: true, toBank: true },
-    orderBy: { movementDate: 'desc' },
+    // Desempate por id: entre movimientos del MISMO día (ej. varios del correo con
+    // la misma fecha), el registrado más recientemente aparece primero.
+    orderBy: [{ movementDate: 'desc' }, { id: 'desc' }],
     take: 500
   });
   res.json(rows);

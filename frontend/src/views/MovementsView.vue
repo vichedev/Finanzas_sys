@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { http } from '../api/http';
 import { ArrowLeftRight, Pencil, Trash2, Plus, X, Wallet, ShoppingCart, ShoppingBag, Banknote, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-vue-next';
 import PageHeader from '../components/PageHeader.vue';
@@ -51,6 +51,7 @@ interface Movement {
 }
 
 const route = useRoute();
+const router = useRouter();
 const toast = useToast();
 const { confirm } = useConfirm();
 const { formatMoney } = useFormat();
@@ -963,6 +964,9 @@ async function openFromQuery() {
   const raw = route.query.open;
   const id = Number(Array.isArray(raw) ? raw[0] : raw);
   if (!id) return;
+  // Limpia el ?open de la URL para que al recargar no se reabra solo.
+  const q = { ...route.query }; delete q.open;
+  router.replace({ query: q });
   try {
     const { data } = await http.get<Movement>(`/movements/${id}`);
     // Posiciona la vista en el período y la pestaña del movimiento, y luego lo abre.

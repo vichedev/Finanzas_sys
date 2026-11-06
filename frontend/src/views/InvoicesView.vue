@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, nextTick } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { Bar } from 'vue-chartjs';
 import {
   Chart as ChartJS,
@@ -337,10 +337,13 @@ function onRemove(item: Invoice) {
 
 // Deep-link: /invoices?open=<id> abre esa factura (desde el lector de correo).
 const route = useRoute();
+const router = useRouter();
 async function openInvoiceFromQuery() {
   const raw = route.query.open;
   const id = Number(Array.isArray(raw) ? raw[0] : raw);
   if (!id) return;
+  const q = { ...route.query }; delete q.open;
+  router.replace({ query: q });
   const row = rows.value.find((r) => r.id === id);
   if (!row) return;
   startEdit(row);
